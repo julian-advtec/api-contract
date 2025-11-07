@@ -1,5 +1,5 @@
 import { DataSourceOptions } from 'typeorm';
-import { User } from '../users/entities/user.entity';
+import { User } from '../users/entities/user.entity'; // ✅ Ruta corregida
 import 'dotenv/config';
 
 export const ormconfig: DataSourceOptions = {
@@ -10,5 +10,6 @@ export const ormconfig: DataSourceOptions = {
   password: process.env.DB_PASS,
   database: process.env.DB_NAME,
   entities: [User],
-  synchronize: true, // ⚠️ En producción pon false y usa migrations
+  synchronize: true,
+  logging: true,
 };

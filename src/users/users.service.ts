@@ -1,62 +1,66 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User, UserRole } from './entities/user.entity';
-import * as bcrypt from 'bcrypt';
+import { User } from './entities/user.entity';
+import * as bcrypt from 'bcryptjs';
+import { UserRole } from './enums/user-role.enum';
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User)
-    private repo: Repository<User>,
+    private usersRepository: Repository<User>,
   ) {}
 
-  async create(username: string, password: string) {
-    const exists = await this.repo.findOne({ where: { username } });
-    if (exists) throw new Error('Usuario ya existe');
-
-    const passwordHash = await bcrypt.hash(password, 10);
-    const user = this.repo.create({ username, password: passwordHash });
-    return this.repo.save(user);
+  async findByUsername(username: string): Promise<User | null> {
+    return this.usersRepository.findOne({ where: { username } });
   }
 
-  async createAdmin() {
-    const adminExists = await this.repo.findOne({ where: { username: 'admin' } });
-    if (!adminExists) {
-      const passwordHash = await bcrypt.hash('admin123', 10);
-      const admin = this.repo.create({
-        username: 'admin',
-        password: passwordHash,
-        role: UserRole.ADMIN,
-      });
-      await this.repo.save(admin);
-      console.log('✅ Usuario admin creado por defecto');
+  async findByEmail(email: string): Promise<User | null> {
+    return this.usersRepository.findOne({ where: { email } });
+  }
+
+  async findById(id: string): Promise<User | null> {
+    return this.usersRepository.findOne({ where: { id } });
+  }
+
+  async create(userData: { username: string; password: string; email: string; role: UserRole }): Promise<User> {
+    const existingUser = await this.findByUsername(userData.username);
+    if (existingUser) {
+      throw new ConflictException('El usuario ya existe');
     }
-  }
 
-  async findByUsername(username: string) {
-    return this.repo.findOne({ where: { username } });
-  }
-
-  async createVisita() {
-    const visitaExists = await this.repo.findOne({ where: { username: 'visita' } });
-    if (!visitaExists) {
-      const passwordHash = await bcrypt.hash('visita123', 10);
-      const visita = this.repo.create({
-        username: 'visita',
-        password: passwordHash,
-        role: UserRole.VISITA,
-      });
-      await this.repo.save(visita);
-      console.log('👥 Usuario visita creado');
+    const existingEmail = await this.findByEmail(userData.email);
+    if (existingEmail) {
+      throw new ConflictException('El email ya está registrado');
     }
+
+    const hashedPassword = await bcrypt.hash(userData.password, 12);
+    
+    const user = this.usersRepository.create({
+      ...userData,
+      password: hashedPassword,
+    });
+
+    return this.usersRepository.save(user);
+  }
+
+  async updateTwoFactorCode(userId: string, code: string, expires: Date): Promise<void> {
+    await this.usersRepository.update(userId, {
+      twoFactorCode: code,
+      twoFactorExpires: expires,
+    });
+  }
+
+  
+  async clearTwoFactorCode(userId: string): Promise<void> {
+    await this.usersRepository.update(userId, {
+      twoFactorCode: null as any, // ✅ Usar null en lugar de undefined
+      twoFactorExpires: null as any,
+    });
   }
 
   async findAll(): Promise<User[]> {
-    return this.repo.find();
-  }
-
-  async findOne(username: string): Promise<User | null> {
-    return this.repo.findOne({ where: { username } });
+    return this.usersRepository.find();
   }
 }

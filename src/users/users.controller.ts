@@ -1,22 +1,24 @@
 import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
 import { UsersService } from './users.service';
-import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'; // ✅ Ruta corregida
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from './enums/user-role.enum';
 
 @Controller('users')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class UsersController {
-  constructor(private usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) {}
 
-  @UseGuards(JwtAuthGuard)
   @Get()
-  async findAll() {
+  @Roles(UserRole.ADMIN)
+  findAll() {
     return this.usersService.findAll();
   }
 
-  @Post('register')
-  async register(@Body() body: { username: string; password: string }) {
-    if (!body.username || !body.password) {
-      throw new Error('Debe enviar nombre de usuario y contraseña');
-    }
-    return this.usersService.create(body.username, body.password);
+  @Post()
+  @Roles(UserRole.ADMIN)
+  create(@Body() body: { username: string; password: string; email: string; role: UserRole }) {
+    return this.usersService.create(body);
   }
 }
