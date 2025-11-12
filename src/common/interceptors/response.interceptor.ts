@@ -10,10 +10,14 @@ import { Observable, map } from 'rxjs';
 export class ResponseInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     return next.handle().pipe(
-      map((data) => ({
-        ok: true,
-        data,
-      })),
+      map((data) => {
+        return {
+          ok: true,
+          path: context.switchToHttp().getRequest().url,
+          timestamp: new Date().toISOString(),
+          data: data
+        };
+      }),
     );
   }
 }

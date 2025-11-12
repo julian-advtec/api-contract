@@ -1,4 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 import { UserRole } from '../enums/user-role.enum';
 
 @Entity('users')
@@ -15,24 +21,24 @@ export class User {
   @Column({ unique: true })
   email: string;
 
-  @Column({ 
+  @Column({
     type: 'enum',
     enum: UserRole,
-    default: UserRole.RADICADOR
+    default: UserRole.RADICADOR,
   })
   role: UserRole;
 
   @Column({ default: false })
   isEmailVerified: boolean;
 
-  @Column({ nullable: true })
-  emailVerificationCode: string;
+  @Column({ type: 'varchar', nullable: true })
+  emailVerificationCode: string | null;
 
-  @Column({ nullable: true })
-  twoFactorCode: string;
+  @Column({ type: 'varchar', nullable: true })
+  twoFactorCode: string | null; // ✅ string | null
 
   @Column({ type: 'timestamp', nullable: true })
-  twoFactorExpires: Date;
+  twoFactorExpires: Date | null;
 
   @CreateDateColumn()
   createdAt: Date;

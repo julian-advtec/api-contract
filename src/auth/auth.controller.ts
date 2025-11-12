@@ -1,4 +1,14 @@
-import { Controller, Post, Body, UseGuards, HttpCode, HttpStatus, Get, Request } from '@nestjs/common';
+import { 
+  Controller, 
+  Post, 
+  Body, 
+  UseGuards, 
+  HttpCode, 
+  HttpStatus, 
+  Get, 
+  Request,
+  UnauthorizedException 
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
@@ -12,42 +22,94 @@ import { VerifyTwoFactorDto } from './dto/verify-2fa.dto';
 export class AuthController {
   constructor(private authService: AuthService) {}
 
-  // ✅ NUEVO ENDPOINT - LOGIN DIRECTO SIN 2FA (SOLO PARA DESARROLLO)
-  @Post('login-direct')
-  @HttpCode(HttpStatus.OK)
-  async loginDirect(@Body() loginDto: LoginDto) {
-    console.log(`🔓 Login directo solicitado para: ${loginDto.username}`);
-    
-    const user = await this.authService.validateUser(loginDto.username, loginDto.password);
+  // 🔍 ENDPOINT DE DIAGNÓSTICO
+  @Get('debug-all-users')
+  async debugAllUsers() {
+    try {
+      const users = await this.authService.debugGetAllUsers();
+      return {
+        ok: true,
+        totalUsers: users.length,
+        users: users.map(user => ({
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          password: user.password ? '***' : 'null',
+          hashed: !!user.password
+        }))
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error.message
+      };
+    }
+  }
+
+  // 🔍 CREAR USUARIO DE PRUEBA
+  @Post('create-test-user')
+  async createTestUser() {
+    try {
+      const testUser = {
+        username: 'prueba2fa',
+        email: 'prueba2fa@hospital.com',
+        password: 'prueba123',
+        role: 'user' // 🔥 Usar string directamente
+      };
+
+      const user = await this.authService.debugCreateUser(testUser);
+      
+      return {
+        ok: true,
+        message: 'Usuario de prueba creado',
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: user.role
+        }
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error.message
+      };
+    }
+  }
+
+  // 🔍 LOGIN SIMPLE PARA DEBUG
+  @Post('debug-login-simple')
+  async debugLoginSimple(@Body() body: { username: string }) {
+    const user = await this.authService.debugFindUser(body.username);
     
     if (!user) {
-      throw new Error('Credenciales inválidas');
+      throw new UnauthorizedException('Usuario no existe');
     }
 
-    // ✅ BYPASS COMPLETO - Generar token directamente sin 2FA
-    const payload = { 
-      username: user.username, 
-      userId: user.id, 
-      role: user.role 
-    };
-    
     return {
-      access_token: await this.authService.generateToken(payload),
+      success: true,
       user: {
         id: user.id,
         username: user.username,
-        email: user.email,
-        role: user.role
+        role: user.role,
+        email: user.email
       },
-      message: 'Login directo exitoso (bypass 2FA)'
+      message: 'Debug login exitoso'
     };
+  }
+
+  // ENDPOINTS ORIGINALES
+  @Post('login-direct')
+  @HttpCode(HttpStatus.OK)
+  async loginDirect(@Body() loginDto: LoginDto) {
+    return this.authService.loginDirect(loginDto);
   }
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(@Body() loginDto: LoginDto) {
-    const user = await this.authService.validateUser(loginDto.username, loginDto.password);
-    return this.authService.login(user);
+    return this.authService.login(loginDto);
   }
 
   @Post('verify-2fa')
@@ -84,5 +146,11 @@ export class AuthController {
       service: 'Auth Service',
       version: '1.0.0'
     };
+  }
+
+  @Post('debug-login')
+  @HttpCode(HttpStatus.OK)
+  async debugLogin(@Body() loginDto: LoginDto) {
+    return this.authService.debugLogin(loginDto);
   }
 }

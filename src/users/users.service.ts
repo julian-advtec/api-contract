@@ -1,4 +1,4 @@
-import { Injectable, ConflictException } from '@nestjs/common';
+import { Injectable, ConflictException, InternalServerErrorException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
@@ -13,54 +13,85 @@ export class UsersService {
   ) {}
 
   async findByUsername(username: string): Promise<User | null> {
-    return this.usersRepository.findOne({ where: { username } });
+    try {
+      return await this.usersRepository.findOne({ where: { username } });
+    } catch (error) {
+      throw new InternalServerErrorException('Error buscando usuario por username');
+    }
   }
 
   async findByEmail(email: string): Promise<User | null> {
-    return this.usersRepository.findOne({ where: { email } });
+    try {
+      return await this.usersRepository.findOne({ where: { email } });
+    } catch (error) {
+      throw new InternalServerErrorException('Error buscando usuario por email');
+    }
   }
 
   async findById(id: string): Promise<User | null> {
-    return this.usersRepository.findOne({ where: { id } });
+    try {
+      return await this.usersRepository.findOne({ where: { id } });
+    } catch (error) {
+      throw new InternalServerErrorException('Error buscando usuario por ID');
+    }
   }
 
-  async create(userData: { username: string; password: string; email: string; role: UserRole }): Promise<User> {
-    const existingUser = await this.findByUsername(userData.username);
-    if (existingUser) {
-      throw new ConflictException('El usuario ya existe');
+  async create(userData: {
+    username: string;
+    password: string;
+    email: string;
+    role: UserRole;
+  }): Promise<User> {
+    try {
+      const existingUser = await this.findByUsername(userData.username);
+      if (existingUser) throw new ConflictException('El usuario ya existe');
+
+      const existingEmail = await this.findByEmail(userData.email);
+      if (existingEmail) throw new ConflictException('El email ya está registrado');
+
+      const hashedPassword = await bcrypt.hash(userData.password, 12);
+
+      const user = this.usersRepository.create({
+        ...userData,
+        password: hashedPassword,
+      });
+
+      return await this.usersRepository.save(user);
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Error creando usuario');
     }
-
-    const existingEmail = await this.findByEmail(userData.email);
-    if (existingEmail) {
-      throw new ConflictException('El email ya está registrado');
-    }
-
-    const hashedPassword = await bcrypt.hash(userData.password, 12);
-    
-    const user = this.usersRepository.create({
-      ...userData,
-      password: hashedPassword,
-    });
-
-    return this.usersRepository.save(user);
   }
 
   async updateTwoFactorCode(userId: string, code: string, expires: Date): Promise<void> {
-    await this.usersRepository.update(userId, {
-      twoFactorCode: code,
-      twoFactorExpires: expires,
-    });
+    try {
+      await this.usersRepository.update(userId, {
+        twoFactorCode: code,
+        twoFactorExpires: expires,
+      });
+    } catch (error) {
+      throw new InternalServerErrorException('Error actualizando código 2FA');
+    }
   }
 
-  
   async clearTwoFactorCode(userId: string): Promise<void> {
-    await this.usersRepository.update(userId, {
-      twoFactorCode: null as any, // ✅ Usar null en lugar de undefined
-      twoFactorExpires: null as any,
-    });
+    try {
+      await this.usersRepository.update(userId, {
+        twoFactorCode: null,
+        twoFactorExpires: null,
+      });
+    } catch (error) {
+      throw new InternalServerErrorException('Error limpiando código 2FA');
+    }
   }
 
   async findAll(): Promise<User[]> {
-    return this.usersRepository.find();
+    try {
+      return await this.usersRepository.find();
+    } catch (error) {
+      throw new InternalServerErrorException('Error obteniendo usuarios');
+    }
   }
 }
