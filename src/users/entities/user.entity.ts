@@ -1,10 +1,5 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  UpdateDateColumn,
-} from 'typeorm';
+// En user.entity.ts - AGREGAR LAS NUEVAS PROPIEDADES
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { UserRole } from '../enums/user-role.enum';
 
 @Entity('users')
@@ -24,21 +19,31 @@ export class User {
   @Column({
     type: 'enum',
     enum: UserRole,
-    default: UserRole.RADICADOR,
+    default: UserRole.RADICADOR
   })
   role: UserRole;
 
   @Column({ default: false })
   isEmailVerified: boolean;
 
-  @Column({ type: 'varchar', nullable: true })
-  emailVerificationCode: string | null;
+  @Column({ nullable: true })
+  emailVerificationCode: string;
 
-  @Column({ type: 'varchar', nullable: true })
-  twoFactorCode: string | null; // ✅ string | null
+  @Column({ nullable: true })
+  twoFactorCode: string;
 
   @Column({ type: 'timestamp', nullable: true })
-  twoFactorExpires: Date | null;
+  twoFactorExpires: Date;
+
+  @Column({ default: 0 })
+  twoFactorAttempts: number;
+
+  // ✅ AGREGAR ESTAS NUEVAS PROPIEDADES
+  @Column({ nullable: true })
+  resetToken: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  resetTokenExpires: Date;
 
   @CreateDateColumn()
   createdAt: Date;

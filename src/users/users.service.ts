@@ -1,3 +1,4 @@
+// users.service.ts - COMPLETO Y CORREGIDO
 import { Injectable, ConflictException, InternalServerErrorException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -10,7 +11,7 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private usersRepository: Repository<User>,
-  ) {}
+  ) { }
 
   async findByUsername(username: string): Promise<User | null> {
     try {
@@ -70,17 +71,30 @@ export class UsersService {
       await this.usersRepository.update(userId, {
         twoFactorCode: code,
         twoFactorExpires: expires,
+        twoFactorAttempts: 0
       });
     } catch (error) {
       throw new InternalServerErrorException('Error actualizando código 2FA');
     }
   }
 
-  async clearTwoFactorCode(userId: string): Promise<void> {
+  async updateTwoFactorAttempts(userId: string, attempts: number): Promise<void> {
     try {
       await this.usersRepository.update(userId, {
-        twoFactorCode: null,
-        twoFactorExpires: null,
+        twoFactorAttempts: attempts
+      });
+    } catch (error) {
+      throw new InternalServerErrorException('Error actualizando intentos 2FA');
+    }
+  }
+
+  async clearTwoFactorCode(userId: string): Promise<void> {
+    try {
+      // ✅ USAR undefined EN LUGAR DE null
+      await this.usersRepository.update(userId, {
+        twoFactorCode: undefined,
+        twoFactorExpires: undefined,
+        twoFactorAttempts: 0
       });
     } catch (error) {
       throw new InternalServerErrorException('Error limpiando código 2FA');
@@ -92,6 +106,54 @@ export class UsersService {
       return await this.usersRepository.find();
     } catch (error) {
       throw new InternalServerErrorException('Error obteniendo usuarios');
+    }
+  }
+
+  // ---------------- RESET PASSWORD METHODS ----------------
+  async updateResetToken(userId: string, resetToken: string, resetTokenExpires: Date): Promise<void> {
+    try {
+      await this.usersRepository.update(userId, {
+        resetToken,
+        resetTokenExpires,
+        updatedAt: new Date()
+      });
+    } catch (error) {
+      throw new InternalServerErrorException('Error actualizando token de reset');
+    }
+  }
+
+  async findByResetToken(resetToken: string): Promise<User | null> {
+    try {
+      return await this.usersRepository.findOne({
+        where: { resetToken }
+      });
+    } catch (error) {
+      throw new InternalServerErrorException('Error buscando usuario por reset token');
+    }
+  }
+
+  async updatePassword(userId: string, newPassword: string): Promise<void> {
+    try {
+      const hashedPassword = await bcrypt.hash(newPassword, 12);
+      await this.usersRepository.update(userId, {
+        password: hashedPassword,
+        updatedAt: new Date()
+      });
+    } catch (error) {
+      throw new InternalServerErrorException('Error actualizando contraseña');
+    }
+  }
+
+  async clearResetToken(userId: string): Promise<void> {
+    try {
+      // ✅ USAR undefined EN LUGAR DE null
+      await this.usersRepository.update(userId, {
+        resetToken: undefined,
+        resetTokenExpires: undefined,
+        updatedAt: new Date()
+      });
+    } catch (error) {
+      throw new InternalServerErrorException('Error limpiando token de reset');
     }
   }
 }

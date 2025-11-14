@@ -1,3 +1,4 @@
+// email.service.ts - COMPLETO Y CORREGIDO
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
@@ -17,11 +18,17 @@ interface GraphError {
   };
 }
 
+interface EmailData {
+  subject: string;
+  to: string[];
+  html: string;
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
 
-  constructor(private config: ConfigService) {}
+  constructor(private config: ConfigService) { }
 
   isEmailConfigured(): boolean {
     const tenantId = this.config.get<string>('AZURE_TENANT_ID');
@@ -30,11 +37,11 @@ export class EmailService {
     const sender = this.config.get<string>('EMAIL_FROM');
 
     const configured = !!(tenantId && clientId && clientSecret && sender);
-    
+
     if (!configured) {
       this.logger.warn('❌ Azure email configuration incomplete');
     }
-    
+
     return configured;
   }
 
@@ -44,7 +51,6 @@ export class EmailService {
       const clientId = this.config.get<string>('AZURE_CLIENT_ID');
       const clientSecret = this.config.get<string>('AZURE_CLIENT_SECRET');
 
-      // 🔥 VALIDAR QUE NO SEAN UNDEFINED
       if (!tenantId || !clientId || !clientSecret) {
         throw new Error('Azure configuration missing');
       }
@@ -60,7 +66,7 @@ export class EmailService {
       params.append('grant_type', 'client_credentials');
 
       const response = await axios.post<TokenResponse>(url, params.toString(), {
-        headers: { 
+        headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
           'Accept': 'application/json'
         },
@@ -88,12 +94,13 @@ export class EmailService {
     }
   }
 
-  async sendTwoFactorCode(email: string, code: string): Promise<void> {
+  // ✅ MÉTODO SENDEMAIL AGREGADO
+  async sendEmail(emailData: EmailData): Promise<void> {
     if (!this.isEmailConfigured()) {
       throw new Error('Azure email service not configured');
     }
 
-    this.logger.log(`📧 Sending 2FA code to: ${email}`);
+    this.logger.log(`📧 Sending email to: ${emailData.to.join(', ')}`);
 
     try {
       const accessToken = await this.getAccessToken();
@@ -103,27 +110,25 @@ export class EmailService {
         throw new Error('EMAIL_FROM not configured');
       }
 
-      const emailData = {
+      const graphEmailData = {
         message: {
-          subject: 'Código de Verificación - Sistema de Contratos',
+          subject: emailData.subject,
           body: {
             contentType: 'HTML',
-            content: this.getTwoFactorEmailTemplate(code),
+            content: emailData.html,
           },
-          toRecipients: [
-            {
-              emailAddress: {
-                address: email,
-              },
+          toRecipients: emailData.to.map(email => ({
+            emailAddress: {
+              address: email,
             },
-          ],
+          })),
         },
         saveToSentItems: true,
       };
 
       await axios.post(
         `https://graph.microsoft.com/v1.0/users/${senderEmail}/sendMail`,
-        emailData,
+        graphEmailData,
         {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -134,17 +139,40 @@ export class EmailService {
         }
       );
 
-      this.logger.log(`✅ 2FA code sent successfully to: ${email}`);
-      
+      this.logger.log(`✅ Email sent successfully to: ${emailData.to.join(', ')}`);
+
     } catch (error: any) {
       const errorData = error.response?.data as GraphError;
-      this.logger.error(`❌ Failed to send 2FA email to ${email}:`, {
+      this.logger.error(`❌ Failed to send email to ${emailData.to.join(', ')}:`, {
         status: error.response?.status,
         error: errorData?.error?.code,
         message: errorData?.error?.message,
       });
 
       throw new Error(`Failed to send email: ${errorData?.error?.message || error.message}`);
+    }
+  }
+
+  async sendTwoFactorCode(email: string, code: string): Promise<void> {
+    if (!this.isEmailConfigured()) {
+      throw new Error('Azure email service not configured');
+    }
+
+    this.logger.log(`📧 Sending 2FA code to: ${email}`);
+
+    try {
+      const emailData: EmailData = {
+        subject: 'Código de Verificación - Sistema de Contratos',
+        to: [email],
+        html: this.getTwoFactorEmailTemplate(code),
+      };
+
+      await this.sendEmail(emailData);
+      this.logger.log(`✅ 2FA code sent successfully to: ${email}`);
+
+    } catch (error: any) {
+      this.logger.error(`❌ Failed to send 2FA email to ${email}:`, error.message);
+      throw error;
     }
   }
 
@@ -155,49 +183,31 @@ export class EmailService {
     }
 
     try {
-      const accessToken = await this.getAccessToken();
-      const senderEmail = this.config.get<string>('EMAIL_FROM');
-
-      if (!senderEmail) {
-        this.logger.warn('EMAIL_FROM not configured, skipping welcome email');
-        return;
-      }
-
-      const emailData = {
-        message: {
-          subject: 'Bienvenido al Sistema de Contratos',
-          body: {
-            contentType: 'HTML',
-            content: this.getWelcomeEmailTemplate(username),
-          },
-          toRecipients: [
-            {
-              emailAddress: {
-                address: email,
-              },
-            },
-          ],
-        },
-        saveToSentItems: true,
+      const emailData: EmailData = {
+        subject: 'Bienvenido al Sistema de Contratos',
+        to: [email],
+        html: this.getWelcomeEmailTemplate(username),
       };
 
-      await axios.post(
-        `https://graph.microsoft.com/v1.0/users/${senderEmail}/sendMail`,
-        emailData,
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 30000,
-        }
-      );
-
+      await this.sendEmail(emailData);
       this.logger.log(`✅ Welcome email sent to: ${email}`);
     } catch (error: any) {
       this.logger.error(`❌ Failed to send welcome email to ${email}:`, error.message);
       // Don't throw error for welcome emails
     }
+  }
+
+  async sendPasswordResetEmail(email: string, resetToken: string, username: string): Promise<void> {
+    const frontendUrl = this.config.get<string>('FRONTEND_URL') || 'http://localhost:4200';
+    const resetLink = `${frontendUrl}/auth/reset-password/${resetToken}`;
+
+    const emailData: EmailData = {
+      subject: 'Recuperación de Contraseña - Sistema de Contratos',
+      to: [email],
+      html: this.getPasswordResetEmailTemplate(username, resetLink),
+    };
+
+    await this.sendEmail(emailData);
   }
 
   private getTwoFactorEmailTemplate(code: string): string {
@@ -258,6 +268,51 @@ export class EmailService {
             <p>Sistema de Contratos<br>La María</p>
           </div>
         </div>
+      </body>
+      </html>
+    `;
+  }
+
+  private getPasswordResetEmailTemplate(username: string, resetLink: string): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: #2563eb; color: white; padding: 20px; text-align: center; }
+              .content { background: #f9fafb; padding: 30px; }
+              .button { background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; }
+              .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 14px; }
+          </style>
+      </head>
+      <body>
+          <div class="container">
+              <div class="header">
+                  <h1>Recuperación de Contraseña</h1>
+              </div>
+              <div class="content">
+                  <h2>Hola ${username},</h2>
+                  <p>Has solicitado restablecer tu contraseña. Haz clic en el siguiente botón para crear una nueva contraseña:</p>
+                  
+                  <p style="text-align: center; margin: 30px 0;">
+                      <a href="${resetLink}" class="button">Restablecer Contraseña</a>
+                  </p>
+                  
+                  <p>Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
+                  <p style="word-break: break-all; background: #e5e7eb; padding: 10px; border-radius: 4px;">
+                      ${resetLink}
+                  </p>
+                  
+                  <p><strong>Este enlace expirará en 1 hora.</strong></p>
+                  
+                  <p>Si no solicitaste este cambio, puedes ignorar este mensaje.</p>
+              </div>
+              <div class="footer">
+                  <p>&copy; 2025 Sistema de Contratos. Todos los derechos reservados.</p>
+              </div>
+          </div>
       </body>
       </html>
     `;
