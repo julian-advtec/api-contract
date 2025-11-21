@@ -117,6 +117,8 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async loginDirect(@Body() loginDto: LoginDto) {
     const result = await this.authService.loginDirect(loginDto);
+
+    // ✅ CORRECCIÓN: Retornar directamente el resultado, no envolverlo en data
     return {
       ok: true,
       ...result,

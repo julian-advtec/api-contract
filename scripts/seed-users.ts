@@ -14,13 +14,13 @@ interface UserSeed {
 const usersToSeed: UserSeed[] = [
   {
     username: 'sistemas2',
-    email: 'prueba2fa@lamaria.gov.co', // 🔥 CORREO DIFERENTE PARA ADMIN
+    email: 'prueba2fa@lamaria.gov.co', // 🔥 CORREO ALTERNATIVO PARA ADMIN
     password: 'sistemas123',
     role: UserRole.ADMIN
   },
   {
     username: 'prueba2fa',
-    email: 'sistemas2@lamaria.gov.co', // 🔥 CORREO REAL PARA PRUEBA 2FA
+    email: 'sistemas2@lamaria.gov.co', // 🔥 CORREO REAL PARA PRUEBA 2FA (RADICADOR)
     password: 'prueba123',
     role: UserRole.RADICADOR
   },
@@ -139,6 +139,10 @@ async function seedUsers() {
     console.log('   - Login con: prueba2fa / prueba123');
     console.log('   - El correo 2FA se enviará a: sistemas2@lamaria.gov.co');
     console.log('   - Mientras tanto, el código aparecerá en los logs del servidor');
+
+    console.log('\n🔐 Configuración de correos:');
+    console.log('   - Admin (sistemas2): prueba2fa@lamaria.gov.co');
+    console.log('   - Radicador 2FA (prueba2fa): sistemas2@lamaria.gov.co');
 
   } catch (error) {
     console.error('❌ Error en el seed:', error);
