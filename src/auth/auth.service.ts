@@ -1,4 +1,3 @@
-// auth.service.ts - COMPLETO Y CORREGIDO
 import {
   Injectable,
   UnauthorizedException,
@@ -9,12 +8,13 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
-import * as crypto from 'crypto'; // ✅ IMPORT CORREGIDO
+import * as crypto from 'crypto';
 import { UsersService } from '../users/users.service';
 import { EmailService } from '../email/email.service';
 import { UserRole } from '../users/enums/user-role.enum';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { CreateUserDto } from '../users/dto/create-user.dto';
 
 // ✅ INTERFAZ DEFINIDA EN EL MISMO ARCHIVO
 interface LoginResponse {
@@ -222,7 +222,7 @@ export class AuthService {
     // 4. Verificar código
     if (user.twoFactorCode !== code) {
       // Incrementar intentos fallidos - necesitamos actualizar el usuario
-      await this.updateTwoFactorAttempts(user.id, user.twoFactorAttempts + 1);
+      await this.usersService.updateTwoFactorAttempts(user.id, user.twoFactorAttempts + 1);
       throw new Error('Código inválido');
     }
 
@@ -298,13 +298,24 @@ export class AuthService {
   async register(registerDto: RegisterDto) {
     const { username, email, password, role } = registerDto;
 
-    if (await this.usersService.findByUsername(username))
+    if (await this.usersService.findByUsername(username)) {
       throw new ConflictException('El nombre de usuario ya está en uso');
+    }
 
-    if (await this.usersService.findByEmail(email))
+    if (await this.usersService.findByEmail(email)) {
       throw new ConflictException('El email ya está registrado');
+    }
 
-    const user = await this.usersService.create({ username, email, password, role });
+    // Crear DTO completo con fullName
+    const createUserDto: CreateUserDto = {
+      username,
+      email,
+      password,
+      role,
+      fullName: username // Usar username como fullName por defecto
+    };
+
+    const user = await this.usersService.create(createUserDto);
 
     if (this.emailService.isEmailConfigured()) {
       try {
@@ -314,17 +325,17 @@ export class AuthService {
       }
     }
 
-    const { password: _, ...userWithoutPassword } = user;
-    return userWithoutPassword;
+    return user;
   }
 
   // ---------------- PERFIL ----------------
   async getProfile(userId: string) {
     const user = await this.usersService.findById(userId);
-    if (!user) throw new UnauthorizedException('Usuario no encontrado');
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado');
+    }
 
-    const { password: _, ...userWithoutPassword } = user;
-    return userWithoutPassword;
+    return user;
   }
 
   // ---------------- DEBUG LOGIN ----------------

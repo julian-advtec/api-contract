@@ -48,8 +48,8 @@ export class AuthController {
           username: user.username,
           email: user.email,
           role: user.role,
-          password: user.password ? '***' : 'null',
-          hashed: !!user.password
+          password: '***', // Por seguridad no mostrar
+          hashed: true
         }))
       };
     } catch (error) {

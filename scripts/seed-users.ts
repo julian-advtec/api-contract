@@ -9,62 +9,72 @@ interface UserSeed {
   email: string;
   password: string;
   role: UserRole;
+  fullName: string;
 }
 
 const usersToSeed: UserSeed[] = [
   {
     username: 'sistemas2',
-    email: 'prueba2fa@lamaria.gov.co', // 🔥 CORREO ALTERNATIVO PARA ADMIN
+    email: 'prueba2fa@lamaria.gov.co',
     password: 'sistemas123',
-    role: UserRole.ADMIN
+    role: UserRole.ADMIN,
+    fullName: 'Administrador del Sistema'
   },
   {
     username: 'prueba2fa',
-    email: 'sistemas2@lamaria.gov.co', // 🔥 CORREO REAL PARA PRUEBA 2FA (RADICADOR)
+    email: 'sistemas2@lamaria.gov.co',
     password: 'prueba123',
-    role: UserRole.RADICADOR
+    role: UserRole.RADICADOR,
+    fullName: 'Usuario Prueba 2FA'
   },
   {
     username: 'radicador1',
     email: 'radicador1@contratos.com',
     password: 'radicador123',
-    role: UserRole.RADICADOR
+    role: UserRole.RADICADOR,
+    fullName: 'Radicador Principal'
   },
   {
     username: 'supervisor1',
     email: 'supervisor1@contratos.com',
     password: 'supervisor123',
-    role: UserRole.SUPERVISOR
+    role: UserRole.SUPERVISOR,
+    fullName: 'Supervisor General'
   },
   {
     username: 'auditor1',
     email: 'auditor1@contratos.com',
     password: 'auditor123',
-    role: UserRole.AUDITOR_CUENTAS
+    role: UserRole.AUDITOR_CUENTAS,
+    fullName: 'Auditor de Cuentas'
   },
   {
     username: 'contabilidad1',
     email: 'contabilidad1@contratos.com',
     password: 'contabilidad123',
-    role: UserRole.CONTABILIDAD
+    role: UserRole.CONTABILIDAD,
+    fullName: 'Contabilidad Principal'
   },
   {
     username: 'tesoreria1',
     email: 'tesoreria1@contratos.com',
     password: 'tesoreria123',
-    role: UserRole.TESORERIA
+    role: UserRole.TESORERIA,
+    fullName: 'Tesorería General'
   },
   {
     username: 'asesor1',
     email: 'asesor1@contratos.com',
     password: 'asesor123',
-    role: UserRole.ASESOR_GERENCIA
+    role: UserRole.ASESOR_GERENCIA,
+    fullName: 'Asesor de Gerencia'
   },
   {
     username: 'rendicion1',
     email: 'rendicion1@contratos.com',
     password: 'rendicion123',
-    role: UserRole.RENDICION_CUENTAS
+    role: UserRole.RENDICION_CUENTAS,
+    fullName: 'Rendición de Cuentas'
   }
 ];
 
@@ -106,7 +116,11 @@ async function seedUsers() {
         username: userData.username,
         email: userData.email,
         password: hashedPassword,
-        role: userData.role
+        role: userData.role,
+        fullName: userData.fullName,
+        isActive: true,
+        isEmailVerified: true,
+        createdBy: 'system'
       });
 
       console.log(`✅ Usuario ${userData.username} (${userData.role}) creado`);
@@ -114,13 +128,13 @@ async function seedUsers() {
 
     // Verificar usuarios creados
     const finalUsers = await usersRepository.find({
-      select: ['id', 'username', 'email', 'role']
+      select: ['id', 'username', 'email', 'role', 'fullName']
     });
     
     console.log(`\n📊 Total de usuarios en base de datos: ${finalUsers.length}`);
     console.log('\n👥 Usuarios creados:');
     finalUsers.forEach(user => {
-      console.log(`   - ${user.username} (${user.role}) - ${user.email}`);
+      console.log(`   - ${user.username} (${user.role}) - ${user.email} - ${user.fullName}`);
     });
 
     console.log('\n🎉 Todos los usuarios han sido creados exitosamente!');
@@ -139,10 +153,6 @@ async function seedUsers() {
     console.log('   - Login con: prueba2fa / prueba123');
     console.log('   - El correo 2FA se enviará a: sistemas2@lamaria.gov.co');
     console.log('   - Mientras tanto, el código aparecerá en los logs del servidor');
-
-    console.log('\n🔐 Configuración de correos:');
-    console.log('   - Admin (sistemas2): prueba2fa@lamaria.gov.co');
-    console.log('   - Radicador 2FA (prueba2fa): sistemas2@lamaria.gov.co');
 
   } catch (error) {
     console.error('❌ Error en el seed:', error);
