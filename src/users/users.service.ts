@@ -1,7 +1,7 @@
-import { 
-  Injectable, 
-  ConflictException, 
-  InternalServerErrorException, 
+import {
+  Injectable,
+  ConflictException,
+  InternalServerErrorException,
   NotFoundException
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -208,7 +208,7 @@ export class UsersService {
 
       user.isActive = !user.isActive;
       user.updatedAt = new Date();
-      
+
       // Solo asignar si existe
       if (updatedBy) {
         user.updatedBy = updatedBy;
@@ -233,7 +233,7 @@ export class UsersService {
 
       user.isActive = true;
       user.updatedAt = new Date();
-      
+
       if (updatedBy) {
         user.updatedBy = updatedBy;
       }
@@ -257,7 +257,7 @@ export class UsersService {
 
       user.isActive = false;
       user.updatedAt = new Date();
-      
+
       if (updatedBy) {
         user.updatedBy = updatedBy;
       }
@@ -296,7 +296,7 @@ export class UsersService {
 
       user.isActive = false;
       user.updatedAt = new Date();
-      
+
       if (updatedBy) {
         user.updatedBy = updatedBy;
       }
@@ -322,11 +322,11 @@ export class UsersService {
       const total = await this.usersRepository.count();
       const active = await this.usersRepository.count({ where: { isActive: true } });
       const inactive = await this.usersRepository.count({ where: { isActive: false } });
-      
+
       const byRole = {} as Record<UserRole, number>;
       for (const role of Object.values(UserRole)) {
-        byRole[role] = await this.usersRepository.count({ 
-          where: { role, isActive: true } 
+        byRole[role] = await this.usersRepository.count({
+          where: { role, isActive: true }
         });
       }
 
@@ -429,4 +429,6 @@ export class UsersService {
       throw new InternalServerErrorException('Error limpiando token de reset');
     }
   }
+
+  
 }

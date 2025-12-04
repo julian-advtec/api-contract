@@ -15,7 +15,7 @@ export class User {
   @Column({ unique: true })
   email: string;
 
-  @Column({ name: 'full_name' })
+  @Column({ name: 'full_name', nullable: true }) // ✅ TEMPORAL: nullable: true
   fullName: string;
 
   @Column({

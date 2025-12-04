@@ -79,7 +79,10 @@ const usersToSeed: UserSeed[] = [
 ];
 
 async function seedUsers() {
-  const dataSource = new DataSource(ormconfig);
+  const dataSource = new DataSource({
+    ...ormconfig,
+    synchronize: false, // ✅ Desactivar synchronize aquí también
+  });
   
   try {
     await dataSource.initialize();
@@ -87,32 +90,31 @@ async function seedUsers() {
 
     const usersRepository = dataSource.getRepository(User);
 
-    // 🔥 LIMPIAR PRIMERO TODOS LOS USUARIOS EXISTENTES
-    console.log('🧹 Limpiando usuarios existentes...');
-    await usersRepository.clear();
-    console.log('✅ Todos los usuarios eliminados');
+    // 1. PRIMERO: Verificar si la tabla tiene datos
+    const existingCount = await usersRepository.count();
+    console.log(`📊 Usuarios existentes en BD: ${existingCount}`);
+
+    if (existingCount > 0) {
+      console.log('⚠️  La tabla ya tiene datos. Limpiando...');
+      
+      // Intentar TRUNCATE (más rápido)
+      try {
+        await dataSource.query('TRUNCATE TABLE users CASCADE');
+        console.log('✅ Tabla limpiada con TRUNCATE');
+      } catch (truncateError) {
+        console.log('⚠️  TRUNCATE falló, usando DELETE...');
+        await usersRepository.clear();
+        console.log('✅ Tabla limpiada con DELETE');
+      }
+    }
 
     console.log('🌱 Creando nuevos usuarios...');
 
     for (const userData of usersToSeed) {
-      // Verificar si el usuario ya existe (aunque limpiamos, por seguridad)
-      const existingUser = await usersRepository.findOne({
-        where: [
-          { username: userData.username },
-          { email: userData.email }
-        ]
-      });
-
-      if (existingUser) {
-        console.log(`⚠️ Usuario ${userData.username} o email ${userData.email} ya existe, saltando...`);
-        continue;
-      }
-
       // Crear usuario con contraseña hasheada
       const hashedPassword = await bcrypt.hash(userData.password, 12);
       
-      // Insertar directamente sin crear instancia compleja
-      await usersRepository.insert({
+      const user = usersRepository.create({
         username: userData.username,
         email: userData.email,
         password: hashedPassword,
@@ -123,6 +125,7 @@ async function seedUsers() {
         createdBy: 'system'
       });
 
+      await usersRepository.save(user);
       console.log(`✅ Usuario ${userData.username} (${userData.role}) creado`);
     }
 
@@ -148,11 +151,6 @@ async function seedUsers() {
     console.log('🏦 Tesorería: tesoreria1 / tesoreria123');
     console.log('💼 Asesor: asesor1 / asesor123');
     console.log('📊 Rendición: rendicion1 / rendicion123');
-
-    console.log('\n🎯 Para probar 2FA:');
-    console.log('   - Login con: prueba2fa / prueba123');
-    console.log('   - El correo 2FA se enviará a: sistemas2@lamaria.gov.co');
-    console.log('   - Mientras tanto, el código aparecerá en los logs del servidor');
 
   } catch (error) {
     console.error('❌ Error en el seed:', error);

@@ -22,18 +22,18 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from './enums/user-role.enum';
 
 @Controller('users')
-@UseGuards(JwtAuthGuard, RolesGuard)
+// @UseGuards(JwtAuthGuard, RolesGuard) // COMENTADO
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN)
+  // @Roles(UserRole.ADMIN) // COMENTADO
   findAll() {
     return this.usersService.findAll();
   }
 
   @Get('filtered')
-  @Roles(UserRole.ADMIN)
+  // @Roles(UserRole.ADMIN) // COMENTADO
   findWithFilters(
     @Query('search') search?: string,
     @Query('role') role?: UserRole,
@@ -115,4 +115,6 @@ export class UsersController {
   softRemove(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
     return this.usersService.softRemove(id, req.user?.userId);
   }
+
+  
 }
