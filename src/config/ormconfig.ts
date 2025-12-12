@@ -1,5 +1,9 @@
 import { DataSourceOptions } from 'typeorm';
-import { User } from '../users/entities/user.entity'; // ✅ Ruta corregida
+import { User } from '../users/entities/user.entity';
+import { Documento } from '../radicacion/entities/documento.entity';
+// ✅ Comentar hasta que las entidades estén correctas
+// import { Contratista } from '../radicacion/entities/contratista.entity';
+// import { RegistroAcceso } from '../radicacion/entities/registro-acceso.entity';
 import 'dotenv/config';
 
 export const ormconfig: DataSourceOptions = {
@@ -9,7 +13,13 @@ export const ormconfig: DataSourceOptions = {
   username: process.env.DB_USER,
   password: process.env.DB_PASS,
   database: process.env.DB_NAME,
-  entities: [User],
-  synchronize: true,
-  logging: true,
+  entities: [
+    User, 
+    Documento,
+    // ✅ Agregar cuando estén corregidas
+    // Contratista,
+    // RegistroAcceso
+  ],
+  synchronize: process.env.NODE_ENV !== 'production',
+  logging: process.env.NODE_ENV === 'development',
 };

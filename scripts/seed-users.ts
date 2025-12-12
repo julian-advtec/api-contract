@@ -16,7 +16,7 @@ const usersToSeed: UserSeed[] = [
   {
     username: 'sistemas2',
     email: 'prueba2fa@lamaria.gov.co',
-    password: 'sistemas123',
+    password: '',
     role: UserRole.ADMIN,
     fullName: 'Administrador del Sistema'
   },
@@ -79,92 +79,159 @@ const usersToSeed: UserSeed[] = [
 ];
 
 async function seedUsers() {
-  const dataSource = new DataSource({
-    ...ormconfig,
-    synchronize: false, // ✅ Desactivar synchronize aquí también
-  });
+  console.log('🚀 Iniciando seed de usuarios...');
+  
+  const dataSource = new DataSource(ormconfig);
   
   try {
     await dataSource.initialize();
     console.log('✅ Conectado a la base de datos');
 
     const usersRepository = dataSource.getRepository(User);
-
-    // 1. PRIMERO: Verificar si la tabla tiene datos
-    const existingCount = await usersRepository.count();
-    console.log(`📊 Usuarios existentes en BD: ${existingCount}`);
-
-    if (existingCount > 0) {
-      console.log('⚠️  La tabla ya tiene datos. Limpiando...');
+    
+    // 0. PRIMERO: Verificar y corregir problemas de columnas NULL
+    console.log('🔍 Verificando estructura de la tabla...');
+    try {
+      const queryRunner = dataSource.createQueryRunner();
       
-      // Intentar TRUNCATE (más rápido)
+      // Si la tabla no existe, salir (TypeORM la creará al iniciar)
+      const tableExists = await queryRunner.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_schema = 'public' 
+          AND table_name = 'users'
+        );
+      `);
+      
+      if (!tableExists[0].exists) {
+        console.log('⚠️  La tabla users no existe. Ejecuta primero tu aplicación NestJS.');
+        console.log('💡 Ejecuta: npm run start:dev');
+        return;
+      }
+      
+      // Verificar si hay problemas de NOT NULL
+      const nullColumns = await queryRunner.query(`
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name = 'users' 
+        AND is_nullable = 'NO'
+        AND column_name IN ('username', 'email', 'full_name', 'role', 'password');
+      `);
+      
+      console.log(`📊 Columnas NOT NULL encontradas: ${nullColumns.length}`);
+      
+    } catch (checkError) {
+      console.log('⚠️  Error verificando tabla:', checkError.message);
+    }
+
+    // 1. LIMPIAR TABLA (si existe)
+    console.log('🧹 Limpiando tabla users...');
+    try {
+      await dataSource.query('TRUNCATE TABLE users CASCADE');
+      console.log('✅ Tabla limpiada con TRUNCATE');
+    } catch (error) {
+      console.log('⚠️  TRUNCATE falló, intentando DELETE...');
       try {
-        await dataSource.query('TRUNCATE TABLE users CASCADE');
-        console.log('✅ Tabla limpiada con TRUNCATE');
-      } catch (truncateError) {
-        console.log('⚠️  TRUNCATE falló, usando DELETE...');
         await usersRepository.clear();
         console.log('✅ Tabla limpiada con DELETE');
+      } catch (clearError) {
+        console.log('⚠️  DELETE también falló. Puede que la tabla esté vacía o no exista.');
       }
     }
 
-    console.log('🌱 Creando nuevos usuarios...');
-
+    // 2. CREAR USUARIOS
+    console.log(`🌱 Creando ${usersToSeed.length} usuarios...`);
+    
+    const createdUsers = [];
+    
     for (const userData of usersToSeed) {
-      // Crear usuario con contraseña hasheada
-      const hashedPassword = await bcrypt.hash(userData.password, 12);
-      
-      const user = usersRepository.create({
-        username: userData.username,
-        email: userData.email,
-        password: hashedPassword,
-        role: userData.role,
-        fullName: userData.fullName,
-        isActive: true,
-        isEmailVerified: true,
-        createdBy: 'system'
-      });
+      try {
+        const hashedPassword = await bcrypt.hash(userData.password, 12);
+        
+        const user = usersRepository.create({
+          username: userData.username,
+          email: userData.email,
+          password: hashedPassword,
+          role: userData.role,
+          fullName: userData.fullName,
+          isActive: true,
+          isEmailVerified: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          createdBy: 'system_seed'
+        });
 
-      await usersRepository.save(user);
-      console.log(`✅ Usuario ${userData.username} (${userData.role}) creado`);
+        await usersRepository.save(user);
+        createdUsers.push(user);
+        console.log(`✅ ${userData.username} (${userData.role}) creado`);
+        
+      } catch (error) {
+        console.error(`❌ Error creando ${userData.username}:`, error.message);
+        
+        // Si es error de NULL, intentar método alternativo
+        if (error.message.includes('null value')) {
+          console.log(`🔄 Intentando método alternativo para ${userData.username}...`);
+          try {
+            // Insert directo con SQL
+            const hashedPassword = await bcrypt.hash(userData.password, 12);
+            await dataSource.query(`
+              INSERT INTO users (id, username, email, password, role, full_name, is_active, is_email_verified, created_at, updated_at, created_by)
+              VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, true, true, NOW(), NOW(), 'system_seed')
+            `, [userData.username, userData.email, hashedPassword, userData.role, userData.fullName]);
+            console.log(`✅ ${userData.username} creado con SQL directo`);
+          } catch (sqlError) {
+            console.error(`❌ Error SQL para ${userData.username}:`, sqlError.message);
+          }
+        }
+      }
     }
 
-    // Verificar usuarios creados
-    const finalUsers = await usersRepository.find({
-      select: ['id', 'username', 'email', 'role', 'fullName']
-    });
+    // 3. VERIFICAR RESULTADO
+    const finalCount = await usersRepository.count();
+    console.log(`\n📊 Total de usuarios creados: ${finalCount}/${usersToSeed.length}`);
     
-    console.log(`\n📊 Total de usuarios en base de datos: ${finalUsers.length}`);
-    console.log('\n👥 Usuarios creados:');
-    finalUsers.forEach(user => {
-      console.log(`   - ${user.username} (${user.role}) - ${user.email} - ${user.fullName}`);
-    });
+    if (finalCount > 0) {
+      const users = await usersRepository.find({
+        select: ['username', 'email', 'role', 'fullName'],
+        take: 5
+      });
+      
+      console.log('\n👥 Primeros usuarios en la BD:');
+      users.forEach(user => {
+        console.log(`   - ${user.username} (${user.role})`);
+      });
+    }
 
-    console.log('\n🎉 Todos los usuarios han sido creados exitosamente!');
-    console.log('\n📋 Credenciales de prueba:');
+    console.log('\n🎉 Seed completado!');
+    console.log('\n🔑 Credenciales de prueba:');
     console.log('👑 Admin (NO 2FA): sistemas2 / sistemas123');
-    console.log('🧪 Prueba 2FA (envío real): prueba2fa / prueba123');
+    console.log('🧪 Prueba 2FA: prueba2fa / prueba123');
     console.log('📝 Radicador: radicador1 / radicador123');
     console.log('👀 Supervisor: supervisor1 / supervisor123');
-    console.log('🔍 Auditor: auditor1 / auditor123');
-    console.log('💰 Contabilidad: contabilidad1 / contabilidad123');
-    console.log('🏦 Tesorería: tesoreria1 / tesoreria123');
-    console.log('💼 Asesor: asesor1 / asesor123');
-    console.log('📊 Rendición: rendicion1 / rendicion123');
 
   } catch (error) {
-    console.error('❌ Error en el seed:', error);
-    throw error;
+    console.error('❌ Error fatal en seed:', error);
+    console.error('Stack:', error.stack);
+    
+    // Si es el error de "column contains null values"
+    if (error.message?.includes('contiene valores null')) {
+      console.log('\n⚠️  ⚠️  ⚠️  PROBLEMA CRÍTICO');
+      console.log('💡 EJECUTA ESTOS COMANDOS EN ORDEN:');
+      console.log('1. psql -U postgres -d contract_db -c "DROP TABLE IF EXISTS users CASCADE;"');
+      console.log('2. Reinicia tu aplicación NestJS (npm run start:dev)');
+      console.log('3. Vuelve a ejecutar este script: npx ts-node scripts/seed-users.ts');
+    }
+    
   } finally {
     if (dataSource.isInitialized) {
       await dataSource.destroy();
-      console.log('✅ Conexión cerrada');
+      console.log('🔌 Conexión cerrada');
     }
   }
 }
 
 // Ejecutar el script
 seedUsers().catch(error => {
-  console.error('❌ Error fatal:', error);
+  console.error('❌ Error no manejado:', error);
   process.exit(1);
 });

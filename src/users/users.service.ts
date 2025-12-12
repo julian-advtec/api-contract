@@ -99,9 +99,11 @@ export class UsersService {
     }
   }
 
-  // ✨ CREATE & UPDATE METHODS
+  // ✨ CREATE & UPDATE METHODS - CORREGIDO
   async create(createUserDto: CreateUserDto, createdBy?: string): Promise<UserResponseDto> {
     try {
+      console.log('Recibiendo datos para crear usuario:', createUserDto);
+      
       // Verificar username único
       const existingUser = await this.findByUsername(createUserDto.username);
       if (existingUser) {
@@ -118,9 +120,14 @@ export class UsersService {
       const hashedPassword = await bcrypt.hash(createUserDto.password, 12);
 
       const userData: any = {
-        ...createUserDto,
+        username: createUserDto.username,
+        email: createUserDto.email,
+        fullName: createUserDto.fullName,
+        role: createUserDto.role,
         password: hashedPassword,
-        isActive: createUserDto.isActive ?? true
+        isActive: createUserDto.isActive ?? true,
+        createdAt: new Date(),
+        updatedAt: new Date()
       };
 
       // Solo agregar createdBy si se proporciona
@@ -128,19 +135,40 @@ export class UsersService {
         userData.createdBy = createdBy;
       }
 
+      console.log('Datos del usuario a crear:', userData);
+
       const user = this.usersRepository.create(userData);
       const savedUser = await this.usersRepository.save(user);
+      
+      console.log('Usuario guardado:', savedUser);
+      
+      // Asegurarnos de que savedUser sea un objeto User, no un array
+      if (Array.isArray(savedUser)) {
+        console.error('ERROR: savedUser es un array:', savedUser);
+        if (savedUser.length > 0) {
+          return new UserResponseDto(savedUser[0]);
+        } else {
+          throw new InternalServerErrorException('Error: No se pudo crear el usuario');
+        }
+      }
+      
       return new UserResponseDto(savedUser);
     } catch (error) {
+      console.error('Error en create:', error);
       if (error instanceof ConflictException) {
         throw error;
       }
-      throw new InternalServerErrorException('Error creando usuario');
+      if (error.code === '23505') { // PostgreSQL duplicate key error
+        throw new ConflictException('El nombre de usuario o email ya existe');
+      }
+      throw new InternalServerErrorException(`Error creando usuario: ${error.message}`);
     }
   }
 
   async update(id: string, updateUserDto: UpdateUserDto, updatedBy?: string): Promise<UserResponseDto> {
     try {
+      console.log(`Actualizando usuario ${id}:`, updateUserDto);
+      
       const user = await this.findById(id);
       if (!user) {
         throw new NotFoundException('Usuario no encontrado');
@@ -167,8 +195,11 @@ export class UsersService {
       }
 
       // Si se actualiza la contraseña, hashearla
-      if (updateUserDto.password) {
+      if (updateUserDto.password && updateUserDto.password.trim() !== '') {
         updateUserDto.password = await bcrypt.hash(updateUserDto.password, 12);
+      } else {
+        // Si no se proporciona contraseña, eliminar del DTO
+        delete updateUserDto.password;
       }
 
       const updateData: any = {
@@ -182,6 +213,8 @@ export class UsersService {
         updateData.updatedBy = updatedBy;
       }
 
+      console.log('Datos de actualización:', updateData);
+
       const updatedUser = await this.usersRepository.preload(updateData);
 
       if (!updatedUser) {
@@ -189,16 +222,32 @@ export class UsersService {
       }
 
       const savedUser = await this.usersRepository.save(updatedUser);
+      
+      console.log('Usuario actualizado:', savedUser);
+      
+      // Asegurarnos de que savedUser sea un objeto User
+      if (Array.isArray(savedUser)) {
+        if (savedUser.length > 0) {
+          return new UserResponseDto(savedUser[0]);
+        } else {
+          throw new InternalServerErrorException('Error: No se pudo actualizar el usuario');
+        }
+      }
+      
       return new UserResponseDto(savedUser);
     } catch (error) {
+      console.error('Error en update:', error);
       if (error instanceof ConflictException || error instanceof NotFoundException) {
         throw error;
       }
-      throw new InternalServerErrorException('Error actualizando usuario');
+      if (error.code === '23505') {
+        throw new ConflictException('El nombre de usuario o email ya existe');
+      }
+      throw new InternalServerErrorException(`Error actualizando usuario: ${error.message}`);
     }
   }
 
-  // 🚀 STATUS MANAGEMENT
+  // 🚀 STATUS MANAGEMENT - CORREGIDO
   async toggleUserStatus(id: string, updatedBy?: string): Promise<UserResponseDto> {
     try {
       const user = await this.findById(id);
@@ -215,6 +264,15 @@ export class UsersService {
       }
 
       const savedUser = await this.usersRepository.save(user);
+      
+      if (Array.isArray(savedUser)) {
+        if (savedUser.length > 0) {
+          return new UserResponseDto(savedUser[0]);
+        } else {
+          throw new InternalServerErrorException('Error: No se pudo cambiar el estado del usuario');
+        }
+      }
+      
       return new UserResponseDto(savedUser);
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -239,6 +297,15 @@ export class UsersService {
       }
 
       const savedUser = await this.usersRepository.save(user);
+      
+      if (Array.isArray(savedUser)) {
+        if (savedUser.length > 0) {
+          return new UserResponseDto(savedUser[0]);
+        } else {
+          throw new InternalServerErrorException('Error: No se pudo activar el usuario');
+        }
+      }
+      
       return new UserResponseDto(savedUser);
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -263,6 +330,15 @@ export class UsersService {
       }
 
       const savedUser = await this.usersRepository.save(user);
+      
+      if (Array.isArray(savedUser)) {
+        if (savedUser.length > 0) {
+          return new UserResponseDto(savedUser[0]);
+        } else {
+          throw new InternalServerErrorException('Error: No se pudo desactivar el usuario');
+        }
+      }
+      
       return new UserResponseDto(savedUser);
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -302,6 +378,15 @@ export class UsersService {
       }
 
       const savedUser = await this.usersRepository.save(user);
+      
+      if (Array.isArray(savedUser)) {
+        if (savedUser.length > 0) {
+          return new UserResponseDto(savedUser[0]);
+        } else {
+          throw new InternalServerErrorException('Error: No se pudo eliminar el usuario');
+        }
+      }
+      
       return new UserResponseDto(savedUser);
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -363,7 +448,6 @@ export class UsersService {
 
   async updateTwoFactorAttempts(userId: string, attempts: number): Promise<void> {
     try {
-      // ✅ CORREGIDO: usar usersRepository en lugar de usersService
       await this.usersRepository.update(userId, {
         twoFactorAttempts: attempts
       });
@@ -429,6 +513,4 @@ export class UsersService {
       throw new InternalServerErrorException('Error limpiando token de reset');
     }
   }
-
-  
 }

@@ -1,0 +1,8 @@
+=== REGISTRO DE ACCESOS ===
+Radicado creado por: prueba2fa (prueba2fa)
+Rol: radicador
+Fecha: 12/12/2025, 4:51:46 p. m.
+Acción: CREACION
+
+--- HISTORIAL DE ACCESOS ---
+[12/12/25, 4:51:46 p. m.] prueba2fa (prueba2fa) - radicador - CREACION

@@ -5,6 +5,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { EmailModule } from './email/email.module';
 import { ormconfig } from './config/ormconfig'; // ✅ Ruta corregida
+import { RadicacionModule } from './radicacion/radicacion.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { ormconfig } from './config/ormconfig'; // ✅ Ruta corregida
     AuthModule,
     UsersModule,
     EmailModule,
+    RadicacionModule,
   ],
 })
 export class AppModule {}

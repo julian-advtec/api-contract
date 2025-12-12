@@ -1,21 +1,27 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
-import { UserRole } from '../enums/user-role.enum';
+import { 
+  Entity, 
+  PrimaryGeneratedColumn, 
+  Column, 
+  CreateDateColumn, 
+  UpdateDateColumn, 
+  BeforeInsert, 
+  BeforeUpdate 
+} from 'typeorm';
+import { UserRole } from '../enums/user-role.enum'; // Asegurar que este archivo existe
+import { Exclude } from 'class-transformer';
 
 @Entity('users')
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ unique: true })
+  @Column({ unique: true, length: 50 })
   username: string;
 
-  @Column()
-  password: string;
-
-  @Column({ unique: true })
+  @Column({ unique: true, length: 100 })
   email: string;
 
-  @Column({ name: 'full_name', nullable: true }) // ✅ TEMPORAL: nullable: true
+  @Column({ name: 'full_name', length: 100 })
   fullName: string;
 
   @Column({
@@ -25,39 +31,54 @@ export class User {
   })
   role: UserRole;
 
-  @Column({ default: true, name: 'is_active' })
+  @Exclude()
+  @Column()
+  password: string;
+
+  @Column({ name: 'is_active', default: true })
   isActive: boolean;
 
-  @Column({ default: false, name: 'is_email_verified' })
+  @Column({ name: 'is_email_verified', default: false })
   isEmailVerified: boolean;
 
-  @Column({ nullable: true, name: 'email_verification_code' })
-  emailVerificationCode: string;
+  @Column({ name: 'created_by', nullable: true })
+  createdBy?: string;
 
-  @Column({ nullable: true, name: 'two_factor_code' })
-  twoFactorCode: string;
-
-  @Column({ type: 'timestamp', nullable: true, name: 'two_factor_expires' })
-  twoFactorExpires: Date;
-
-  @Column({ default: 0, name: 'two_factor_attempts' })
-  twoFactorAttempts: number;
-
-  @Column({ nullable: true, name: 'reset_token' })
-  resetToken: string;
-
-  @Column({ type: 'timestamp', nullable: true, name: 'reset_token_expires' })
-  resetTokenExpires: Date;
-
-  @Column({ nullable: true, name: 'created_by' })
-  createdBy: string;
-
-  @Column({ nullable: true, name: 'updated_by' })
-  updatedBy: string;
+  @Column({ name: 'updated_by', nullable: true })
+  updatedBy?: string;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  @Column({ name: 'two_factor_code', nullable: true })
+  twoFactorCode?: string;
+
+  @Column({ name: 'two_factor_expires', nullable: true })
+  twoFactorExpires?: Date;
+
+  @Column({ name: 'two_factor_attempts', default: 0 })
+  twoFactorAttempts: number;
+
+  @Column({ name: 'reset_token', nullable: true })
+  resetToken?: string;
+
+  @Column({ name: 'reset_token_expires', nullable: true })
+  resetTokenExpires?: Date;
+
+  @BeforeInsert()
+  @BeforeUpdate()
+  normalizeFields() {
+    if (this.email) {
+      this.email = this.email.toLowerCase().trim();
+    }
+    if (this.username) {
+      this.username = this.username.toLowerCase().trim();
+    }
+    if (this.fullName) {
+      this.fullName = this.fullName.trim();
+    }
+  }
 }

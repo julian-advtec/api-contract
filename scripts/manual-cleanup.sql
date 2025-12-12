@@ -1,20 +1,36 @@
--- 1. Primero hacer la columna nullable
-ALTER TABLE users ALTER COLUMN full_name DROP NOT NULL;
+-- MANUAL CLEANUP SCRIPT - WINDOWS VERSION
+-- ============================================
+-- Ejecutar con: type scripts\manual-cleanup.sql | psql -U postgres -d contract_db
 
--- 2. Agregar la columna si no existe
+-- 1. Si existe la tabla users, eliminar todos los datos
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name = 'users' AND column_name = 'full_name') THEN
-        ALTER TABLE users ADD COLUMN full_name VARCHAR;
+    IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'users') THEN
+        -- Primero hacer username nullable temporalmente
+        ALTER TABLE users ALTER COLUMN username DROP NOT NULL;
+        
+        -- Eliminar todos los datos
+        TRUNCATE TABLE users CASCADE;
+        
+        -- Volver a hacer username NOT NULL
+        ALTER TABLE users ALTER COLUMN username SET NOT NULL;
+        
+        -- Agregar unique constraint si no existe
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint 
+            WHERE conname = 'UQ_fe0bb3f6520ee0469504521e710'
+        ) THEN
+            ALTER TABLE users ADD CONSTRAINT UQ_fe0bb3f6520ee0469504521e710 UNIQUE (username);
+        END IF;
+        
+        RAISE NOTICE 'Table users cleaned successfully';
+    ELSE
+        RAISE NOTICE 'Table users does not exist yet';
     END IF;
 END $$;
 
--- 3. Actualizar datos existentes con valor por defecto
-UPDATE users SET full_name = username WHERE full_name IS NULL OR full_name = '';
-
--- 4. Ahora sí hacerla NOT NULL
-ALTER TABLE users ALTER COLUMN full_name SET NOT NULL;
-
--- 5. Limpiar la tabla completamente (OJO: Esto borra todos los datos)
--- TRUNCATE TABLE users CASCADE;
+-- 2. Verificar estado
+SELECT 
+    'users' as table_name,
+    EXISTS(SELECT FROM pg_tables WHERE tablename = 'users') as exists,
+    (SELECT COUNT(*) FROM users) as row_count;

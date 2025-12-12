@@ -1,11 +1,11 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Body, 
-  Patch, 
-  Param, 
-  Delete, 
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
   UseGuards,
   Query,
   Request,
@@ -24,7 +24,7 @@ import { UserRole } from './enums/user-role.enum';
 @Controller('users')
 // @UseGuards(JwtAuthGuard, RolesGuard) // COMENTADO
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) { }
 
   @Get()
   // @Roles(UserRole.ADMIN) // COMENTADO
@@ -78,7 +78,7 @@ export class UsersController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   update(
-    @Param('id', ParseUUIDPipe) id: string, 
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateUserDto: UpdateUserDto,
     @Request() req: any
   ) {
@@ -116,5 +116,5 @@ export class UsersController {
     return this.usersService.softRemove(id, req.user?.userId);
   }
 
-  
+
 }
