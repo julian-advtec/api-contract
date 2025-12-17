@@ -76,4 +76,13 @@ export class Documento {
 
   @Column({ name: 'ultimo_usuario', length: 100, nullable: true })
   ultimoUsuario: string;
+  
+  @Column({ name: 'token_publico', nullable: true, unique: true })
+  tokenPublico: string;
+
+  @Column({ name: 'token_activo', default: false })
+  tokenActivo: boolean;
+
+  @Column({ name: 'token_expira_en', type: 'timestamp', nullable: true })
+  tokenExpiraEn: Date;
 }

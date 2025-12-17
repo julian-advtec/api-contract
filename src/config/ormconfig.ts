@@ -1,8 +1,9 @@
+// src/config/ormconfig.ts
 import { DataSourceOptions } from 'typeorm';
 import { User } from '../users/entities/user.entity';
 import { Documento } from '../radicacion/entities/documento.entity';
-// ✅ Comentar hasta que las entidades estén correctas
-// import { Contratista } from '../radicacion/entities/contratista.entity';
+// ✅ DESCOMENTAR ESTAS LÍNEAS:
+import { Contratista } from '../radicacion/entities/contratista.entity';
 // import { RegistroAcceso } from '../radicacion/entities/registro-acceso.entity';
 import 'dotenv/config';
 
@@ -16,8 +17,8 @@ export const ormconfig: DataSourceOptions = {
   entities: [
     User, 
     Documento,
-    // ✅ Agregar cuando estén corregidas
-    // Contratista,
+    // ✅ DESCOMENTAR Y AGREGAR:
+    Contratista,  // ← ¡QUITA EL COMENTARIO DE ESTA LÍNEA!
     // RegistroAcceso
   ],
   synchronize: process.env.NODE_ENV !== 'production',

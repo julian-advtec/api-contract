@@ -16,7 +16,7 @@ const usersToSeed: UserSeed[] = [
   {
     username: 'sistemas2',
     email: 'prueba2fa@lamaria.gov.co',
-    password: '',
+    password: 'sistemas123',
     role: UserRole.ADMIN,
     fullName: 'Administrador del Sistema'
   },
@@ -79,7 +79,7 @@ const usersToSeed: UserSeed[] = [
 ];
 
 async function seedUsers() {
-  console.log('🚀 Iniciando seed de usuarios...');
+  console.log('🚀 Iniciando seed de usuarios (todos en minúscula)...');
   
   const dataSource = new DataSource(ormconfig);
   
@@ -89,143 +89,180 @@ async function seedUsers() {
 
     const usersRepository = dataSource.getRepository(User);
     
-    // 0. PRIMERO: Verificar y corregir problemas de columnas NULL
-    console.log('🔍 Verificando estructura de la tabla...');
-    try {
-      const queryRunner = dataSource.createQueryRunner();
-      
-      // Si la tabla no existe, salir (TypeORM la creará al iniciar)
-      const tableExists = await queryRunner.query(`
-        SELECT EXISTS (
-          SELECT FROM information_schema.tables 
-          WHERE table_schema = 'public' 
-          AND table_name = 'users'
-        );
-      `);
-      
-      if (!tableExists[0].exists) {
-        console.log('⚠️  La tabla users no existe. Ejecuta primero tu aplicación NestJS.');
-        console.log('💡 Ejecuta: npm run start:dev');
-        return;
-      }
-      
-      // Verificar si hay problemas de NOT NULL
-      const nullColumns = await queryRunner.query(`
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_name = 'users' 
-        AND is_nullable = 'NO'
-        AND column_name IN ('username', 'email', 'full_name', 'role', 'password');
-      `);
-      
-      console.log(`📊 Columnas NOT NULL encontradas: ${nullColumns.length}`);
-      
-    } catch (checkError) {
-      console.log('⚠️  Error verificando tabla:', checkError.message);
-    }
-
-    // 1. LIMPIAR TABLA (si existe)
-    console.log('🧹 Limpiando tabla users...');
-    try {
-      await dataSource.query('TRUNCATE TABLE users CASCADE');
-      console.log('✅ Tabla limpiada con TRUNCATE');
-    } catch (error) {
-      console.log('⚠️  TRUNCATE falló, intentando DELETE...');
-      try {
-        await usersRepository.clear();
-        console.log('✅ Tabla limpiada con DELETE');
-      } catch (clearError) {
-        console.log('⚠️  DELETE también falló. Puede que la tabla esté vacía o no exista.');
-      }
-    }
-
-    // 2. CREAR USUARIOS
-    console.log(`🌱 Creando ${usersToSeed.length} usuarios...`);
+    // 1. PRIMERO: VERIFICAR SI HAY REGISTROS EXISTENTES
+    console.log('🔍 Verificando registros existentes...');
+    const existingCount = await usersRepository.count();
+    console.log(`📊 Usuarios existentes en la BD: ${existingCount}`);
     
-    const createdUsers = [];
-    
-    for (const userData of usersToSeed) {
+    if (existingCount > 0) {
+      console.log('🧹 Limpiando todos los usuarios existentes...');
+      
+      // Deshabilitar triggers temporalmente si existen
       try {
-        const hashedPassword = await bcrypt.hash(userData.password, 12);
-        
-        const user = usersRepository.create({
-          username: userData.username,
-          email: userData.email,
-          password: hashedPassword,
-          role: userData.role,
-          fullName: userData.fullName,
-          isActive: true,
-          isEmailVerified: true,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          createdBy: 'system_seed'
-        });
-
-        await usersRepository.save(user);
-        createdUsers.push(user);
-        console.log(`✅ ${userData.username} (${userData.role}) creado`);
-        
+        await dataSource.query('ALTER TABLE users DISABLE TRIGGER ALL;');
+        console.log('✅ Triggers deshabilitados');
       } catch (error) {
-        console.error(`❌ Error creando ${userData.username}:`, error.message);
-        
-        // Si es error de NULL, intentar método alternativo
-        if (error.message.includes('null value')) {
-          console.log(`🔄 Intentando método alternativo para ${userData.username}...`);
+        console.log('ℹ️ No se pudieron deshabilitar triggers (puede ser normal)');
+      }
+      
+      // Eliminar usando DELETE con cascade
+      try {
+        await dataSource.query('DELETE FROM users CASCADE;');
+        console.log('✅ Todos los usuarios eliminados con DELETE CASCADE');
+      } catch (error) {
+        console.log('⚠️ DELETE CASCADE falló, intentando TRUNCATE...');
+        try {
+          await dataSource.query('TRUNCATE TABLE users RESTART IDENTITY CASCADE;');
+          console.log('✅ Tabla truncada con TRUNCATE');
+        } catch (truncateError) {
+          console.log('⚠️ TRUNCATE falló, intentando método manual...');
           try {
-            // Insert directo con SQL
-            const hashedPassword = await bcrypt.hash(userData.password, 12);
-            await dataSource.query(`
-              INSERT INTO users (id, username, email, password, role, full_name, is_active, is_email_verified, created_at, updated_at, created_by)
-              VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, true, true, NOW(), NOW(), 'system_seed')
-            `, [userData.username, userData.email, hashedPassword, userData.role, userData.fullName]);
-            console.log(`✅ ${userData.username} creado con SQL directo`);
-          } catch (sqlError) {
-            console.error(`❌ Error SQL para ${userData.username}:`, sqlError.message);
+            await usersRepository.clear();
+            console.log('✅ Tabla limpiada con clear()');
+          } catch (clearError) {
+            console.error('❌ Error limpiando tabla:', clearError.message);
+            throw clearError;
           }
         }
       }
+      
+      // Rehabilitar triggers
+      try {
+        await dataSource.query('ALTER TABLE users ENABLE TRIGGER ALL;');
+        console.log('✅ Triggers rehabilitados');
+      } catch (error) {
+        console.log('ℹ️ No se pudieron rehabilitar triggers');
+      }
+    } else {
+      console.log('✅ La tabla está vacía, continuando...');
+    }
+    
+    // 2. VERIFICAR QUE EL ENUM UserRole ESTÉ EN MINÚSCULA
+    console.log('\n🔍 Verificando valores de UserRole enum:');
+    console.log(`   UserRole.ADMIN: "${UserRole.ADMIN}"`);
+    console.log(`   UserRole.RADICADOR: "${UserRole.RADICADOR}"`);
+    console.log(`   UserRole.SUPERVISOR: "${UserRole.SUPERVISOR}"`);
+    console.log(`   UserRole.AUDITOR_CUENTAS: "${UserRole.AUDITOR_CUENTAS}"`);
+    
+    // Asegurar que todos los roles del array estén en minúscula
+    console.log('\n🔍 Verificando roles en el array de usuarios:');
+    usersToSeed.forEach(user => {
+      console.log(`   ${user.username}: role = "${user.role}" (tipo: ${typeof user.role})`);
+    });
+
+    // 3. CREAR USUARIOS NUEVOS
+    console.log(`\n🌱 Creando ${usersToSeed.length} usuarios con roles en minúscula...`);
+    
+    const createdUsers = [];
+    const errors = [];
+    
+    for (const userData of usersToSeed) {
+      try {
+        console.log(`\n📝 Creando usuario: ${userData.username}`);
+        console.log(`   Email: ${userData.email}`);
+        console.log(`   Rol: ${userData.role} (${typeof userData.role})`);
+        
+        // Asegurar que el rol esté en minúscula (por si acaso)
+        const normalizedRole = userData.role.toString().toLowerCase();
+        console.log(`   Rol normalizado: ${normalizedRole}`);
+        
+        const hashedPassword = await bcrypt.hash(userData.password, 12);
+        
+        // Usar SQL directo para evitar problemas con TypeORM
+        await dataSource.query(`
+          INSERT INTO users (
+            id, username, email, password, role, full_name, 
+            is_active, is_email_verified, created_at, updated_at, created_by
+          ) VALUES (
+            gen_random_uuid(), $1, $2, $3, $4, $5, 
+            true, true, NOW(), NOW(), 'system_seed'
+          )
+        `, [
+          userData.username,
+          userData.email,
+          hashedPassword,
+          normalizedRole, // Usar el rol normalizado a minúscula
+          userData.fullName
+        ]);
+        
+        console.log(`✅ ${userData.username} creado exitosamente`);
+        createdUsers.push(userData.username);
+        
+      } catch (error) {
+        console.error(`❌ Error creando ${userData.username}:`, error.message);
+        if (error.detail) console.error(`   Detalle: ${error.detail}`);
+        if (error.code) console.error(`   Código: ${error.code}`);
+        errors.push({ user: userData.username, error: error.message });
+      }
     }
 
-    // 3. VERIFICAR RESULTADO
+    // 4. VERIFICAR RESULTADO
+    console.log('\n📊 ====== RESUMEN DEL SEED ======');
     const finalCount = await usersRepository.count();
-    console.log(`\n📊 Total de usuarios creados: ${finalCount}/${usersToSeed.length}`);
+    console.log(`✅ Usuarios creados exitosamente: ${createdUsers.length}/${usersToSeed.length}`);
+    console.log(`✅ Total de usuarios en la BD: ${finalCount}`);
+    
+    if (errors.length > 0) {
+      console.log('\n❌ Errores encontrados:');
+      errors.forEach(err => {
+        console.log(`   - ${err.user}: ${err.error}`);
+      });
+    }
     
     if (finalCount > 0) {
+      console.log('\n👥 Usuarios en la BD:');
       const users = await usersRepository.find({
-        select: ['username', 'email', 'role', 'fullName'],
-        take: 5
+        select: ['id', 'username', 'email', 'role', 'fullName'],
+        order: { username: 'ASC' }
       });
       
-      console.log('\n👥 Primeros usuarios en la BD:');
       users.forEach(user => {
-        console.log(`   - ${user.username} (${user.role})`);
+        console.log(`   - ${user.username}: email="${user.email}", role="${user.role}"`);
       });
+      
+      // Verificar específicamente el usuario sistemas2
+      const sistemas2 = await usersRepository.findOne({
+        where: { username: 'sistemas2' },
+        select: ['username', 'role']
+      });
+      
+      if (sistemas2) {
+        console.log(`\n🔍 Usuario sistemas2 encontrado:`);
+        console.log(`   Rol: "${sistemas2.role}"`);
+        console.log(`   Tipo de dato: ${typeof sistemas2.role}`);
+        console.log(`   ¿Es "admin"? ${sistemas2.role === 'admin'}`);
+
+      }
     }
 
     console.log('\n🎉 Seed completado!');
     console.log('\n🔑 Credenciales de prueba:');
-    console.log('👑 Admin (NO 2FA): sistemas2 / sistemas123');
-    console.log('🧪 Prueba 2FA: prueba2fa / prueba123');
-    console.log('📝 Radicador: radicador1 / radicador123');
-    console.log('👀 Supervisor: supervisor1 / supervisor123');
+    console.log('👑 Admin (sistemas2): sistemas2 / sistemas123');
+    console.log('📝 Radicador (prueba2fa): prueba2fa / prueba123');
+    console.log('📝 Radicador (radicador1): radicador1 / radicador123');
+    console.log('👀 Supervisor (supervisor1): supervisor1 / supervisor123');
 
   } catch (error) {
-    console.error('❌ Error fatal en seed:', error);
+    console.error('\n❌ Error fatal en seed:', error);
     console.error('Stack:', error.stack);
     
-    // Si es el error de "column contains null values"
-    if (error.message?.includes('contiene valores null')) {
-      console.log('\n⚠️  ⚠️  ⚠️  PROBLEMA CRÍTICO');
-      console.log('💡 EJECUTA ESTOS COMANDOS EN ORDEN:');
-      console.log('1. psql -U postgres -d contract_db -c "DROP TABLE IF EXISTS users CASCADE;"');
-      console.log('2. Reinicia tu aplicación NestJS (npm run start:dev)');
-      console.log('3. Vuelve a ejecutar este script: npx ts-node scripts/seed-users.ts');
+    // Intentar hacer rollback si es posible
+    try {
+      if (dataSource.isInitialized) {
+        console.log('🔄 Intentando rollback...');
+        const queryRunner = dataSource.createQueryRunner();
+        await queryRunner.connect();
+        await queryRunner.rollbackTransaction();
+        await queryRunner.release();
+      }
+    } catch (rollbackError) {
+      console.error('❌ Error en rollback:', rollbackError.message);
     }
     
   } finally {
     if (dataSource.isInitialized) {
       await dataSource.destroy();
-      console.log('🔌 Conexión cerrada');
+      console.log('\n🔌 Conexión a la base de datos cerrada');
     }
   }
 }
