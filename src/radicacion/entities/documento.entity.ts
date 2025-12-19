@@ -34,23 +34,27 @@ export class Documento {
   @Column({ name: 'estado', default: 'RADICADO' })
   estado: string;
 
-  @Column({ name: 'nombre_documento1' })
-  nombreDocumento1: string;
+  // Nuevas columnas, nullable temporalmente
+  @Column({ name: 'cuenta_cobro', nullable: true })
+  cuentaCobro: string;
 
-  @Column({ name: 'nombre_documento2' })
-  nombreDocumento2: string;
+  @Column({ name: 'seguridad_social', nullable: true })
+  seguridadSocial: string;
 
-  @Column({ name: 'nombre_documento3' })
-  nombreDocumento3: string;
+  @Column({ name: 'informe_actividades', nullable: true })
+  informeActividades: string;
 
-  @Column({ name: 'descripcion_doc1', length: 200, default: 'Documento 1' })
-  descripcionDoc1: string;
+  @Column({ name: 'descripcion_cuenta_cobro', length: 200, default: 'Cuenta de Cobro', nullable: true })
+  descripcionCuentaCobro: string;
 
-  @Column({ name: 'descripcion_doc2', length: 200, default: 'Documento 2' })
-  descripcionDoc2: string;
+  @Column({ name: 'descripcion_seguridad_social', length: 200, default: 'Seguridad Social', nullable: true })
+  descripcionSeguridadSocial: string;
 
-  @Column({ name: 'descripcion_doc3', length: 200, default: 'Documento 3' })
-  descripcionDoc3: string;
+  @Column({ name: 'descripcion_informe_actividades', length: 200, default: 'Informe de Actividades', nullable: true })
+  descripcionInformeActividades: string;
+
+  @Column({ name: 'observacion', type: 'text', nullable: true })
+  observacion: string;
 
   @ManyToOne(() => User, { nullable: false })
   @JoinColumn({ name: 'radicador_id' })

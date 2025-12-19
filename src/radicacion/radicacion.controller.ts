@@ -31,8 +31,6 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 
-
-
 @Controller('radicacion')
 export class RadicacionController {
   private readonly logger = new Logger(RadicacionController.name);
@@ -205,36 +203,77 @@ export class RadicacionController {
   }
 
   // ===============================
-  // CRUD PRINCIPAL
+  // MIS DOCUMENTOS (DOCUMENTOS DEL USUARIO ACTUAL)
   // ===============================
 
-  @Get()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.AUDITOR_CUENTAS)
-  async findAll(@Req() req: Request) {
+  @Get('mis-documentos')
+  @UseGuards(JwtAuthGuard)
+  async getMisDocumentos(@Req() req: Request) {
     try {
       const user = req.user as any;
-      this.logger.log(`📋 Usuario ${user.username} (${user.role}) listando documentos`);
 
-      const documentos = await this.radicacionService.findAll(user);
+      this.logger.log(
+        `📋 Usuario ${user.username} solicitando sus documentos`
+      );
+
+      const documentos = await this.radicacionService.getMisDocumentos(user);
 
       return {
         success: true,
         count: documentos.length,
         data: documentos,
+        timestamp: new Date().toISOString(),
       };
     } catch (error: any) {
-      this.logger.error('❌ Error obteniendo documentos:', error.message);
-      const status = error.status || HttpStatus.INTERNAL_SERVER_ERROR;
+      this.logger.error(
+        '❌ Error obteniendo mis documentos:',
+        error.message,
+      );
+
       throw new HttpException(
         {
           success: false,
           message: error.message || 'Error al obtener documentos',
         },
-        status,
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
   }
+
+
+  // ===============================
+  // CRUD PRINCIPAL
+  // ===============================
+
+  @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.RADICADOR,
+    UserRole.ADMIN,
+    UserRole.SUPERVISOR,
+    UserRole.AUDITOR_CUENTAS,
+    UserRole.CONTABILIDAD,
+    UserRole.TESORERIA,
+    UserRole.ASESOR_GERENCIA,
+    UserRole.RENDICION_CUENTAS
+  )
+  async findAll(@Req() req: Request) {
+    const user = req.user as any;
+
+    this.logger.log(
+      `📋 Usuario ${user.username} (${user.role}) listando radicaciones`
+    );
+
+    const documentos = await this.radicacionService.findAll(user);
+
+    return {
+      success: true,
+      count: documentos.length,
+      data: documentos,
+    };
+  }
+
+
 
   @Get(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -272,28 +311,18 @@ export class RadicacionController {
       const user = req.user as any;
 
       this.logger.log(`📝 ====== INICIANDO RADICACIÓN ======`);
-      this.logger.log(`🔍 ======= INFO DEL USUARIO AUTENTICADO =======`);
-      this.logger.log(`👤 Usuario del token JWT:`);
-      this.logger.log(`   ID: ${user.id || 'No disponible'}`);
-      this.logger.log(`   Username: ${user.username}`);
-      this.logger.log(`   Email: ${user.email}`);
-      this.logger.log(`   Rol: ${user.role}`);
-      this.logger.log(`   Tipo de dato: ${typeof user.role}`);
+      this.logger.log(`👤 Usuario: ${user.username} (${user.role})`);
 
+      // 1. VERIFICAR PERMISOS
       const userRole = user.role?.toString().toLowerCase();
       const rolesPermitidos = [UserRole.ADMIN, UserRole.RADICADOR].map(r => r.toString().toLowerCase());
 
       if (!rolesPermitidos.includes(userRole)) {
-        this.logger.error(`🚫 USUARIO SIN PERMISOS DESDE EL CONTROLADOR`);
-        this.logger.error(`   Rol del usuario: ${userRole}`);
-        this.logger.error(`   Roles permitidos: ${rolesPermitidos.join(', ')}`);
-
+        this.logger.error(`🚫 USUARIO SIN PERMISOS`);
         throw new HttpException(
           {
             success: false,
             message: `No tienes permisos para radicar documentos. Tu rol es: ${user.role}. Solo pueden radicar: ${UserRole.ADMIN} y ${UserRole.RADICADOR}.`,
-            usuario: user.username,
-            rol: user.role
           },
           HttpStatus.FORBIDDEN,
         );
@@ -302,24 +331,18 @@ export class RadicacionController {
       this.logger.log(`📄 DTO recibido:`, JSON.stringify(createDocumentoDto, null, 2));
       this.logger.log(`📁 Archivos recibidos: ${files?.length || 0}`);
 
-      if (files) {
-        files.forEach((file, index) => {
-          this.logger.log(`   Archivo ${index + 1}: ${file.originalname} (${file.size} bytes, ${file.mimetype})`);
-        });
-      }
-
-      // Validación adicional
+      // 2. VALIDACIÓN BÁSICA
       if (!files || files.length !== 3) {
         throw new BadRequestException('Debe adjuntar exactamente 3 documentos');
       }
 
+      // 3. CREAR DOCUMENTO
       const documento = await this.radicacionService.create(
         createDocumentoDto,
         files,
         user,
       );
 
-      this.logger.log(`📤 Documento a retornar al frontend:`, JSON.stringify(documento, null, 2));
       this.logger.log(`✅ Documento ${createDocumentoDto.numeroRadicado} radicado exitosamente`);
 
       return {
@@ -337,53 +360,9 @@ export class RadicacionController {
           success: false,
           message: error.message || 'Error al radicar documento',
           timestamp: new Date().toISOString(),
-          path: '/api/radicacion'
         },
         status,
       );
-    }
-  }
-
-  @Post('test-minimal')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.RADICADOR, UserRole.ADMIN)
-  async testMinimal(
-    @Body() testData: any,
-    @Req() req: Request,
-  ) {
-    try {
-      const user = req.user as any;
-      this.logger.log(`🧪 TEST MINIMAL - Usuario: ${user.username}`);
-
-      const documento = {
-        id: 'test-id',
-        numeroRadicado: 'R2024-999',
-        numeroContrato: 'TEST-001',
-        nombreContratista: 'Test Contratista',
-        documentoContratista: '999999999',
-        fechaInicio: new Date(),
-        fechaFin: new Date(),
-        estado: 'RADICADO',
-        createdAt: new Date()
-      };
-
-      this.logger.log(`🧪 Documento de prueba creado`);
-
-      return {
-        success: true,
-        message: 'Test minimal funcionando',
-        user: user.username,
-        documento: documento,
-        timestamp: new Date().toISOString()
-      };
-
-    } catch (error: any) {
-      this.logger.error(`❌ ERROR TEST MINIMAL: ${error.message}`);
-      return {
-        success: false,
-        message: `Error en test: ${error.message}`,
-        timestamp: new Date().toISOString()
-      };
     }
   }
 
@@ -450,10 +429,11 @@ export class RadicacionController {
     const doc = await this.radicacionService.findOnePublico(id, token);
     if (!doc) throw new NotFoundException('Documento no encontrado o token inválido');
 
+    // ACTUALIZADO: Usar los nuevos nombres de variables
     const nombres = [
-      doc.nombreDocumento1,
-      doc.nombreDocumento2,
-      doc.nombreDocumento3
+      doc.cuentaCobro,
+      doc.seguridadSocial,
+      doc.informeActividades
     ];
 
     const nombreArchivo = nombres[index - 1];
@@ -468,11 +448,8 @@ export class RadicacionController {
 
     this.logger.log(`📄 Enviando archivo: ${filePath}`);
 
-    // ==================================================
-    // 🧠 CASO WORD + NO DOWNLOAD → CONVERTIR A PDF
-    // ==================================================
+    // CASO WORD + NO DOWNLOAD → CONVERTIR A PDF
     if ((ext === '.doc' || ext === '.docx') && download !== 'true') {
-
       const tmpPdf = path.join(
         os.tmpdir(),
         `${crypto.randomUUID()}.pdf`
@@ -493,9 +470,7 @@ export class RadicacionController {
       return;
     }
 
-    // ==================================================
-    // 📄 RESTO DE ARCHIVOS (PDF / IMG / WORD DESCARGA)
-    // ==================================================
+    // RESTO DE ARCHIVOS
     const mime: Record<string, string> = {
       '.pdf': 'application/pdf',
       '.jpg': 'image/jpeg',
@@ -515,5 +490,4 @@ export class RadicacionController {
 
     return fs.createReadStream(filePath).pipe(res);
   }
-
 }
