@@ -1,3 +1,4 @@
+// src/radicacion/radicacion.service.ts
 import {
     Injectable,
     BadRequestException,
@@ -8,7 +9,7 @@ import {
     InternalServerErrorException
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { Documento } from './entities/documento.entity';
 import { CreateDocumentoDto } from './dto/create-documento.dto';
 import * as fs from 'fs';
@@ -20,19 +21,9 @@ import { randomUUID } from 'crypto';
 import * as jwt from 'jsonwebtoken';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import {  In } from 'typeorm'; // 👈 AQUÍ ESTÁ LA CLAVE
+import { EstadosService } from '../estados/estados.service';
 
 const execAsync = promisify(exec);
-
-const ESTADOS_POR_ROL: Record<string, string[]> = {
-    supervisor: ['RADICADO'],
-    auditor_cuentas: ['RADICADO', 'REVISADO'],
-    contabilidad: ['REVISADO'],
-    tesoreria: ['APROBADO_CONTABILIDAD'],
-    asesor_gerencia: ['LISTO_GERENCIA'],
-    rendicion_cuentas: ['FINALIZADO'],
-};
-
 
 @Injectable()
 export class RadicacionService {
@@ -46,13 +37,12 @@ export class RadicacionService {
         private userRepository: Repository<User>,
         @InjectRepository(Contratista)
         private contratistaRepository: Repository<Contratista>,
+        private estadosService: EstadosService,
     ) {
         this.logger.log(`📁 ======= CONFIGURACIÓN RUTA SERVIDOR =======`);
         this.logger.log(`🌐 Ruta configurada: ${this.basePath}`);
         this.verificarYConfigurarRutaServidor();
     }
-
-
 
     private verificarYConfigurarRutaServidor(): void {
         try {
@@ -211,7 +201,6 @@ export class RadicacionService {
             this.logger.log(`💾 ======= GUARDANDO ARCHIVOS EN SERVIDOR R2-D2 =======`);
             const nombresArchivos: string[] = [];
 
-            // ACTUALIZADO: Usar los nuevos nombres de descripciones
             const descripciones = [
                 createDocumentoDto.descripcionCuentaCobro || 'Cuenta de Cobro',
                 createDocumentoDto.descripcionSeguridadSocial || 'Seguridad Social',
@@ -260,11 +249,25 @@ export class RadicacionService {
             this.crearArchivoRegistroEnServidor(rutaCarpetaRadicado, usuarioCompleto, 'CREACION');
             this.logger.log(`✅ Archivo de registro creado`);
 
-            // 8. GUARDAR DOCUMENTO EN BASE DE DATOS
+            // 8. ASIGNAR PRIMER USUARIO DEL FLUJO (SUPERVISOR)
+            const supervisor = await this.userRepository.findOne({
+                where: { role: UserRole.SUPERVISOR }
+            });
+
+            // 9. CREAR HISTORIAL INICIAL
+            const historialEstados = [{
+                fecha: new Date(),
+                estado: 'RADICADO',
+                usuarioId: usuarioCompleto.id,
+                usuarioNombre: usuarioCompleto.fullName || usuarioCompleto.username,
+                rolUsuario: usuarioCompleto.role,
+                observacion: 'Documento radicado inicialmente',
+            }];
+
+            // 10. GUARDAR DOCUMENTO EN BASE DE DATOS
             this.logger.log(`💾 ======= GUARDANDO DOCUMENTO EN BASE DE DATOS =======`);
 
-            // ACTUALIZADO: Usar los nuevos nombres de variables
-            const documento = this.documentoRepository.create({
+            const documentoData: Partial<Documento> = {
                 numeroRadicado: createDocumentoDto.numeroRadicado,
                 numeroContrato: createDocumentoDto.numeroContrato,
                 nombreContratista: createDocumentoDto.nombreContratista,
@@ -294,7 +297,14 @@ export class RadicacionService {
                 tokenPublico: randomUUID(),
                 tokenActivo: true,
                 tokenExpiraEn: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7), // 7 días
-            });
+                // NUEVOS CAMPOS PARA EL FLUJO
+                usuarioAsignado: supervisor || undefined,
+                usuarioAsignadoNombre: supervisor?.fullName || supervisor?.username,
+                historialEstados: historialEstados,
+                fechaActualizacion: new Date(),
+            };
+
+            const documento = this.documentoRepository.create(documentoData);
 
             try {
                 const savedDocumento = await this.documentoRepository.save(documento);
@@ -416,29 +426,14 @@ Ruta servidor R2-D2: ${rutaCarpeta}
         // ADMIN y RADICADOR → TODO
         if (role === 'admin' || role === 'radicador') {
             return this.documentoRepository.find({
-                relations: ['radicador'],
+                relations: ['radicador', 'usuarioAsignado'],
                 order: { fechaRadicacion: 'DESC' },
             });
         }
 
-        // VISIBILIDAD SECUENCIAL
-        const estadosPermitidos = ESTADOS_POR_ROL[role] || [];
-
-        if (estadosPermitidos.length === 0) {
-            this.logger.warn(
-                `⚠️ Rol ${role} sin estados configurados para visibilidad`,
-            );
-            return [];
-        }
-
-        return this.documentoRepository.find({
-            where: { estado: In(estadosPermitidos) },
-            relations: ['radicador'],
-            order: { fechaRadicacion: 'DESC' },
-        });
+        // Usar el servicio de estados para obtener documentos por rol
+        return await this.estadosService.obtenerDocumentosAsignados(user);
     }
-
-
 
     async findOne(id: string, user: User): Promise<Documento> {
         try {
@@ -451,7 +446,7 @@ Ruta servidor R2-D2: ${rutaCarpeta}
             if (esAdmin || esSupervisor) {
                 documento = await this.documentoRepository.findOne({
                     where: { id },
-                    relations: ['radicador'],
+                    relations: ['radicador', 'usuarioAsignado'],
                 });
             } else {
                 documento = await this.documentoRepository.findOne({
@@ -459,7 +454,7 @@ Ruta servidor R2-D2: ${rutaCarpeta}
                         id,
                         radicador: { id: user.id }
                     },
-                    relations: ['radicador'],
+                    relations: ['radicador', 'usuarioAsignado'],
                 });
             }
 
@@ -533,7 +528,6 @@ Ruta servidor R2-D2: ${rutaCarpeta}
                 throw new NotFoundException('Documento no encontrado');
             }
 
-            // ACTUALIZADO: Usar los nuevos nombres de variables
             let nombreArchivo: string;
             switch (numeroDocumento) {
                 case 1:
@@ -565,7 +559,6 @@ Ruta servidor R2-D2: ${rutaCarpeta}
         documento: Documento,
         numeroDocumento: number,
     ): Promise<string> {
-        // ACTUALIZADO: Usar los nuevos nombres de variables
         let nombreArchivo: string;
         switch (numeroDocumento) {
             case 1:
@@ -595,7 +588,8 @@ Ruta servidor R2-D2: ${rutaCarpeta}
 
     async obtenerPorId(id: string): Promise<Documento> {
         const documento = await this.documentoRepository.findOne({
-            where: { id }
+            where: { id },
+            relations: ['radicador', 'usuarioAsignado'],
         });
 
         if (!documento) {
@@ -623,9 +617,6 @@ Ruta servidor R2-D2: ${rutaCarpeta}
         fs.renameSync(pdfGenerado, output);
     }
 
-    /**
- * Obtener documentos del usuario actual
- */
     async getMisDocumentos(user: any): Promise<Documento[]> {
         const role = user.role?.toLowerCase();
 
@@ -633,32 +624,239 @@ Ruta servidor R2-D2: ${rutaCarpeta}
             `📋 Usuario ${user.username} (${role}) listando MIS documentos`,
         );
 
-        // ADMIN y RADICADOR → TODO
-        if (role === 'admin' || role === 'radicador') {
-            return this.documentoRepository.find({
-                relations: ['radicador'],
-                order: { fechaRadicacion: 'DESC' },
+        // Usar el servicio de estados para obtener documentos asignados
+        return await this.estadosService.obtenerDocumentosAsignados(user);
+    }
+
+    // NUEVO: Método para actualizar documento con información del flujo
+    async actualizarDocumentoConFlujo(
+        id: string,
+        updates: Partial<Documento>,
+        user: User
+    ): Promise<Documento> {
+        const documento = await this.documentoRepository.findOne({
+            where: { id },
+            relations: ['radicador', 'usuarioAsignado'],
+        });
+
+        if (!documento) {
+            throw new NotFoundException('Documento no encontrado');
+        }
+
+        // Verificar permisos
+        if (user.role !== UserRole.ADMIN && documento.usuarioAsignado?.id !== user.id) {
+            throw new ForbiddenException('No tienes permisos para actualizar este documento');
+        }
+
+        // Actualizar campos
+        Object.assign(documento, updates);
+        documento.fechaActualizacion = new Date();
+        documento.ultimoAcceso = new Date();
+        documento.ultimoUsuario = user.fullName || user.username;
+
+        return await this.documentoRepository.save(documento);
+    }
+
+    // NUEVO: Método para obtener estadísticas
+    async obtenerEstadisticasGenerales(): Promise<any> {
+        const total = await this.documentoRepository.count();
+        const porEstado = await this.documentoRepository
+            .createQueryBuilder('documento')
+            .select('documento.estado', 'estado')
+            .addSelect('COUNT(*)', 'cantidad')
+            .groupBy('documento.estado')
+            .getRawMany();
+
+        const ultimaSemana = new Date();
+        ultimaSemana.setDate(ultimaSemana.getDate() - 7);
+
+        const recientes = await this.documentoRepository.count({
+            where: {
+                fechaRadicacion: {
+                    $gte: ultimaSemana
+                } as any
+            }
+        });
+
+        return {
+            total,
+            porEstado,
+            recientesUltimaSemana: recientes,
+            fechaConsulta: new Date().toISOString(),
+        };
+    }
+
+    // NUEVO: Método para buscar documentos
+    async buscarDocumentos(
+        criterios: {
+            numeroRadicado?: string;
+            numeroContrato?: string;
+            documentoContratista?: string;
+            estado?: string;
+            fechaDesde?: Date;
+            fechaHasta?: Date;
+        },
+        user: User
+    ): Promise<Documento[]> {
+        const query = this.documentoRepository
+            .createQueryBuilder('documento')
+            .leftJoinAndSelect('documento.radicador', 'radicador')
+            .leftJoinAndSelect('documento.usuarioAsignado', 'usuarioAsignado');
+
+        // Aplicar filtros
+        if (criterios.numeroRadicado) {
+            query.andWhere('documento.numeroRadicado LIKE :numeroRadicado', {
+                numeroRadicado: `%${criterios.numeroRadicado}%`
             });
         }
 
-        // VISIBILIDAD SECUENCIAL
-        const estadosPermitidos = ESTADOS_POR_ROL[role] || [];
-
-        if (estadosPermitidos.length === 0) {
-            this.logger.warn(
-                `⚠️ Rol ${role} sin estados configurados para visibilidad`,
-            );
-            return [];
+        if (criterios.numeroContrato) {
+            query.andWhere('documento.numeroContrato LIKE :numeroContrato', {
+                numeroContrato: `%${criterios.numeroContrato}%`
+            });
         }
 
-        return this.documentoRepository.find({
-            where: { estado: In(estadosPermitidos) },
-            relations: ['radicador'],
-            order: { fechaRadicacion: 'DESC' },
-        });
+        if (criterios.documentoContratista) {
+            query.andWhere('documento.documentoContratista LIKE :documentoContratista', {
+                documentoContratista: `%${criterios.documentoContratista}%`
+            });
+        }
+
+        if (criterios.estado) {
+            query.andWhere('documento.estado = :estado', { estado: criterios.estado });
+        }
+
+        if (criterios.fechaDesde) {
+            query.andWhere('documento.fechaRadicacion >= :fechaDesde', { fechaDesde: criterios.fechaDesde });
+        }
+
+        if (criterios.fechaHasta) {
+            const fechaHasta = new Date(criterios.fechaHasta);
+            fechaHasta.setHours(23, 59, 59, 999);
+            query.andWhere('documento.fechaRadicacion <= :fechaHasta', { fechaHasta });
+        }
+
+        // Restricciones por rol
+        if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPERVISOR) {
+            if (user.role === UserRole.RADICADOR) {
+                query.andWhere('documento.radicador.id = :userId', { userId: user.id });
+            } else {
+                query.andWhere('documento.usuarioAsignado.id = :userId', { userId: user.id });
+            }
+        }
+
+        return query.orderBy('documento.fechaRadicacion', 'DESC').getMany();
     }
 
+    // NUEVO: Método para actualizar campos específicos
+    async actualizarCampos(
+        id: string,
+        campos: {
+            estado?: string;
+            comentarios?: string;
+            correcciones?: string;
+            usuarioAsignadoId?: string;
+            fechaLimiteRevision?: Date;
+        },
+        user: User
+    ): Promise<Documento> {
+        const documento = await this.documentoRepository.findOne({
+            where: { id },
+            relations: ['usuarioAsignado'],
+        });
 
+        if (!documento) {
+            throw new NotFoundException('Documento no encontrado');
+        }
 
+        // Verificar permisos
+        if (user.role !== UserRole.ADMIN && documento.usuarioAsignado?.id !== user.id) {
+            throw new ForbiddenException('No tienes permisos para actualizar este documento');
+        }
 
+        // Actualizar campos permitidos
+        if (campos.estado) {
+            documento.estado = campos.estado;
+        }
+        
+        if (campos.comentarios !== undefined) {
+            documento.comentarios = campos.comentarios;
+        }
+        
+        if (campos.correcciones !== undefined) {
+            documento.correcciones = campos.correcciones;
+        }
+        
+        if (campos.usuarioAsignadoId) {
+            const nuevoUsuario = await this.userRepository.findOne({
+                where: { id: campos.usuarioAsignadoId }
+            });
+            
+            if (nuevoUsuario) {
+                documento.usuarioAsignado = nuevoUsuario;
+                documento.usuarioAsignadoNombre = nuevoUsuario.fullName || nuevoUsuario.username;
+            }
+        }
+        
+        if (campos.fechaLimiteRevision !== undefined) {
+            documento.fechaLimiteRevision = campos.fechaLimiteRevision;
+        }
+
+        documento.fechaActualizacion = new Date();
+        documento.ultimoAcceso = new Date();
+        documento.ultimoUsuario = user.fullName || user.username;
+
+        return await this.documentoRepository.save(documento);
+    }
+
+    // NUEVO: Método para obtener documentos por contratista
+    async obtenerDocumentosPorContratista(
+        documentoContratista: string,
+        user: User
+    ): Promise<Documento[]> {
+        const query = this.documentoRepository
+            .createQueryBuilder('documento')
+            .leftJoinAndSelect('documento.radicador', 'radicador')
+            .leftJoinAndSelect('documento.usuarioAsignado', 'usuarioAsignado')
+            .where('documento.documentoContratista = :documentoContratista', {
+                documentoContratista
+            });
+
+        // Restricciones por rol
+        if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPERVISOR) {
+            if (user.role === UserRole.RADICADOR) {
+                query.andWhere('documento.radicador.id = :userId', { userId: user.id });
+            } else {
+                query.andWhere('documento.usuarioAsignado.id = :userId', { userId: user.id });
+            }
+        }
+
+        return query.orderBy('documento.fechaRadicacion', 'DESC').getMany();
+    }
+
+    // NUEVO: Método para obtener documentos vencidos
+    async obtenerDocumentosVencidos(user: User): Promise<Documento[]> {
+        const fechaActual = new Date();
+        
+        const query = this.documentoRepository
+            .createQueryBuilder('documento')
+            .leftJoinAndSelect('documento.radicador', 'radicador')
+            .leftJoinAndSelect('documento.usuarioAsignado', 'usuarioAsignado')
+            .where('documento.fechaLimiteRevision IS NOT NULL')
+            .andWhere('documento.fechaLimiteRevision < :fechaActual', { fechaActual })
+            .andWhere('documento.estado NOT IN (:...estadosFinales)', {
+                estadosFinales: ['FINALIZADO', 'DEVUELTO']
+            });
+
+        // Restricciones por rol
+        if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPERVISOR) {
+            if (user.role === UserRole.RADICADOR) {
+                query.andWhere('documento.radicador.id = :userId', { userId: user.id });
+            } else {
+                query.andWhere('documento.usuarioAsignado.id = :userId', { userId: user.id });
+            }
+        }
+
+        return query.orderBy('documento.fechaLimiteRevision', 'ASC').getMany();
+    }
 }

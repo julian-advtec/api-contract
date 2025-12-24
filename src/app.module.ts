@@ -4,8 +4,9 @@ import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { EmailModule } from './email/email.module';
-import { ormconfig } from './config/ormconfig'; // ✅ Ruta corregida
+import { ormconfig } from './config/ormconfig';
 import { RadicacionModule } from './radicacion/radicacion.module';
+import { SupervisorModule } from './supervision/supervisor.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { RadicacionModule } from './radicacion/radicacion.module';
     UsersModule,
     EmailModule,
     RadicacionModule,
+    SupervisorModule 
   ],
 })
 export class AppModule {}

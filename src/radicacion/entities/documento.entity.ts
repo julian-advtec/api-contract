@@ -1,3 +1,4 @@
+// src/radicacion/entities/documento.entity.ts
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -5,6 +6,7 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 
@@ -31,10 +33,16 @@ export class Documento {
   @Column({ name: 'fecha_fin' })
   fechaFin: Date;
 
-  @Column({ name: 'estado', default: 'RADICADO' })
+  // ESTADOS DEL FLUJO
+  @Column({
+    name: 'estado',
+    default: 'RADICADO',
+    type: 'varchar',
+    length: 50
+  })
   estado: string;
 
-  // Nuevas columnas, nullable temporalmente
+  // ARCHIVOS
   @Column({ name: 'cuenta_cobro', nullable: true })
   cuentaCobro: string;
 
@@ -56,6 +64,7 @@ export class Documento {
   @Column({ name: 'observacion', type: 'text', nullable: true })
   observacion: string;
 
+  // USUARIO RADICADOR
   @ManyToOne(() => User, { nullable: false })
   @JoinColumn({ name: 'radicador_id' })
   radicador: User;
@@ -66,11 +75,20 @@ export class Documento {
   @Column({ name: 'usuario_radicador', length: 50 })
   usuarioRadicador: string;
 
-  @Column({ name: 'contratista_id', nullable: true })
-  contratistaId?: string;
+  // USUARIO ASIGNADO ACTUALMENTE
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'usuario_asignado_id' })
+  usuarioAsignado: User;
 
+  @Column({ name: 'usuario_asignado_nombre', length: 100, nullable: true })
+  usuarioAsignadoNombre: string;
+
+  // SEGUIMIENTO
   @CreateDateColumn({ name: 'fecha_radicacion' })
   fechaRadicacion: Date;
+
+  @UpdateDateColumn({ name: 'fecha_actualizacion' })
+  fechaActualizacion: Date;
 
   @Column({ name: 'ruta_carpeta_radicado', type: 'text' })
   rutaCarpetaRadicado: string;
@@ -80,7 +98,18 @@ export class Documento {
 
   @Column({ name: 'ultimo_usuario', length: 100, nullable: true })
   ultimoUsuario: string;
-  
+
+  // COMENTARIOS Y CORRECCIONES
+  @Column({ name: 'comentarios', type: 'text', nullable: true })
+  comentarios: string;
+
+  @Column({ name: 'correcciones', type: 'text', nullable: true })
+  correcciones: string;
+
+  @Column({ name: 'fecha_limite_revision', nullable: true })
+  fechaLimiteRevision: Date;
+
+  // TOKEN PÚBLICO
   @Column({ name: 'token_publico', nullable: true, unique: true })
   tokenPublico: string;
 
@@ -89,4 +118,18 @@ export class Documento {
 
   @Column({ name: 'token_expira_en', type: 'timestamp', nullable: true })
   tokenExpiraEn: Date;
+
+  @Column({ name: 'contratista_id', nullable: true })
+  contratistaId?: string;
+
+  // HISTORIAL (se almacena como JSON)
+  @Column({ name: 'historial_estados', type: 'json', nullable: true })
+  historialEstados: Array<{
+    fecha: Date;
+    estado: string;
+    usuarioId: string;
+    usuarioNombre: string;
+    rolUsuario: string;
+    observacion?: string;
+  }>;
 }
