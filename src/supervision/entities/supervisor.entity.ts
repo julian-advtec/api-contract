@@ -3,10 +3,12 @@ import { Documento } from '../../radicacion/entities/documento.entity';
 import { User } from '../../users/entities/user.entity';
 
 export enum SupervisorEstado {
-  PENDIENTE = 'PENDIENTE',
+  DISPONIBLE = 'DISPONIBLE',
+  EN_REVISION = 'EN_REVISION',
   APROBADO = 'APROBADO',
   OBSERVADO = 'OBSERVADO',
-  RECHAZADO = 'RECHAZADO'
+  RECHAZADO = 'RECHAZADO',
+  DEVUELTO = 'DEVUELTO'
 }
 
 @Entity('supervisor_documentos')
@@ -23,9 +25,9 @@ export class SupervisorDocumento {
   supervisor: User;
 
   @Column({
-    type: 'varchar',
-    length: 20,
-    default: SupervisorEstado.PENDIENTE
+    type: 'enum',
+    enum: SupervisorEstado,
+    default: SupervisorEstado.DISPONIBLE
   })
   estado: SupervisorEstado;
 
@@ -41,6 +43,12 @@ export class SupervisorDocumento {
   @UpdateDateColumn({ name: 'fecha_actualizacion' })
   fechaActualizacion: Date;
 
+  @Column({ name: 'fecha_inicio_revision', nullable: true })
+  fechaInicioRevision: Date;
+
   @Column({ name: 'fecha_aprobacion', nullable: true })
   fechaAprobacion: Date;
+
+  @Column({ name: 'fecha_fin_revision', nullable: true })
+  fechaFinRevision: Date;
 }

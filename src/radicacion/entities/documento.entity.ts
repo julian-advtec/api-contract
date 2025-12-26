@@ -7,8 +7,10 @@ import {
   ManyToOne,
   JoinColumn,
   UpdateDateColumn,
+  OneToMany // ✅ NUEVA IMPORTACIÓN
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { SupervisorDocumento } from '../../supervision/entities/supervisor.entity'; // ✅ NUEVA IMPORTACIÓN
 
 @Entity('documentos')
 export class Documento {
@@ -82,6 +84,10 @@ export class Documento {
 
   @Column({ name: 'usuario_asignado_nombre', length: 100, nullable: true })
   usuarioAsignadoNombre: string;
+
+  // ✅ NUEVA RELACIÓN: Documentos asignados a supervisores
+  @OneToMany(() => SupervisorDocumento, supervisorDocumento => supervisorDocumento.documento)
+  supervisorDocumentos: SupervisorDocumento[];
 
   // SEGUIMIENTO
   @CreateDateColumn({ name: 'fecha_radicacion' })

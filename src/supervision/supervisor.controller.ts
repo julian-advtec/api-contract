@@ -1,3 +1,4 @@
+// En supervisor.controller.ts
 import {
   Controller,
   Get,
@@ -27,37 +28,74 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
 import * as fs from 'fs';
 import * as path from 'path';
+import { Documento } from '../radicacion/entities/documento.entity';
+import { SupervisorDocumento } from './entities/supervisor.entity';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from '../users/entities/user.entity';
 
 @Controller('supervisor')
 @UseGuards(JwtAuthGuard, RolesGuard, SupervisorGuard)
 @Roles(UserRole.SUPERVISOR, UserRole.ADMIN)
 export class SupervisorController {
   private readonly logger = new Logger(SupervisorController.name);
+  
+  constructor(
+    private readonly supervisorService: SupervisorService,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
+    @InjectRepository(Documento)
+    private documentoRepository: Repository<Documento>,
+    @InjectRepository(SupervisorDocumento)
+    private supervisorRepository: Repository<SupervisorDocumento>,
+  ) { }
 
-  constructor(private readonly supervisorService: SupervisorService) {}
+  private getUserIdFromRequest(req: any): string {
+    const user = req.user;
+    const userId = user?.id || user?.userId || user?.sub || user?.user?.id;
+
+    if (!userId) {
+      this.logger.error('❌ No se pudo obtener el ID del usuario');
+      this.logger.error('❌ Estructura del usuario:', JSON.stringify(user, null, 2));
+      throw new HttpException(
+        {
+          success: false,
+          message: 'No se pudo identificar al usuario'
+        },
+        HttpStatus.UNAUTHORIZED
+      );
+    }
+
+    return userId;
+  }
 
   /**
-   * OBTENER DOCUMENTOS ASIGNADOS
+   * ✅ OBTENER DOCUMENTOS DISPONIBLES PARA REVISIÓN - CONTRATISTA CORREGIDO
    */
-  @Get('documentos-asignados')
-  async obtenerDocumentosAsignados(@Req() req: any) {
+  @Get('documentos-disponibles')
+  async obtenerDocumentosDisponibles(@Req() req: any) {
     const user = req.user;
-    this.logger.log(`📋 Supervisor ${user.username} solicitando documentos asignados`);
+    this.logger.log(`📋 ${user.role} ${user.username} solicitando documentos disponibles`);
+    this.logger.log(`🔍 Usuario completo en request:`, JSON.stringify(user, null, 2));
 
     try {
-      const documentos = await this.supervisorService.obtenerDocumentosAsignados(user.id);
-      
+      const userId = this.getUserIdFromRequest(req);
+      this.logger.log(`✅ User ID obtenido: ${userId}`);
+
+      const documentos = await this.supervisorService.obtenerDocumentosDisponibles(userId);
+
       return {
         success: true,
         count: documentos.length,
         data: documentos
       };
     } catch (error) {
-      this.logger.error(`❌ Error obteniendo documentos asignados: ${error.message}`);
+      this.logger.error(`❌ Error obteniendo documentos disponibles: ${error.message}`);
+      this.logger.error(`❌ Stack: ${error.stack}`);
       throw new HttpException(
         {
           success: false,
-          message: 'Error al obtener documentos asignados'
+          message: 'Error al obtener documentos disponibles: ' + error.message
         },
         HttpStatus.INTERNAL_SERVER_ERROR
       );
@@ -65,27 +103,78 @@ export class SupervisorController {
   }
 
   /**
-   * OBTENER DOCUMENTOS PENDIENTES (alias para frontend)
+   * ✅ TOMAR DOCUMENTO PARA REVISIÓN - CONTRATISTA CORREGIDO
    */
-  @Get('documentos/pendientes')
-  async obtenerDocumentosPendientes(@Req() req: any) {
+  @Post('tomar-documento/:documentoId')
+  async tomarDocumento(@Param('documentoId') documentoId: string, @Req() req: any) {
     const user = req.user;
-    this.logger.log(`📋 Supervisor ${user.username} solicitando documentos pendientes`);
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`🤝 ${user.role} ${user.username} (ID: ${userId}) tomando documento ${documentoId} para revisión`);
 
     try {
-      const documentos = await this.supervisorService.obtenerDocumentosAsignados(user.id);
-      
+      const resultado = await this.supervisorService.tomarDocumentoParaRevision(documentoId, userId);
+      return resultado;
+    } catch (error) {
+      this.logger.error(`❌ Error tomando documento: ${error.message}`);
+      const status = error instanceof HttpException ? error.getStatus() : HttpStatus.BAD_REQUEST;
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Error al tomar documento para revisión'
+        },
+        status
+      );
+    }
+  }
+
+  /**
+   * ✅ LIBERAR DOCUMENTO - CONTRATISTA CORREGIDO
+   */
+  @Post('liberar-documento/:documentoId')
+  async liberarDocumento(@Param('documentoId') documentoId: string, @Req() req: any) {
+    const user = req.user;
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`🔄 ${user.role} ${user.username} (ID: ${userId}) liberando documento ${documentoId}`);
+
+    try {
+      const resultado = await this.supervisorService.liberarDocumento(documentoId, userId);
+      return resultado;
+    } catch (error) {
+      this.logger.error(`❌ Error liberando documento: ${error.message}`);
+      const status = error instanceof HttpException ? error.getStatus() : HttpStatus.BAD_REQUEST;
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Error al liberar documento'
+        },
+        status
+      );
+    }
+  }
+
+  /**
+   * ✅ OBTENER DOCUMENTOS QUE ESTOY REVISANDO - CONTRATISTA CORREGIDO
+   */
+  @Get('mis-revisiones')
+  async obtenerMisRevisiones(@Req() req: any) {
+    const user = req.user;
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`📋 ${user.role} ${user.username} (ID: ${userId}) solicitando sus revisiones activas`);
+
+    try {
+      const documentos = await this.supervisorService.obtenerDocumentosEnRevision(userId);
+
       return {
         success: true,
         count: documentos.length,
         data: documentos
       };
     } catch (error) {
-      this.logger.error(`❌ Error obteniendo documentos pendientes: ${error.message}`);
+      this.logger.error(`❌ Error obteniendo revisiones activas: ${error.message}`);
       throw new HttpException(
         {
           success: false,
-          message: 'Error al obtener documentos pendientes'
+          message: 'Error al obtener revisiones activas'
         },
         HttpStatus.INTERNAL_SERVER_ERROR
       );
@@ -93,23 +182,112 @@ export class SupervisorController {
   }
 
   /**
-   * OBTENER DETALLE DE DOCUMENTO
+   * ✅ ASIGNAR TODOS LOS DOCUMENTOS RADICADOS A SUPERVISORES (Manual)
+   */
+  @Post('asignar-todos')
+  @Roles(UserRole.ADMIN)
+  async asignarTodosDocumentos(@Req() req: any) {
+    const user = req.user;
+    this.logger.log(`👑 Admin ${user.username} forzando asignación de TODOS los documentos a supervisores`);
+
+    try {
+      const resultado = await this.supervisorService.asignarTodosDocumentosASupervisores();
+
+      return {
+        success: true,
+        message: `Asignación completada: ${resultado.asignados} de ${resultado.total} documentos asignados`,
+        data: resultado
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error asignando todos los documentos: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al asignar documentos a supervisores'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * ✅ WEBHOOK para cambio de estado de documento
+   */
+  @Post('webhook/cambio-estado')
+  async webhookCambioEstado(
+    @Body() body: { documentoId: string; estadoAnterior: string; nuevoEstado: string; usuarioId: string }
+  ) {
+    this.logger.log(`🔄 Webhook: Documento ${body.documentoId} cambió de ${body.estadoAnterior} a ${body.nuevoEstado}`);
+
+    try {
+      if (body.nuevoEstado === 'RADICADO') {
+        await this.supervisorService.onDocumentoCambiaEstado(body.documentoId, body.nuevoEstado);
+      }
+
+      return {
+        success: true,
+        message: 'Webhook procesado correctamente'
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error procesando webhook: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error procesando webhook'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * ✅ OBTENER CONTEO DE DOCUMENTOS RADICADOS
+   */
+  @Get('conteo-radicados')
+  async obtenerConteoRadicados(@Req() req: any) {
+    const user = req.user;
+    this.logger.log(`📊 Supervisor ${user.username} solicitando conteo de radicados`);
+
+    try {
+      const totalRadicados = await this.supervisorService.obtenerConteoDocumentosRadicados();
+
+      return {
+        success: true,
+        data: {
+          totalRadicados: totalRadicados,
+          fechaConsulta: new Date().toISOString()
+        }
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo conteo: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al obtener conteo de radicados'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * ✅ OBTENER DETALLE DE DOCUMENTO - CONTRATISTA CORREGIDO
    */
   @Get('documento/:id')
   async obtenerDetalleDocumento(@Param('id') id: string, @Req() req: any) {
     const user = req.user;
-    this.logger.log(`🔍 Supervisor ${user.username} solicitando detalle de documento ${id}`);
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`🔍 Supervisor ${user.username} (ID: ${userId}) solicitando detalle de documento ${id}`);
 
     try {
-      const detalle = await this.supervisorService.obtenerDetalleDocumento(id, user.id);
-      
+      const detalle = await this.supervisorService.obtenerDetalleDocumento(id, userId);
+
       return {
         success: true,
         data: detalle
       };
     } catch (error) {
       this.logger.error(`❌ Error obteniendo detalle: ${error.message}`);
-      
       const status = error instanceof HttpException ? error.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
       throw new HttpException(
         {
@@ -122,7 +300,7 @@ export class SupervisorController {
   }
 
   /**
-   * DESCARGAR ARCHIVO DEL RADICADOR
+   * ✅ DESCARGAR ARCHIVO DEL RADICADOR - CONTRATISTA CORREGIDO
    */
   @Get('descargar/:documentoId/archivo/:numeroArchivo')
   async descargarArchivoRadicado(
@@ -132,13 +310,14 @@ export class SupervisorController {
     @Res() res: Response
   ) {
     const user = req.user;
-    this.logger.log(`📥 Supervisor ${user.username} descargando archivo ${numeroArchivo} del documento ${documentoId}`);
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`📥 Supervisor ${user.username} (ID: ${userId}) descargando archivo ${numeroArchivo} del documento ${documentoId}`);
 
     try {
       const { ruta, nombre } = await this.supervisorService.descargarArchivoRadicado(
         documentoId,
         numeroArchivo,
-        user.id
+        userId
       );
 
       res.setHeader('Content-Type', 'application/octet-stream');
@@ -149,7 +328,7 @@ export class SupervisorController {
 
     } catch (error) {
       this.logger.error(`❌ Error descargando archivo: ${error.message}`);
-      
+
       if (!res.headersSent) {
         const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
         res.status(status).json({
@@ -161,7 +340,7 @@ export class SupervisorController {
   }
 
   /**
-   * VER ARCHIVO DEL RADICADOR (en navegador)
+   * ✅ VER ARCHIVO DEL RADICADOR (en navegador) - CONTRATISTA CORREGIDO
    */
   @Get('ver/:documentoId/archivo/:numeroArchivo')
   async verArchivoRadicado(
@@ -171,13 +350,14 @@ export class SupervisorController {
     @Res() res: Response
   ) {
     const user = req.user;
-    this.logger.log(`👁️ Supervisor ${user.username} viendo archivo ${numeroArchivo} del documento ${documentoId}`);
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`👁️ Supervisor ${user.username} (ID: ${userId}) viendo archivo ${numeroArchivo} del documento ${documentoId}`);
 
     try {
       const { ruta, nombre } = await this.supervisorService.descargarArchivoRadicado(
         documentoId,
         numeroArchivo,
-        user.id
+        userId
       );
 
       const extension = path.extname(nombre).toLowerCase();
@@ -198,7 +378,7 @@ export class SupervisorController {
 
     } catch (error) {
       this.logger.error(`❌ Error viendo archivo: ${error.message}`);
-      
+
       if (!res.headersSent) {
         const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
         res.status(status).json({
@@ -210,7 +390,7 @@ export class SupervisorController {
   }
 
   /**
-   * REVISAR DOCUMENTO
+   * ✅ REVISAR DOCUMENTO - CONTRATISTA CORREGIDO
    */
   @Post('revisar/:documentoId')
   @UseInterceptors(FileInterceptor('archivo'))
@@ -221,7 +401,8 @@ export class SupervisorController {
     @Req() req?: any
   ) {
     const user = req.user;
-    this.logger.log(`🔍 Supervisor ${user.username} revisando documento ${documentoId} - Estado: ${revisarDto.estado}`);
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`🔍 Supervisor ${user.username} (ID: ${userId}) revisando documento ${documentoId} - Estado: ${revisarDto.estado}`);
 
     try {
       if (revisarDto.estado === 'APROBADO' && !archivo) {
@@ -230,7 +411,7 @@ export class SupervisorController {
 
       const result = await this.supervisorService.revisarDocumento(
         documentoId,
-        user.id,
+        userId,
         revisarDto,
         archivo
       );
@@ -260,7 +441,6 @@ export class SupervisorController {
       };
     } catch (error) {
       this.logger.error(`❌ Error revisando documento: ${error.message}`);
-      
       const status = error instanceof HttpException ? error.getStatus() : HttpStatus.BAD_REQUEST;
       throw new HttpException(
         {
@@ -273,7 +453,7 @@ export class SupervisorController {
   }
 
   /**
-   * DEVOLVER DOCUMENTO AL RADICADOR
+   * ✅ DEVOLVER DOCUMENTO AL RADICADOR - CONTRATISTA CORREGIDO
    */
   @Post('devolver/:documentoId')
   async devolverDocumento(
@@ -282,7 +462,8 @@ export class SupervisorController {
     @Req() req: any
   ) {
     const user = req.user;
-    this.logger.log(`↩️ Supervisor ${user.username} devolviendo documento ${documentoId}`);
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`↩️ Supervisor ${user.username} (ID: ${userId}) devolviendo documento ${documentoId}`);
 
     try {
       if (!body.motivo || !body.instrucciones) {
@@ -291,7 +472,7 @@ export class SupervisorController {
 
       const result = await this.supervisorService.devolverDocumento(
         documentoId,
-        user.id,
+        userId,
         body.motivo,
         body.instrucciones
       );
@@ -315,7 +496,6 @@ export class SupervisorController {
       };
     } catch (error) {
       this.logger.error(`❌ Error devolviendo documento: ${error.message}`);
-      
       const status = error instanceof HttpException ? error.getStatus() : HttpStatus.BAD_REQUEST;
       throw new HttpException(
         {
@@ -328,16 +508,17 @@ export class SupervisorController {
   }
 
   /**
-   * OBTENER HISTORIAL DEL SUPERVISOR
+   * ✅ OBTENER HISTORIAL DEL SUPERVISOR - CONTRATISTA CORREGIDO
    */
   @Get('historial')
   async obtenerHistorial(@Req() req: any, @Query('limit') limit?: number) {
     const user = req.user;
-    this.logger.log(`📊 Supervisor ${user.username} solicitando historial`);
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`📊 Supervisor ${user.username} (ID: ${userId}) solicitando historial`);
 
     try {
-      const historial = await this.supervisorService.obtenerHistorialSupervisor(user.id);
-      
+      const historial = await this.supervisorService.obtenerHistorialSupervisor(userId);
+
       return {
         success: true,
         count: historial.length,
@@ -356,16 +537,17 @@ export class SupervisorController {
   }
 
   /**
-   * OBTENER ESTADÍSTICAS DEL SUPERVISOR
+   * ✅ OBTENER ESTADÍSTICAS DEL SUPERVISOR - CONTRATISTA CORREGIDO
    */
   @Get('estadisticas')
   async obtenerEstadisticas(@Req() req: any) {
     const user = req.user;
-    this.logger.log(`📈 Supervisor ${user.username} solicitando estadísticas`);
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`📈 Supervisor ${user.username} (ID: ${userId}) solicitando estadísticas`);
 
     try {
-      const estadisticas = await this.supervisorService.obtenerEstadisticasSupervisor(user.id);
-      
+      const estadisticas = await this.supervisorService.obtenerEstadisticasSupervisor(userId);
+
       return {
         success: true,
         data: estadisticas
@@ -384,7 +566,7 @@ export class SupervisorController {
   }
 
   /**
-   * DESCARGAR ARCHIVO DEL SUPERVISOR
+   * ✅ DESCARGAR ARCHIVO DEL SUPERVISOR - CONTRATISTA CORREGIDO
    */
   @Get('descargar-archivo/:nombreArchivo')
   async descargarArchivoSupervisor(
@@ -393,10 +575,11 @@ export class SupervisorController {
     @Res() res: Response
   ) {
     const user = req.user;
-    this.logger.log(`📥 Supervisor ${user.username} descargando su archivo: ${nombreArchivo}`);
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`📥 Supervisor ${user.username} (ID: ${userId}) descargando su archivo: ${nombreArchivo}`);
 
     try {
-      const { ruta, nombre } = await this.supervisorService.obtenerArchivoSupervisor(user.id, nombreArchivo);
+      const { ruta, nombre } = await this.supervisorService.obtenerArchivoSupervisor(userId, nombreArchivo);
 
       res.setHeader('Content-Type', 'application/octet-stream');
       res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
@@ -406,7 +589,7 @@ export class SupervisorController {
 
     } catch (error) {
       this.logger.error(`❌ Error descargando archivo del supervisor: ${error.message}`);
-      
+
       if (!res.headersSent) {
         const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
         res.status(status).json({
@@ -418,7 +601,7 @@ export class SupervisorController {
   }
 
   /**
-   * VER ARCHIVO DEL SUPERVISOR (en navegador)
+   * ✅ VER ARCHIVO DEL SUPERVISOR (en navegador) - CONTRATISTA CORREGIDO
    */
   @Get('ver-archivo-supervisor/:nombreArchivo')
   async verArchivoSupervisor(
@@ -427,10 +610,11 @@ export class SupervisorController {
     @Res() res: Response
   ) {
     const user = req.user;
-    this.logger.log(`👁️ Supervisor ${user.username} viendo su archivo: ${nombreArchivo}`);
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`👁️ Supervisor ${user.username} (ID: ${userId}) viendo su archivo: ${nombreArchivo}`);
 
     try {
-      const { ruta, nombre } = await this.supervisorService.obtenerArchivoSupervisor(user.id, nombreArchivo);
+      const { ruta, nombre } = await this.supervisorService.obtenerArchivoSupervisor(userId, nombreArchivo);
 
       const extension = path.extname(nombre).toLowerCase();
       const mimeTypes: Record<string, string> = {
@@ -450,7 +634,7 @@ export class SupervisorController {
 
     } catch (error) {
       this.logger.error(`❌ Error viendo archivo del supervisor: ${error.message}`);
-      
+
       if (!res.headersSent) {
         const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
         res.status(status).json({
@@ -462,7 +646,7 @@ export class SupervisorController {
   }
 
   /**
-   * HEALTH CHECK
+   * ✅ HEALTH CHECK
    */
   @Get('health')
   async healthCheck() {
@@ -475,7 +659,7 @@ export class SupervisorController {
   }
 
   /**
-   * TEST CONEXIÓN
+   * ✅ TEST CONEXIÓN
    */
   @Get('test/conexion')
   async testConexion() {
@@ -484,5 +668,278 @@ export class SupervisorController {
       message: 'Conexión exitosa con el servicio de supervisor',
       timestamp: new Date().toISOString()
     };
+  }
+
+  /**
+   * ✅ DIAGNÓSTICO
+   */
+  @Get('diagnostico')
+  @UseGuards(JwtAuthGuard)
+  async diagnostico(@Req() req: any) {
+    try {
+      const user = req.user;
+
+      // 1. Verificar usuario en BD
+      const usuario = await this.userRepository.findOne({
+        where: { id: user.id }
+      });
+
+      if (!usuario) {
+        return {
+          error: 'Usuario no encontrado en BD',
+          userId: user.id,
+          fecha: new Date().toISOString()
+        };
+      }
+
+      // 2. Verificar valores de UserRole
+      this.logger.log(`🔍 Valores de UserRole: ADMIN="${UserRole.ADMIN}", SUPERVISOR="${UserRole.SUPERVISOR}"`);
+
+      // 3. Contar documentos con diferentes criterios
+      const totalDocumentos = await this.documentoRepository.count();
+
+      // 4. Consultas con diferentes formatos de estado
+      const conteos = {
+        totalDocumentos,
+        radicadoExacto: await this.documentoRepository.count({
+          where: { estado: 'RADICADO' }
+        }),
+        radicadoMinusculas: await this.documentoRepository.count({
+          where: { estado: 'radicado' }
+        }),
+        radicadoLike: await this.documentoRepository.createQueryBuilder('doc')
+          .where("doc.estado ILIKE :estado", { estado: '%RADICADO%' })
+          .getCount(),
+        sinEstado: await this.documentoRepository.count({
+          where: { estado: '' }
+        }),
+        estadosDistintos: await this.documentoRepository
+          .createQueryBuilder('doc')
+          .select('doc.estado', 'estado')
+          .addSelect('COUNT(*)', 'cantidad')
+          .groupBy('doc.estado')
+          .orderBy('cantidad', 'DESC')
+          .getRawMany()
+      };
+
+      // 5. Ejemplo de documentos RADICADOS - SIN RELACIÓN contratista
+      const documentosEjemplo = await this.documentoRepository.find({
+        where: { estado: 'RADICADO' },
+        take: 5,
+        relations: ['radicador'] // ✅ SOLO radicador
+      });
+
+      // 6. Verificar si hay supervisores
+      const supervisores = await this.userRepository.find({
+        where: { role: UserRole.SUPERVISOR }
+      });
+
+      // 7. Verificar asignaciones
+      const asignaciones = await this.supervisorRepository.find({
+        relations: ['documento', 'supervisor']
+      });
+
+      return {
+        timestamp: new Date().toISOString(),
+        usuario: {
+          id: usuario.id,
+          username: usuario.username,
+          role: usuario.role,
+          roleEnBD: usuario.role,
+          fullName: usuario.fullName,
+          esAdmin: usuario.role === UserRole.ADMIN,
+          esSupervisor: usuario.role === UserRole.SUPERVISOR
+        },
+        conteos,
+        estadosEnBD: conteos.estadosDistintos,
+        documentosEjemplo: documentosEjemplo.map((doc: any) => ({
+          id: doc.id,
+          numeroRadicado: doc.numeroRadicado,
+          estado: doc.estado,
+          estadoLongitud: doc.estado?.length,
+          estadoCodigo: doc.estado?.charCodeAt(0),
+          fechaRadicacion: doc.fechaRadicacion,
+          radicador: doc.radicador?.username
+        })),
+        supervisores: {
+          total: supervisores.length,
+          lista: supervisores.map((s: any) => ({
+            id: s.id,
+            username: s.username,
+            role: s.role,
+            isActive: s.isActive
+          }))
+        },
+        asignaciones: {
+          total: asignaciones.length,
+          lista: asignaciones.map((a: any) => ({
+            id: a.id,
+            documento: a.documento?.numeroRadicado,
+            supervisor: a.supervisor?.username,
+            estado: a.estado
+          }))
+        }
+      };
+
+    } catch (error) {
+      this.logger.error(`❌ Error en diagnóstico: ${error.message}`, error.stack);
+      return {
+        error: error.message,
+        stack: error.stack,
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * ✅ VERIFICAR SUPERVISORES
+   */
+  @Get('verificar-supervisores')
+  @UseGuards(JwtAuthGuard)
+  async verificarSupervisores() {
+    try {
+      const supervisores = await this.userRepository.find({
+        where: {
+          role: UserRole.SUPERVISOR,
+          isActive: true
+        }
+      });
+
+      return {
+        success: true,
+        timestamp: new Date().toISOString(),
+        data: {
+          total: supervisores.length,
+          supervisores: supervisores.map((s: any) => ({
+            id: s.id,
+            username: s.username,
+            fullName: s.fullName,
+            role: s.role,
+            email: s.email,
+            isActive: s.isActive
+          }))
+        }
+      };
+    } catch (error) {
+      this.logger.error(`Error verificando supervisores: ${error.message}`);
+      return {
+        success: false,
+        message: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * ✅ DOCUMENTOS RADICADOS PARA ADMIN - SIN CONTRATISTA
+   */
+  @Get('documentos-radicados')
+  @Roles(UserRole.ADMIN)
+  async obtenerDocumentosRadicados(@Req() req: any) {
+    const user = req.user;
+    this.logger.log(`📋 Admin ${user.username} solicitando documentos radicados`);
+
+    try {
+      // ✅ SOLO radicador - NO contratista
+      const documentos = await this.documentoRepository.find({
+        where: { estado: 'RADICADO' },
+        relations: ['radicador'], // ✅ SOLO radicador
+        order: { fechaRadicacion: 'ASC' },
+      });
+
+      return {
+        success: true,
+        count: documentos.length,
+        data: documentos.map(doc => ({
+          id: doc.id,
+          numeroRadicado: doc.numeroRadicado,
+          numeroContrato: doc.numeroContrato,
+          nombreContratista: doc.nombreContratista,
+          documentoContratista: doc.documentoContratista,
+          fechaInicio: doc.fechaInicio,
+          fechaFin: doc.fechaFin,
+          estado: doc.estado,
+          fechaRadicacion: doc.fechaRadicacion,
+          radicador: doc.nombreRadicador,
+          observacion: doc.observacion,
+          disponible: true
+        }))
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo documentos radicados: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al obtener documentos radicados'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * ✅ DOCUMENTOS RADICADOS TEST - SIN CONTRATISTA
+   */
+  @Get('documentos-radicados-test')
+  async obtenerDocumentosRadicadosTest(@Req() req: any) {
+    const user = req.user;
+    this.logger.log(`📋 ${user.role} ${user.username} solicitando documentos radicados (TEST)`);
+
+    try {
+      // ✅ SOLO radicador - NO contratista
+      const documentos = await this.documentoRepository.find({
+        where: { estado: 'RADICADO' },
+        relations: ['radicador'], // ✅ SOLO radicador
+        order: { fechaRadicacion: 'ASC' },
+      });
+
+      this.logger.log(`🔍 Encontrados ${documentos.length} documentos con estado exacto 'RADICADO'`);
+
+      // Para debug: mostrar estados únicos
+      const estadosUnicos = [...new Set(documentos.map(d => d.estado))];
+      this.logger.log(`🔍 Estados únicos encontrados:`, estadosUnicos);
+
+      // Construir respuesta similar al endpoint de supervisor
+      const documentosConEstado = documentos.map(documento => {
+        return {
+          id: documento.id,
+          numeroRadicado: documento.numeroRadicado,
+          numeroContrato: documento.numeroContrato,
+          nombreContratista: documento.nombreContratista,
+          documentoContratista: documento.documentoContratista,
+          fechaInicio: documento.fechaInicio,
+          fechaFin: documento.fechaFin,
+          estado: documento.estado,
+          fechaRadicacion: documento.fechaRadicacion,
+          radicador: documento.nombreRadicador,
+          observacion: documento.observacion || '',
+          disponible: true,
+          asignacion: {
+            enRevision: false,
+            puedoTomar: true
+          }
+        };
+      });
+
+      return {
+        success: true,
+        count: documentosConEstado.length,
+        data: documentosConEstado,
+        debug: {
+          totalEnBD: documentos.length,
+          estadosUnicos: estadosUnicos,
+          queryUsed: "where: { estado: 'RADICADO' }"
+        }
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error en test: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al obtener documentos radicados: ' + error.message
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
   }
 }

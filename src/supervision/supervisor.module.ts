@@ -1,5 +1,5 @@
 // src/supervisor/supervisor.module.ts
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SupervisorController } from './supervisor.controller';
 import { SupervisorService } from './supervisor.service';
@@ -17,7 +17,7 @@ import { RadicacionModule } from '../radicacion/radicacion.module';
       User
     ]),
     AuthModule,
-    RadicacionModule
+    forwardRef(() => RadicacionModule), // ✅ USAR forwardRef
   ],
   controllers: [SupervisorController],
   providers: [SupervisorService],

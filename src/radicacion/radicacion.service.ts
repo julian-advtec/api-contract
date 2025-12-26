@@ -6,7 +6,9 @@ import {
     ForbiddenException,
     NotFoundException,
     UnauthorizedException,
-    InternalServerErrorException
+    InternalServerErrorException,
+    Inject,
+    forwardRef
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
@@ -22,6 +24,7 @@ import * as jwt from 'jsonwebtoken';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { EstadosService } from '../estados/estados.service';
+import { SupervisorService } from '../supervision/supervisor.service';
 
 const execAsync = promisify(exec);
 
@@ -38,6 +41,8 @@ export class RadicacionService {
         @InjectRepository(Contratista)
         private contratistaRepository: Repository<Contratista>,
         private estadosService: EstadosService,
+        @Inject(forwardRef(() => SupervisorService))
+        private supervisorService: SupervisorService,
     ) {
         this.logger.log(`📁 ======= CONFIGURACIÓN RUTA SERVIDOR =======`);
         this.logger.log(`🌐 Ruta configurada: ${this.basePath}`);
@@ -309,6 +314,10 @@ export class RadicacionService {
             try {
                 const savedDocumento = await this.documentoRepository.save(documento);
                 this.logger.log(`✅ Documento guardado en BD con ID: ${savedDocumento.id}`);
+
+                // ✅✅✅ NUEVO: ASIGNAR DOCUMENTO A SUPERVISORES AUTOMÁTICAMENTE
+                await this.asignarDocumentoASupervisores(savedDocumento);
+
                 this.logger.log(`🎉 ======= DOCUMENTO CREADO EXITOSAMENTE =======`);
                 this.logger.log(`📄 Número radicado: ${savedDocumento.numeroRadicado}`);
 
@@ -778,26 +787,26 @@ Ruta servidor R2-D2: ${rutaCarpeta}
         if (campos.estado) {
             documento.estado = campos.estado;
         }
-        
+
         if (campos.comentarios !== undefined) {
             documento.comentarios = campos.comentarios;
         }
-        
+
         if (campos.correcciones !== undefined) {
             documento.correcciones = campos.correcciones;
         }
-        
+
         if (campos.usuarioAsignadoId) {
             const nuevoUsuario = await this.userRepository.findOne({
                 where: { id: campos.usuarioAsignadoId }
             });
-            
+
             if (nuevoUsuario) {
                 documento.usuarioAsignado = nuevoUsuario;
                 documento.usuarioAsignadoNombre = nuevoUsuario.fullName || nuevoUsuario.username;
             }
         }
-        
+
         if (campos.fechaLimiteRevision !== undefined) {
             documento.fechaLimiteRevision = campos.fechaLimiteRevision;
         }
@@ -837,7 +846,7 @@ Ruta servidor R2-D2: ${rutaCarpeta}
     // NUEVO: Método para obtener documentos vencidos
     async obtenerDocumentosVencidos(user: User): Promise<Documento[]> {
         const fechaActual = new Date();
-        
+
         const query = this.documentoRepository
             .createQueryBuilder('documento')
             .leftJoinAndSelect('documento.radicador', 'radicador')
@@ -858,5 +867,94 @@ Ruta servidor R2-D2: ${rutaCarpeta}
         }
 
         return query.orderBy('documento.fechaLimiteRevision', 'ASC').getMany();
+    }
+
+    // ✅ NUEVO MÉTODO: Asignar documento a supervisores automáticamente
+    private async asignarDocumentoASupervisores(documento: Documento): Promise<void> {
+        try {
+            this.logger.log(`🔄 Asignando documento ${documento.numeroRadicado} a supervisores...`);
+
+            // Llamar al servicio de supervisor para asignar el documento
+            await this.supervisorService.asignarDocumentoASupervisoresAutomaticamente(documento.id);
+
+            this.logger.log(`✅ Documento ${documento.numeroRadicado} asignado a supervisores automáticamente`);
+        } catch (error) {
+            this.logger.error(`❌ Error asignando documento a supervisores: ${error.message}`);
+            // No lanzamos el error para no interrumpir el flujo principal
+        }
+    }
+
+    // ✅ NUEVO MÉTODO: Cambiar estado de documento y notificar al supervisor
+    async cambiarEstadoDocumento(
+        documentoId: string,
+        nuevoEstado: string,
+        usuarioId: string,
+        observacion?: string
+    ): Promise<Documento> {
+        try {
+            this.logger.log(`🔄 Cambiando estado del documento ${documentoId} a ${nuevoEstado}`);
+
+            const documento = await this.documentoRepository.findOne({
+                where: { id: documentoId }, // ✅ CAMBIADO: documentoId → id
+                relations: ['radicador', 'usuarioAsignado']
+            });
+
+            if (!documento) {
+                throw new NotFoundException('Documento no encontrado');
+            }
+
+            const usuario = await this.userRepository.findOne({
+                where: { id: usuarioId }
+            });
+
+            if (!usuario) {
+                throw new NotFoundException('Usuario no encontrado');
+            }
+
+            const estadoAnterior = documento.estado;
+            documento.estado = nuevoEstado;
+            documento.fechaActualizacion = new Date();
+            documento.ultimoAcceso = new Date();
+            documento.ultimoUsuario = usuario.fullName || usuario.username;
+
+            // Agregar al historial
+            const historial = documento.historialEstados || [];
+            historial.push({
+                fecha: new Date(),
+                estado: nuevoEstado,
+                usuarioId: usuario.id,
+                usuarioNombre: usuario.fullName || usuario.username,
+                rolUsuario: usuario.role,
+                observacion: observacion || `Cambio de estado: ${estadoAnterior} → ${nuevoEstado}`,
+            });
+            documento.historialEstados = historial;
+
+            const documentoActualizado = await this.documentoRepository.save(documento);
+
+            // ✅✅✅ NOTIFICAR AL SUPERVISOR SI EL ESTADO REQUIERE SUPERVISIÓN
+            if (nuevoEstado === 'RADICADO' || nuevoEstado === 'SUPERVISADO') {
+                try {
+                    await this.supervisorService.onDocumentoCambiaEstado(documentoId, nuevoEstado);
+                    this.logger.log(`✅ Notificación enviada a supervisor sobre cambio de estado`);
+                } catch (error) {
+                    this.logger.error(`⚠️ Error notificando cambio de estado a supervisor: ${error.message}`);
+                    // No fallar la operación principal por esto
+                }
+            }
+
+            this.logger.log(`✅ Estado del documento ${documento.numeroRadicado} cambiado de ${estadoAnterior} a ${nuevoEstado}`);
+
+            return documentoActualizado;
+        } catch (error) {
+            this.logger.error(`❌ Error cambiando estado del documento: ${error.message}`);
+            throw new InternalServerErrorException(`Error al cambiar estado del documento: ${error.message}`);
+        }
+    }
+
+    // ✅ NUEVO: Obtener conteo de documentos radicados para estadísticas
+    async obtenerConteoDocumentosRadicados(): Promise<number> {
+        return await this.documentoRepository.count({
+            where: { estado: 'RADICADO' }
+        });
     }
 }
