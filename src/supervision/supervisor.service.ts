@@ -1,3 +1,4 @@
+// src/supervision/supervisor.service.ts
 import {
   Injectable,
   NotFoundException,
@@ -9,7 +10,7 @@ import {
   forwardRef
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, Not, IsNull } from 'typeorm';
+import { Repository } from 'typeorm';
 import { SupervisorDocumento, SupervisorEstado } from './entities/supervisor.entity';
 import { Documento } from '../radicacion/entities/documento.entity';
 import { User } from '../users/entities/user.entity';
@@ -42,56 +43,38 @@ export class SupervisorService {
   }
 
   /**
-   * ✅ OBTENER DOCUMENTOS DISPONIBLES PARA REVISIÓN - SIN CONTRATISTA
+   * ✅ OBTENER DOCUMENTOS DISPONIBLES PARA REVISIÓN - VERSIÓN CORREGIDA
    */
   async obtenerDocumentosDisponibles(supervisorId: string): Promise<any[]> {
     this.logger.log(`📋 Supervisor ${supervisorId} solicitando documentos disponibles`);
 
     try {
-      // 1. Verificar y obtener ID real del usuario
-      let userId = supervisorId;
-      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(supervisorId);
-
-      if (!isUUID) {
-        const supervisor = await this.userRepository.findOne({
-          where: { username: supervisorId }
-        });
-
-        if (!supervisor) {
-          throw new ForbiddenException('Usuario no autorizado');
-        }
-
-        userId = supervisor.id;
-      }
-
-      // 2. Buscar documentos usando ILIKE para estado RADICADO
+      // 1. Buscar documentos SOLO en estado RADICADO
       const documentos = await this.documentoRepository
         .createQueryBuilder('documento')
         .leftJoinAndSelect('documento.radicador', 'radicador')
-        .where("documento.estado ILIKE :estado", { estado: '%RADICADO%' })
+        .leftJoinAndSelect('documento.usuarioAsignado', 'usuarioAsignado')
+        .where("documento.estado = :estado", { estado: 'RADICADO' })
         .orderBy('documento.fechaRadicacion', 'ASC')
         .getMany();
 
-      this.logger.log(`✅ Encontrados ${documentos.length} documentos con estado que contiene 'RADICADO'`);
+      this.logger.log(`✅ Encontrados ${documentos.length} documentos en estado RADICADO`);
 
-      // 3. DEBUG: Verificar qué documentos encontró
-      if (documentos.length === 0) {
-        const todosDocumentos = await this.documentoRepository.find({
-          relations: ['radicador']
-        });
+      // 2. Verificar si el supervisor ya tiene algún documento en revisión
+      const supervisorDocs = await this.supervisorRepository.find({
+        where: {
+          supervisor: { id: supervisorId },
+          estado: SupervisorEstado.EN_REVISION
+        },
+        relations: ['documento']
+      });
 
-        this.logger.log(`🔍 DEBUG - Todos los documentos en BD: ${todosDocumentos.length}`);
-        todosDocumentos.forEach((doc, index) => {
-          this.logger.log(`   [${index + 1}] ${doc.numeroRadicado} - Estado: "${doc.estado}" (tipo: ${typeof doc.estado}, longitud: ${doc.estado?.length})`);
-        });
-      } else {
-        documentos.forEach((doc, index) => {
-          this.logger.log(`   [${index + 1}] ${doc.numeroRadicado} - Estado: "${doc.estado}"`);
-        });
-      }
+      const documentosEnRevisionIds = supervisorDocs.map(sd => sd.documento.id);
 
-      // 4. Mapear respuesta
+      // 3. Mapear respuesta
       const documentosConEstado = documentos.map(documento => {
+        const estaRevisandoYo = documentosEnRevisionIds.includes(documento.id);
+
         return {
           id: documento.id,
           numeroRadicado: documento.numeroRadicado,
@@ -106,8 +89,11 @@ export class SupervisorService {
           observacion: documento.observacion || '',
           disponible: true,
           asignacion: {
-            enRevision: false,
-            puedoTomar: true
+            enRevision: estaRevisandoYo,
+            puedoTomar: !estaRevisandoYo && documento.estado === 'RADICADO',
+            usuarioAsignado: documento.usuarioAsignadoNombre,
+            supervisorActual: documento.usuarioAsignado ?
+              documento.usuarioAsignado.fullName || documento.usuarioAsignado.username : null
           }
         };
       });
@@ -116,26 +102,25 @@ export class SupervisorService {
 
     } catch (error) {
       this.logger.error(`❌ Error obteniendo documentos disponibles: ${error.message}`);
-      this.logger.error(`❌ Stack: ${error.stack}`);
       throw error;
     }
   }
 
   /**
-   * ✅ TOMAR DOCUMENTO PARA REVISIÓN - SIN CONTRATISTA
+   * ✅ TOMAR DOCUMENTO PARA REVISIÓN - VERSIÓN CORREGIDA
    */
   async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Promise<{ success: boolean; message: string; documento: any }> {
     this.logger.log(`🤝 Supervisor ${supervisorId} tomando documento ${documentoId} para revisión`);
 
     try {
-      // 1. Verificar documento - SIN contratista
+      // 1. Verificar documento (estado RADICADO)
       const documento = await this.documentoRepository.findOne({
         where: { id: documentoId, estado: 'RADICADO' },
-        relations: ['radicador'] // ✅ SOLO radicador
+        relations: ['radicador', 'usuarioAsignado']
       });
 
       if (!documento) {
-        throw new NotFoundException('Documento no encontrado o no está disponible para revisión');
+        throw new NotFoundException('Documento no encontrado o no está disponible para revisión (debe estar en estado RADICADO)');
       }
 
       // 2. Verificar supervisor
@@ -147,36 +132,44 @@ export class SupervisorService {
         throw new NotFoundException('Supervisor no encontrado');
       }
 
-      // 3. Verificar si alguien más ya está revisando este documento
-      const revisionActiva = await this.supervisorRepository.findOne({
-        where: {
-          documento: { id: documentoId },
-          estado: SupervisorEstado.EN_REVISION
-        },
-        relations: ['supervisor']
-      });
-
-      if (revisionActiva) {
-        const estaRevisandoElMismo = revisionActiva.supervisor.id === supervisorId;
-
-        if (!estaRevisandoElMismo) {
-          throw new BadRequestException(`Este documento ya está siendo revisado por ${revisionActiva.supervisor.fullName || revisionActiva.supervisor.username}`);
-        }
-
-        // Si ya lo está revisando, simplemente confirmar
-        return {
-          success: true,
-          message: 'Ya tienes este documento en revisión',
-          documento: this.mapearDocumentoParaRespuesta(documento, revisionActiva)
-        };
+      // 3. Verificar si ya está asignado a otro usuario
+      if (documento.usuarioAsignado && documento.usuarioAsignado.id !== supervisorId) {
+        throw new BadRequestException(`Este documento ya está asignado a ${documento.usuarioAsignadoNombre}`);
       }
 
-      // 4. Buscar si ya existe una asignación para este supervisor
+      // 4. ✅ CRÍTICO: ACTUALIZAR ESTADO DEL DOCUMENTO PRINCIPAL
+      documento.estado = 'EN_REVISION_SUPERVISOR';
+      documento.fechaActualizacion = new Date();
+      documento.ultimoAcceso = new Date();
+      documento.ultimoUsuario = `Supervisor: ${supervisor.fullName || supervisor.username}`;
+
+      // Actualizar usuario asignado
+      documento.usuarioAsignado = supervisor;
+      documento.usuarioAsignadoNombre = supervisor.fullName || supervisor.username;
+
+      // Agregar al historial del documento
+      const historial = documento.historialEstados || [];
+      historial.push({
+        fecha: new Date(),
+        estado: 'EN_REVISION_SUPERVISOR',
+        usuarioId: supervisor.id,
+        usuarioNombre: supervisor.fullName || supervisor.username,
+        rolUsuario: supervisor.role,
+        observacion: `Documento tomado para revisión por supervisor ${supervisor.username}`
+      });
+      documento.historialEstados = historial;
+
+      // Guardar cambios en el documento principal
+      await this.documentoRepository.save(documento);
+      this.logger.log(`📝 Documento principal actualizado a estado: ${documento.estado}`);
+
+      // 5. Buscar si ya existe una asignación para este supervisor
       let supervisorDoc = await this.supervisorRepository.findOne({
         where: {
           documento: { id: documentoId },
           supervisor: { id: supervisorId }
-        }
+        },
+        relations: ['documento', 'supervisor']
       });
 
       if (supervisorDoc) {
@@ -184,6 +177,7 @@ export class SupervisorService {
         supervisorDoc.estado = SupervisorEstado.EN_REVISION;
         supervisorDoc.fechaActualizacion = new Date();
         supervisorDoc.fechaInicioRevision = new Date();
+        supervisorDoc.observacion = 'Documento tomado para revisión';
       } else {
         // Crear nueva asignación
         supervisorDoc = this.supervisorRepository.create({
@@ -192,20 +186,24 @@ export class SupervisorService {
           estado: SupervisorEstado.EN_REVISION,
           fechaCreacion: new Date(),
           fechaActualizacion: new Date(),
-          fechaInicioRevision: new Date()
+          fechaInicioRevision: new Date(),
+          observacion: 'Documento tomado para revisión'
         });
       }
 
-      // 5. Guardar
+      // 6. Guardar asignación del supervisor
       await this.supervisorRepository.save(supervisorDoc);
 
-      // 6. Actualizar documento
-      documento.ultimoAcceso = new Date();
-      documento.ultimoUsuario = `Supervisor: ${supervisor.fullName || supervisor.username}`;
-      documento.fechaActualizacion = new Date();
-      await this.documentoRepository.save(documento);
+      // 7. Registrar acceso en archivo de log
+      if (documento && documento.rutaCarpetaRadicado) {
+        await this.registrarAccesoSupervisor(
+          documento.rutaCarpetaRadicado,
+          supervisorId,
+          `TOMÓ documento para revisión. Estado: RADICADO → EN_REVISION_SUPERVISOR`
+        );
+      }
 
-      this.logger.log(`✅ Documento ${documento.numeroRadicado} tomado para revisión por ${supervisor.username}`);
+      this.logger.log(`✅ Documento ${documento.numeroRadicado} tomado para revisión por ${supervisor.username}. Estado actualizado a EN_REVISION_SUPERVISOR`);
 
       return {
         success: true,
@@ -214,28 +212,47 @@ export class SupervisorService {
       };
 
     } catch (error) {
-      this.logger.error(`❌ Error tomando documento: ${error.message}`);
+      this.logger.error(`❌ Error tomando documento: ${error.message}`, error.stack);
       throw error;
     }
   }
 
   /**
-   * ✅ OBTENER DOCUMENTOS QUE ESTOY REVISANDO - SIN CONTRATISTA
+   * ✅ OBTENER DOCUMENTOS QUE ESTOY REVISANDO
    */
   async obtenerDocumentosEnRevision(supervisorId: string): Promise<any[]> {
     this.logger.log(`📋 Supervisor ${supervisorId} solicitando documentos en revisión`);
 
     try {
+      // Buscar documentos que estén EN_REVISION_SUPERVISOR y asignados a este supervisor
+      const documentos = await this.documentoRepository
+        .createQueryBuilder('documento')
+        .leftJoinAndSelect('documento.radicador', 'radicador')
+        .leftJoin('supervisor_documentos', 'sd', 'sd.documento_id = documento.id')
+        .where('sd.supervisor_id = :supervisorId', { supervisorId })
+        .andWhere('sd.estado = :estado', { estado: SupervisorEstado.EN_REVISION })
+        .andWhere('documento.estado = :docEstado', { docEstado: 'EN_REVISION_SUPERVISOR' })
+        .orderBy('sd.fechaInicioRevision', 'DESC')
+        .getMany();
+
+      // También obtener las asignaciones para mapear correctamente
       const supervisorDocs = await this.supervisorRepository.find({
         where: {
           supervisor: { id: supervisorId },
           estado: SupervisorEstado.EN_REVISION
         },
-        relations: ['documento', 'documento.radicador'], // ✅ SOLO radicador
-        order: { fechaInicioRevision: 'DESC' }
+        relations: ['supervisor', 'documento']
       });
 
-      return supervisorDocs.map(sd => this.mapearDocumentoParaRespuesta(sd.documento, sd));
+      const mapaAsignaciones = new Map();
+      supervisorDocs.forEach(sd => {
+        mapaAsignaciones.set(sd.documento.id, sd);
+      });
+
+      return documentos.map(documento => {
+        const asignacion = mapaAsignaciones.get(documento.id);
+        return this.mapearDocumentoParaRespuesta(documento, asignacion);
+      });
 
     } catch (error) {
       this.logger.error(`❌ Error obteniendo documentos en revisión: ${error.message}`);
@@ -244,7 +261,7 @@ export class SupervisorService {
   }
 
   /**
-   * ✅ LIBERAR DOCUMENTO
+   * ✅ LIBERAR DOCUMENTO - VERSIÓN CORREGIDA
    */
   async liberarDocumento(documentoId: string, supervisorId: string): Promise<{ success: boolean; message: string }> {
     this.logger.log(`🔄 Supervisor ${supervisorId} liberando documento ${documentoId}`);
@@ -256,34 +273,64 @@ export class SupervisorService {
           documento: { id: documentoId },
           supervisor: { id: supervisorId },
           estado: SupervisorEstado.EN_REVISION
-        }
+        },
+        relations: ['documento', 'supervisor']
       });
 
       if (!supervisorDoc) {
         throw new NotFoundException('No tienes este documento en revisión');
       }
 
-      // Cambiar estado a DISPONIBLE (no eliminar, para mantener historial)
+      const documento = supervisorDoc.documento;
+
+      // ✅ CRÍTICO: REVERTIR ESTADO DEL DOCUMENTO PRINCIPAL
+      documento.estado = 'RADICADO';
+      documento.fechaActualizacion = new Date();
+      documento.ultimoAcceso = new Date();
+      documento.ultimoUsuario = `Supervisor: liberado`;
+
+      // Limpiar usuario asignado - CORREGIDO
+      documento.usuarioAsignado = null;
+      documento.usuarioAsignadoNombre = '';
+
+
+      // Agregar al historial
+      const historial = documento.historialEstados || [];
+      historial.push({
+        fecha: new Date(),
+        estado: 'RADICADO',
+        usuarioId: supervisorId,
+        usuarioNombre: 'Sistema',
+        rolUsuario: 'SUPERVISOR',
+        observacion: 'Documento liberado por supervisor - Volvió a estado RADICADO'
+      });
+      documento.historialEstados = historial;
+
+      // Guardar cambios en documento principal
+      await this.documentoRepository.save(documento);
+
+      // Cambiar estado del supervisor a DISPONIBLE
       supervisorDoc.estado = SupervisorEstado.DISPONIBLE;
       supervisorDoc.fechaActualizacion = new Date();
       supervisorDoc.fechaFinRevision = new Date();
+      supervisorDoc.observacion = 'Documento liberado - Disponible para otros supervisores';
 
       await this.supervisorRepository.save(supervisorDoc);
 
-      // Actualizar documento
-      const documento = await this.documentoRepository.findOne({ where: { id: documentoId } });
-      if (documento) {
-        documento.ultimoAcceso = new Date();
-        documento.ultimoUsuario = `Supervisor: liberado`;
-        documento.fechaActualizacion = new Date();
-        await this.documentoRepository.save(documento);
+      // Registrar acceso
+      if (documento.rutaCarpetaRadicado) {
+        await this.registrarAccesoSupervisor(
+          documento.rutaCarpetaRadicado,
+          supervisorId,
+          `LIBERÓ documento. Estado: EN_REVISION_SUPERVISOR → RADICADO`
+        );
       }
 
-      this.logger.log(`✅ Documento liberado por ${supervisorId}`);
+      this.logger.log(`✅ Documento ${documento.numeroRadicado} liberado por ${supervisorId}. Estado revertido a RADICADO`);
 
       return {
         success: true,
-        message: 'Documento liberado correctamente'
+        message: 'Documento liberado correctamente y disponible para otros supervisores'
       };
 
     } catch (error) {
@@ -308,6 +355,7 @@ export class SupervisorService {
       fechaRadicacion: documento.fechaRadicacion,
       radicador: documento.nombreRadicador,
       observacion: documento.observacion,
+      usuarioAsignadoNombre: documento.usuarioAsignadoNombre,
       asignacion: supervisorDoc ? {
         id: supervisorDoc.id,
         estado: supervisorDoc.estado,
@@ -330,7 +378,7 @@ export class SupervisorService {
 
       const documento = await this.documentoRepository.findOne({
         where: { id: documentoId },
-        relations: ['radicador'] // ✅ SOLO radicador
+        relations: ['radicador']
       });
 
       if (!documento) {
@@ -476,7 +524,7 @@ export class SupervisorService {
   }
 
   /**
-   * ✅ OBTENER DETALLE DE DOCUMENTO PARA REVISIÓN - SIN CONTRATISTA
+   * ✅ OBTENER DETALLE DE DOCUMENTO PARA REVISIÓN
    */
   async obtenerDetalleDocumento(documentoId: string, supervisorId: string): Promise<any> {
     this.logger.log(`🔍 Supervisor ${supervisorId} solicitando detalle de documento ${documentoId}`);
@@ -497,20 +545,20 @@ export class SupervisorService {
           supervisor: { id: supervisorId },
           estado: SupervisorEstado.EN_REVISION
         },
-        relations: ['documento', 'documento.radicador'], // ✅ SOLO radicador
+        relations: ['documento', 'documento.radicador', 'documento.usuarioAsignado'],
       });
 
       const documento = await this.documentoRepository.findOne({
         where: { id: documentoId },
-        relations: ['radicador'], // ✅ SOLO radicador
+        relations: ['radicador', 'usuarioAsignado'],
       });
 
       if (!documento) {
         throw new NotFoundException('Documento no encontrado');
       }
 
-      if (documento.estado !== 'RADICADO') {
-        throw new BadRequestException('Solo puedes acceder a documentos en estado RADICADO');
+      if (documento.estado !== 'RADICADO' && documento.estado !== 'EN_REVISION_SUPERVISOR') {
+        throw new BadRequestException('Solo puedes acceder a documentos en estado RADICADO o EN_REVISION_SUPERVISOR');
       }
 
       return this.construirRespuestaDetalle(documento, supervisorDoc, supervisor);
@@ -566,6 +614,8 @@ export class SupervisorService {
         radicador: documento.nombreRadicador,
         observacion: documento.observacion,
         estadoActual: supervisorDoc?.estado || 'DISPONIBLE',
+        estadoDocumento: documento.estado,
+        usuarioAsignado: documento.usuarioAsignadoNombre,
         historialEstados: documento.historialEstados || [],
         rutaCarpeta: documento.rutaCarpetaRadicado,
         tokenPublico: documento.tokenPublico,
@@ -613,8 +663,8 @@ export class SupervisorService {
       throw new NotFoundException('Documento no encontrado');
     }
 
-    if (documento.estado !== 'RADICADO') {
-      throw new ForbiddenException('Solo puedes acceder a documentos RADICADOS');
+    if (documento.estado !== 'RADICADO' && documento.estado !== 'EN_REVISION_SUPERVISOR') {
+      throw new ForbiddenException('No tienes permisos para acceder a este documento');
     }
 
     let nombreArchivo: string;
@@ -869,7 +919,7 @@ export class SupervisorService {
   async obtenerHistorialSupervisor(supervisorId: string): Promise<any[]> {
     const supervisorDocs = await this.supervisorRepository.find({
       where: { supervisor: { id: supervisorId } },
-      relations: ['documento', 'documento.radicador'], // ✅ SOLO radicador
+      relations: ['documento', 'documento.radicador'],
       order: { fechaActualizacion: 'DESC' },
       take: 50
     });
@@ -880,6 +930,7 @@ export class SupervisorService {
         id: sd.documento.id,
         numeroRadicado: sd.documento.numeroRadicado,
         nombreContratista: sd.documento.nombreContratista,
+        estado: sd.documento.estado
       },
       estado: sd.estado,
       observacion: sd.observacion,
@@ -987,11 +1038,6 @@ export class SupervisorService {
       };
 
       this.logger.log(`✅ Estadísticas calculadas para supervisor ${supervisorId}`);
-      this.logger.log(`   - Documentos RADICADOS totales: ${totalDocumentosRadicados}`);
-      this.logger.log(`   - En revisión: ${enRevision}`);
-      this.logger.log(`   - Aprobados: ${aprobados}`);
-      this.logger.log(`   - Observados: ${observados}`);
-      this.logger.log(`   - Rechazados: ${rechazados}`);
 
       return estadisticas;
 

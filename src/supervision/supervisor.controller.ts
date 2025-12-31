@@ -1,4 +1,3 @@
-// En supervisor.controller.ts
 import {
   Controller,
   Get,
@@ -56,7 +55,6 @@ export class SupervisorController {
 
     if (!userId) {
       this.logger.error('❌ No se pudo obtener el ID del usuario');
-      this.logger.error('❌ Estructura del usuario:', JSON.stringify(user, null, 2));
       throw new HttpException(
         {
           success: false,
@@ -69,19 +67,17 @@ export class SupervisorController {
     return userId;
   }
 
-  /**
-   * ✅ OBTENER DOCUMENTOS DISPONIBLES PARA REVISIÓN - CONTRATISTA CORREGIDO
-   */
+  // ===============================
+  // ENDPOINTS PRINCIPALES
+  // ===============================
+
   @Get('documentos-disponibles')
   async obtenerDocumentosDisponibles(@Req() req: any) {
     const user = req.user;
     this.logger.log(`📋 ${user.role} ${user.username} solicitando documentos disponibles`);
-    this.logger.log(`🔍 Usuario completo en request:`, JSON.stringify(user, null, 2));
-
+    
     try {
       const userId = this.getUserIdFromRequest(req);
-      this.logger.log(`✅ User ID obtenido: ${userId}`);
-
       const documentos = await this.supervisorService.obtenerDocumentosDisponibles(userId);
 
       return {
@@ -91,7 +87,6 @@ export class SupervisorController {
       };
     } catch (error) {
       this.logger.error(`❌ Error obteniendo documentos disponibles: ${error.message}`);
-      this.logger.error(`❌ Stack: ${error.stack}`);
       throw new HttpException(
         {
           success: false,
@@ -102,14 +97,11 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ TOMAR DOCUMENTO PARA REVISIÓN - CONTRATISTA CORREGIDO
-   */
   @Post('tomar-documento/:documentoId')
   async tomarDocumento(@Param('documentoId') documentoId: string, @Req() req: any) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`🤝 ${user.role} ${user.username} (ID: ${userId}) tomando documento ${documentoId} para revisión`);
+    this.logger.log(`🤝 ${user.role} ${user.username} tomando documento ${documentoId}`);
 
     try {
       const resultado = await this.supervisorService.tomarDocumentoParaRevision(documentoId, userId);
@@ -127,14 +119,11 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ LIBERAR DOCUMENTO - CONTRATISTA CORREGIDO
-   */
   @Post('liberar-documento/:documentoId')
   async liberarDocumento(@Param('documentoId') documentoId: string, @Req() req: any) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`🔄 ${user.role} ${user.username} (ID: ${userId}) liberando documento ${documentoId}`);
+    this.logger.log(`🔄 ${user.role} ${user.username} liberando documento ${documentoId}`);
 
     try {
       const resultado = await this.supervisorService.liberarDocumento(documentoId, userId);
@@ -152,14 +141,11 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ OBTENER DOCUMENTOS QUE ESTOY REVISANDO - CONTRATISTA CORREGIDO
-   */
   @Get('mis-revisiones')
   async obtenerMisRevisiones(@Req() req: any) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`📋 ${user.role} ${user.username} (ID: ${userId}) solicitando sus revisiones activas`);
+    this.logger.log(`📋 ${user.role} ${user.username} solicitando sus revisiones activas`);
 
     try {
       const documentos = await this.supervisorService.obtenerDocumentosEnRevision(userId);
@@ -181,103 +167,11 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ ASIGNAR TODOS LOS DOCUMENTOS RADICADOS A SUPERVISORES (Manual)
-   */
-  @Post('asignar-todos')
-  @Roles(UserRole.ADMIN)
-  async asignarTodosDocumentos(@Req() req: any) {
-    const user = req.user;
-    this.logger.log(`👑 Admin ${user.username} forzando asignación de TODOS los documentos a supervisores`);
-
-    try {
-      const resultado = await this.supervisorService.asignarTodosDocumentosASupervisores();
-
-      return {
-        success: true,
-        message: `Asignación completada: ${resultado.asignados} de ${resultado.total} documentos asignados`,
-        data: resultado
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error asignando todos los documentos: ${error.message}`);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Error al asignar documentos a supervisores'
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-  }
-
-  /**
-   * ✅ WEBHOOK para cambio de estado de documento
-   */
-  @Post('webhook/cambio-estado')
-  async webhookCambioEstado(
-    @Body() body: { documentoId: string; estadoAnterior: string; nuevoEstado: string; usuarioId: string }
-  ) {
-    this.logger.log(`🔄 Webhook: Documento ${body.documentoId} cambió de ${body.estadoAnterior} a ${body.nuevoEstado}`);
-
-    try {
-      if (body.nuevoEstado === 'RADICADO') {
-        await this.supervisorService.onDocumentoCambiaEstado(body.documentoId, body.nuevoEstado);
-      }
-
-      return {
-        success: true,
-        message: 'Webhook procesado correctamente'
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error procesando webhook: ${error.message}`);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Error procesando webhook'
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-  }
-
-  /**
-   * ✅ OBTENER CONTEO DE DOCUMENTOS RADICADOS
-   */
-  @Get('conteo-radicados')
-  async obtenerConteoRadicados(@Req() req: any) {
-    const user = req.user;
-    this.logger.log(`📊 Supervisor ${user.username} solicitando conteo de radicados`);
-
-    try {
-      const totalRadicados = await this.supervisorService.obtenerConteoDocumentosRadicados();
-
-      return {
-        success: true,
-        data: {
-          totalRadicados: totalRadicados,
-          fechaConsulta: new Date().toISOString()
-        }
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error obteniendo conteo: ${error.message}`);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Error al obtener conteo de radicados'
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-  }
-
-  /**
-   * ✅ OBTENER DETALLE DE DOCUMENTO - CONTRATISTA CORREGIDO
-   */
   @Get('documento/:id')
   async obtenerDetalleDocumento(@Param('id') id: string, @Req() req: any) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`🔍 Supervisor ${user.username} (ID: ${userId}) solicitando detalle de documento ${id}`);
+    this.logger.log(`🔍 ${user.role} ${user.username} solicitando detalle de documento ${id}`);
 
     try {
       const detalle = await this.supervisorService.obtenerDetalleDocumento(id, userId);
@@ -299,9 +193,6 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ DESCARGAR ARCHIVO DEL RADICADOR - CONTRATISTA CORREGIDO
-   */
   @Get('descargar/:documentoId/archivo/:numeroArchivo')
   async descargarArchivoRadicado(
     @Param('documentoId') documentoId: string,
@@ -311,7 +202,7 @@ export class SupervisorController {
   ) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`📥 Supervisor ${user.username} (ID: ${userId}) descargando archivo ${numeroArchivo} del documento ${documentoId}`);
+    this.logger.log(`📥 ${user.role} ${user.username} descargando archivo ${numeroArchivo} del documento ${documentoId}`);
 
     try {
       const { ruta, nombre } = await this.supervisorService.descargarArchivoRadicado(
@@ -339,9 +230,6 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ VER ARCHIVO DEL RADICADOR (en navegador) - CONTRATISTA CORREGIDO
-   */
   @Get('ver/:documentoId/archivo/:numeroArchivo')
   async verArchivoRadicado(
     @Param('documentoId') documentoId: string,
@@ -351,7 +239,7 @@ export class SupervisorController {
   ) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`👁️ Supervisor ${user.username} (ID: ${userId}) viendo archivo ${numeroArchivo} del documento ${documentoId}`);
+    this.logger.log(`👁️ ${user.role} ${user.username} viendo archivo ${numeroArchivo} del documento ${documentoId}`);
 
     try {
       const { ruta, nombre } = await this.supervisorService.descargarArchivoRadicado(
@@ -389,9 +277,6 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ REVISAR DOCUMENTO - CONTRATISTA CORREGIDO
-   */
   @Post('revisar/:documentoId')
   @UseInterceptors(FileInterceptor('archivo'))
   async revisarDocumento(
@@ -402,7 +287,7 @@ export class SupervisorController {
   ) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`🔍 Supervisor ${user.username} (ID: ${userId}) revisando documento ${documentoId} - Estado: ${revisarDto.estado}`);
+    this.logger.log(`🔍 ${user.role} ${user.username} revisando documento ${documentoId}`);
 
     try {
       if (revisarDto.estado === 'APROBADO' && !archivo) {
@@ -452,9 +337,6 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ DEVOLVER DOCUMENTO AL RADICADOR - CONTRATISTA CORREGIDO
-   */
   @Post('devolver/:documentoId')
   async devolverDocumento(
     @Param('documentoId') documentoId: string,
@@ -463,7 +345,7 @@ export class SupervisorController {
   ) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`↩️ Supervisor ${user.username} (ID: ${userId}) devolviendo documento ${documentoId}`);
+    this.logger.log(`↩️ ${user.role} ${user.username} devolviendo documento ${documentoId}`);
 
     try {
       if (!body.motivo || !body.instrucciones) {
@@ -507,14 +389,11 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ OBTENER HISTORIAL DEL SUPERVISOR - CONTRATISTA CORREGIDO
-   */
   @Get('historial')
   async obtenerHistorial(@Req() req: any, @Query('limit') limit?: number) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`📊 Supervisor ${user.username} (ID: ${userId}) solicitando historial`);
+    this.logger.log(`📊 ${user.role} ${user.username} solicitando historial`);
 
     try {
       const historial = await this.supervisorService.obtenerHistorialSupervisor(userId);
@@ -536,14 +415,11 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ OBTENER ESTADÍSTICAS DEL SUPERVISOR - CONTRATISTA CORREGIDO
-   */
   @Get('estadisticas')
   async obtenerEstadisticas(@Req() req: any) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`📈 Supervisor ${user.username} (ID: ${userId}) solicitando estadísticas`);
+    this.logger.log(`📈 ${user.role} ${user.username} solicitando estadísticas`);
 
     try {
       const estadisticas = await this.supervisorService.obtenerEstadisticasSupervisor(userId);
@@ -554,7 +430,6 @@ export class SupervisorController {
       };
     } catch (error) {
       this.logger.error(`❌ Error obteniendo estadísticas: ${error.message}`);
-      this.logger.error(`❌ Detalles del error: ${error.stack}`);
       throw new HttpException(
         {
           success: false,
@@ -565,9 +440,6 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ DESCARGAR ARCHIVO DEL SUPERVISOR - CONTRATISTA CORREGIDO
-   */
   @Get('descargar-archivo/:nombreArchivo')
   async descargarArchivoSupervisor(
     @Param('nombreArchivo') nombreArchivo: string,
@@ -576,7 +448,7 @@ export class SupervisorController {
   ) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`📥 Supervisor ${user.username} (ID: ${userId}) descargando su archivo: ${nombreArchivo}`);
+    this.logger.log(`📥 ${user.role} ${user.username} descargando su archivo: ${nombreArchivo}`);
 
     try {
       const { ruta, nombre } = await this.supervisorService.obtenerArchivoSupervisor(userId, nombreArchivo);
@@ -600,9 +472,6 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ VER ARCHIVO DEL SUPERVISOR (en navegador) - CONTRATISTA CORREGIDO
-   */
   @Get('ver-archivo-supervisor/:nombreArchivo')
   async verArchivoSupervisor(
     @Param('nombreArchivo') nombreArchivo: string,
@@ -611,7 +480,7 @@ export class SupervisorController {
   ) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`👁️ Supervisor ${user.username} (ID: ${userId}) viendo su archivo: ${nombreArchivo}`);
+    this.logger.log(`👁️ ${user.role} ${user.username} viendo su archivo: ${nombreArchivo}`);
 
     try {
       const { ruta, nombre } = await this.supervisorService.obtenerArchivoSupervisor(userId, nombreArchivo);
@@ -645,9 +514,137 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ HEALTH CHECK
-   */
+  // ===============================
+  // ENDPOINTS ADMINISTRATIVOS
+  // ===============================
+
+  @Post('asignar-todos')
+  @Roles(UserRole.ADMIN)
+  async asignarTodosDocumentos(@Req() req: any) {
+    const user = req.user;
+    this.logger.log(`👑 Admin ${user.username} forzando asignación de TODOS los documentos a supervisores`);
+
+    try {
+      const resultado = await this.supervisorService.asignarTodosDocumentosASupervisores();
+
+      return {
+        success: true,
+        message: `Asignación completada: ${resultado.asignados} de ${resultado.total} documentos asignados`,
+        data: resultado
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error asignando todos los documentos: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al asignar documentos a supervisores'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Post('webhook/cambio-estado')
+  async webhookCambioEstado(
+    @Body() body: { documentoId: string; estadoAnterior: string; nuevoEstado: string; usuarioId: string }
+  ) {
+    this.logger.log(`🔄 Webhook: Documento ${body.documentoId} cambió de ${body.estadoAnterior} a ${body.nuevoEstado}`);
+
+    try {
+      if (body.nuevoEstado === 'RADICADO') {
+        await this.supervisorService.onDocumentoCambiaEstado(body.documentoId, body.nuevoEstado);
+      }
+
+      return {
+        success: true,
+        message: 'Webhook procesado correctamente'
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error procesando webhook: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error procesando webhook'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Get('conteo-radicados')
+  async obtenerConteoRadicados(@Req() req: any) {
+    const user = req.user;
+    this.logger.log(`📊 ${user.role} ${user.username} solicitando conteo de radicados`);
+
+    try {
+      const totalRadicados = await this.supervisorService.obtenerConteoDocumentosRadicados();
+
+      return {
+        success: true,
+        data: {
+          totalRadicados: totalRadicados,
+          fechaConsulta: new Date().toISOString()
+        }
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo conteo: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al obtener conteo de radicados'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Get('documentos-radicados')
+  @Roles(UserRole.ADMIN)
+  async obtenerDocumentosRadicados(@Req() req: any) {
+    const user = req.user;
+    this.logger.log(`📋 Admin ${user.username} solicitando documentos radicados`);
+
+    try {
+      const documentos = await this.documentoRepository.find({
+        where: { estado: 'RADICADO' },
+        relations: ['radicador'],
+        order: { fechaRadicacion: 'ASC' },
+      });
+
+      return {
+        success: true,
+        count: documentos.length,
+        data: documentos.map(doc => ({
+          id: doc.id,
+          numeroRadicado: doc.numeroRadicado,
+          numeroContrato: doc.numeroContrato,
+          nombreContratista: doc.nombreContratista,
+          documentoContratista: doc.documentoContratista,
+          fechaInicio: doc.fechaInicio,
+          fechaFin: doc.fechaFin,
+          estado: doc.estado,
+          fechaRadicacion: doc.fechaRadicacion,
+          radicador: doc.nombreRadicador,
+          observacion: doc.observacion,
+          disponible: true
+        }))
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo documentos radicados: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al obtener documentos radicados'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  // ===============================
+  // HEALTH & DIAGNÓSTICO
+  // ===============================
+
   @Get('health')
   async healthCheck() {
     return {
@@ -658,21 +655,6 @@ export class SupervisorController {
     };
   }
 
-  /**
-   * ✅ TEST CONEXIÓN
-   */
-  @Get('test/conexion')
-  async testConexion() {
-    return {
-      success: true,
-      message: 'Conexión exitosa con el servicio de supervisor',
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  /**
-   * ✅ DIAGNÓSTICO
-   */
   @Get('diagnostico')
   @UseGuards(JwtAuthGuard)
   async diagnostico(@Req() req: any) {
@@ -692,27 +674,18 @@ export class SupervisorController {
         };
       }
 
-      // 2. Verificar valores de UserRole
-      this.logger.log(`🔍 Valores de UserRole: ADMIN="${UserRole.ADMIN}", SUPERVISOR="${UserRole.SUPERVISOR}"`);
-
-      // 3. Contar documentos con diferentes criterios
+      // 2. Contar documentos con diferentes criterios
       const totalDocumentos = await this.documentoRepository.count();
 
-      // 4. Consultas con diferentes formatos de estado
+      // 3. Consultas con diferentes formatos de estado
       const conteos = {
         totalDocumentos,
         radicadoExacto: await this.documentoRepository.count({
           where: { estado: 'RADICADO' }
         }),
-        radicadoMinusculas: await this.documentoRepository.count({
-          where: { estado: 'radicado' }
-        }),
         radicadoLike: await this.documentoRepository.createQueryBuilder('doc')
           .where("doc.estado ILIKE :estado", { estado: '%RADICADO%' })
           .getCount(),
-        sinEstado: await this.documentoRepository.count({
-          where: { estado: '' }
-        }),
         estadosDistintos: await this.documentoRepository
           .createQueryBuilder('doc')
           .select('doc.estado', 'estado')
@@ -722,19 +695,19 @@ export class SupervisorController {
           .getRawMany()
       };
 
-      // 5. Ejemplo de documentos RADICADOS - SIN RELACIÓN contratista
+      // 4. Ejemplo de documentos RADICADOS
       const documentosEjemplo = await this.documentoRepository.find({
         where: { estado: 'RADICADO' },
         take: 5,
-        relations: ['radicador'] // ✅ SOLO radicador
+        relations: ['radicador']
       });
 
-      // 6. Verificar si hay supervisores
+      // 5. Verificar si hay supervisores
       const supervisores = await this.userRepository.find({
         where: { role: UserRole.SUPERVISOR }
       });
 
-      // 7. Verificar asignaciones
+      // 6. Verificar asignaciones
       const asignaciones = await this.supervisorRepository.find({
         relations: ['documento', 'supervisor']
       });
@@ -745,8 +718,6 @@ export class SupervisorController {
           id: usuario.id,
           username: usuario.username,
           role: usuario.role,
-          roleEnBD: usuario.role,
-          fullName: usuario.fullName,
           esAdmin: usuario.role === UserRole.ADMIN,
           esSupervisor: usuario.role === UserRole.SUPERVISOR
         },
@@ -756,8 +727,6 @@ export class SupervisorController {
           id: doc.id,
           numeroRadicado: doc.numeroRadicado,
           estado: doc.estado,
-          estadoLongitud: doc.estado?.length,
-          estadoCodigo: doc.estado?.charCodeAt(0),
           fechaRadicacion: doc.fechaRadicacion,
           radicador: doc.radicador?.username
         })),
@@ -791,9 +760,6 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ VERIFICAR SUPERVISORES
-   */
   @Get('verificar-supervisores')
   @UseGuards(JwtAuthGuard)
   async verificarSupervisores() {
@@ -830,76 +796,20 @@ export class SupervisorController {
     }
   }
 
-  /**
-   * ✅ DOCUMENTOS RADICADOS PARA ADMIN - SIN CONTRATISTA
-   */
-  @Get('documentos-radicados')
-  @Roles(UserRole.ADMIN)
-  async obtenerDocumentosRadicados(@Req() req: any) {
-    const user = req.user;
-    this.logger.log(`📋 Admin ${user.username} solicitando documentos radicados`);
-
-    try {
-      // ✅ SOLO radicador - NO contratista
-      const documentos = await this.documentoRepository.find({
-        where: { estado: 'RADICADO' },
-        relations: ['radicador'], // ✅ SOLO radicador
-        order: { fechaRadicacion: 'ASC' },
-      });
-
-      return {
-        success: true,
-        count: documentos.length,
-        data: documentos.map(doc => ({
-          id: doc.id,
-          numeroRadicado: doc.numeroRadicado,
-          numeroContrato: doc.numeroContrato,
-          nombreContratista: doc.nombreContratista,
-          documentoContratista: doc.documentoContratista,
-          fechaInicio: doc.fechaInicio,
-          fechaFin: doc.fechaFin,
-          estado: doc.estado,
-          fechaRadicacion: doc.fechaRadicacion,
-          radicador: doc.nombreRadicador,
-          observacion: doc.observacion,
-          disponible: true
-        }))
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error obteniendo documentos radicados: ${error.message}`);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Error al obtener documentos radicados'
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-  }
-
-  /**
-   * ✅ DOCUMENTOS RADICADOS TEST - SIN CONTRATISTA
-   */
   @Get('documentos-radicados-test')
   async obtenerDocumentosRadicadosTest(@Req() req: any) {
     const user = req.user;
     this.logger.log(`📋 ${user.role} ${user.username} solicitando documentos radicados (TEST)`);
 
     try {
-      // ✅ SOLO radicador - NO contratista
       const documentos = await this.documentoRepository.find({
         where: { estado: 'RADICADO' },
-        relations: ['radicador'], // ✅ SOLO radicador
+        relations: ['radicador'],
         order: { fechaRadicacion: 'ASC' },
       });
 
       this.logger.log(`🔍 Encontrados ${documentos.length} documentos con estado exacto 'RADICADO'`);
 
-      // Para debug: mostrar estados únicos
-      const estadosUnicos = [...new Set(documentos.map(d => d.estado))];
-      this.logger.log(`🔍 Estados únicos encontrados:`, estadosUnicos);
-
-      // Construir respuesta similar al endpoint de supervisor
       const documentosConEstado = documentos.map(documento => {
         return {
           id: documento.id,
@@ -927,7 +837,6 @@ export class SupervisorController {
         data: documentosConEstado,
         debug: {
           totalEnBD: documentos.length,
-          estadosUnicos: estadosUnicos,
           queryUsed: "where: { estado: 'RADICADO' }"
         }
       };
