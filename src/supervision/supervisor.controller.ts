@@ -68,7 +68,92 @@ export class SupervisorController {
   }
 
   // ===============================
-  // ENDPOINTS PRINCIPALES
+  // ENDPOINT REVISAR DOCUMENTO CORREGIDO
+  // ===============================
+
+  @Post('revisar/:documentoId')
+  @UseInterceptors(FileInterceptor('archivo'))
+  async revisarDocumento(
+    @Param('documentoId') documentoId: string,
+    @Body() revisarDto: RevisarDocumentoDto,
+    @UploadedFile() archivo?: Express.Multer.File,
+    @Req() req?: any
+  ) {
+    const user = req.user;
+    const userId = this.getUserIdFromRequest(req);
+    
+    // ✅ LOGGING PARA DEPURACIÓN
+    this.logger.log(`🔍 ${user.role} ${user.username} revisando documento ${documentoId}`);
+    this.logger.log(`📝 Datos DTO recibidos: ${JSON.stringify(revisarDto)}`);
+    this.logger.log(`📝 Body completo: ${JSON.stringify(req.body)}`);
+    this.logger.log(`📝 ¿Tiene archivo?: ${!!archivo}`);
+
+    try {
+      // Validación adicional
+      if (revisarDto.estado === 'APROBADO' && !archivo) {
+        this.logger.error('❌ APROBADO requiere archivo');
+        throw new BadRequestException('Debe adjuntar un archivo de aprobación');
+      }
+
+      // Validar que no tenga propiedades extrañas
+      const propiedadesPermitidas = ['estado', 'observacion', 'correcciones'];
+      const propiedadesRecibidas = Object.keys(revisarDto);
+      const propiedadesExtra = propiedadesRecibidas.filter(prop => !propiedadesPermitidas.includes(prop));
+      
+      if (propiedadesExtra.length > 0) {
+        this.logger.error(`❌ Propiedades no permitidas: ${propiedadesExtra.join(', ')}`);
+        throw new BadRequestException(`Propiedades no permitidas: ${propiedadesExtra.join(', ')}`);
+      }
+
+      const result = await this.supervisorService.revisarDocumento(
+        documentoId,
+        userId,
+        revisarDto,
+        archivo
+      );
+
+      this.logger.log(`✅ Documento ${documentoId} revisado exitosamente. Estado: ${revisarDto.estado}`);
+
+      return {
+        success: true,
+        message: `Documento ${revisarDto.estado.toLowerCase()} correctamente`,
+        data: {
+          documento: {
+            id: result.documento.id,
+            numeroRadicado: result.documento.numeroRadicado,
+            estado: result.documento.estado,
+            observacion: result.documento.observacion,
+            comentarios: result.documento.comentarios,
+            correcciones: result.documento.correcciones,
+            fechaActualizacion: result.documento.fechaActualizacion,
+            ultimoAcceso: result.documento.ultimoAcceso,
+            ultimoUsuario: result.documento.ultimoUsuario
+          },
+          supervisor: {
+            estado: result.supervisor.estado,
+            observacion: result.supervisor.observacion,
+            fechaAprobacion: result.supervisor.fechaAprobacion,
+            nombreArchivoSupervisor: result.supervisor.nombreArchivoSupervisor
+          }
+        }
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error revisando documento: ${error.message}`);
+      this.logger.error(`❌ Stack: ${error.stack}`);
+      const status = error instanceof HttpException ? error.getStatus() : HttpStatus.BAD_REQUEST;
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Error al revisar documento',
+          detalles: error.response?.message || error.message
+        },
+        status
+      );
+    }
+  }
+
+  // ===============================
+  // EL RESTO DEL CÓDIGO PERMANECE IGUAL
   // ===============================
 
   @Get('documentos-disponibles')
@@ -274,66 +359,6 @@ export class SupervisorController {
           message: error.message || 'Error al ver archivo'
         });
       }
-    }
-  }
-
-  @Post('revisar/:documentoId')
-  @UseInterceptors(FileInterceptor('archivo'))
-  async revisarDocumento(
-    @Param('documentoId') documentoId: string,
-    @Body() revisarDto: RevisarDocumentoDto,
-    @UploadedFile() archivo?: Express.Multer.File,
-    @Req() req?: any
-  ) {
-    const user = req.user;
-    const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`🔍 ${user.role} ${user.username} revisando documento ${documentoId}`);
-
-    try {
-      if (revisarDto.estado === 'APROBADO' && !archivo) {
-        throw new BadRequestException('Debe adjuntar un archivo de aprobación');
-      }
-
-      const result = await this.supervisorService.revisarDocumento(
-        documentoId,
-        userId,
-        revisarDto,
-        archivo
-      );
-
-      return {
-        success: true,
-        message: `Documento ${revisarDto.estado.toLowerCase()} correctamente`,
-        data: {
-          documento: {
-            id: result.documento.id,
-            numeroRadicado: result.documento.numeroRadicado,
-            estado: result.documento.estado,
-            observacion: result.documento.observacion,
-            comentarios: result.documento.comentarios,
-            correcciones: result.documento.correcciones,
-            fechaActualizacion: result.documento.fechaActualizacion,
-            ultimoAcceso: result.documento.ultimoAcceso,
-            ultimoUsuario: result.documento.ultimoUsuario
-          },
-          supervisor: {
-            estado: result.supervisor.estado,
-            observacion: result.supervisor.observacion,
-            fechaAprobacion: result.supervisor.fechaAprobacion,
-            nombreArchivoSupervisor: result.supervisor.nombreArchivoSupervisor
-          }
-        }
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error revisando documento: ${error.message}`);
-      const status = error instanceof HttpException ? error.getStatus() : HttpStatus.BAD_REQUEST;
-      throw new HttpException(
-        {
-          success: false,
-          message: error.message || 'Error al revisar documento'
-        },
-        status
-      );
     }
   }
 
@@ -661,7 +686,6 @@ export class SupervisorController {
     try {
       const user = req.user;
 
-      // 1. Verificar usuario en BD
       const usuario = await this.userRepository.findOne({
         where: { id: user.id }
       });
@@ -674,10 +698,8 @@ export class SupervisorController {
         };
       }
 
-      // 2. Contar documentos con diferentes criterios
       const totalDocumentos = await this.documentoRepository.count();
 
-      // 3. Consultas con diferentes formatos de estado
       const conteos = {
         totalDocumentos,
         radicadoExacto: await this.documentoRepository.count({
@@ -695,19 +717,16 @@ export class SupervisorController {
           .getRawMany()
       };
 
-      // 4. Ejemplo de documentos RADICADOS
       const documentosEjemplo = await this.documentoRepository.find({
         where: { estado: 'RADICADO' },
         take: 5,
         relations: ['radicador']
       });
 
-      // 5. Verificar si hay supervisores
       const supervisores = await this.userRepository.find({
         where: { role: UserRole.SUPERVISOR }
       });
 
-      // 6. Verificar asignaciones
       const asignaciones = await this.supervisorRepository.find({
         relations: ['documento', 'supervisor']
       });
