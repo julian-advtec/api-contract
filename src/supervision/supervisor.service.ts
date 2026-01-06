@@ -1,4 +1,3 @@
-// src/supervision/supervisor.service.ts
 import {
   Injectable,
   NotFoundException,
@@ -930,8 +929,19 @@ export class SupervisorService {
         id: sd.documento.id,
         numeroRadicado: sd.documento.numeroRadicado,
         nombreContratista: sd.documento.nombreContratista,
-        estado: sd.documento.estado
+        documentoContratista: sd.documento.documentoContratista,
+        numeroContrato: sd.documento.numeroContrato,
+        fechaInicio: sd.documento.fechaInicio,
+        fechaFin: sd.documento.fechaFin,
+        fechaRadicacion: sd.documento.fechaRadicacion,
+        estado: sd.documento.estado,
+        cuentaCobro: sd.documento.cuentaCobro,
+        seguridadSocial: sd.documento.seguridadSocial,
+        informeActividades: sd.documento.informeActividades,
+        observacion: sd.documento.observacion,
+        nombreRadicador: sd.documento.nombreRadicador
       },
+      supervisorRevisor: sd.supervisor?.fullName || sd.supervisor?.username,
       estado: sd.estado,
       observacion: sd.observacion,
       fechaCreacion: sd.fechaCreacion,
