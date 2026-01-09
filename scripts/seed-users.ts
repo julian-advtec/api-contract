@@ -1,3 +1,4 @@
+// scripts/seed-users.ts
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { User } from '../src/users/entities/user.entity';
@@ -162,28 +163,24 @@ async function seedUsers() {
         console.log(`   Email: ${userData.email}`);
         console.log(`   Rol: ${userData.role} (${typeof userData.role})`);
         
-        // Asegurar que el rol esté en minúscula (por si acaso)
+        // Asegurar que el rol esté en minúscula
         const normalizedRole = userData.role.toString().toLowerCase();
         console.log(`   Rol normalizado: ${normalizedRole}`);
         
         const hashedPassword = await bcrypt.hash(userData.password, 12);
         
-        // Usar SQL directo para evitar problemas con TypeORM
-        await dataSource.query(`
-          INSERT INTO users (
-            id, username, email, password, role, full_name, 
-            is_active, is_email_verified, created_at, updated_at, created_by
-          ) VALUES (
-            gen_random_uuid(), $1, $2, $3, $4, $5, 
-            true, true, NOW(), NOW(), 'system_seed'
-          )
-        `, [
-          userData.username,
-          userData.email,
-          hashedPassword,
-          normalizedRole, // Usar el rol normalizado a minúscula
-          userData.fullName
-        ]);
+        const user = usersRepository.create({
+          username: userData.username,
+          email: userData.email,
+          password: hashedPassword,
+          role: normalizedRole as UserRole,
+          fullName: userData.fullName,
+          isActive: true,
+          isEmailVerified: true,
+          createdBy: 'system_seed'
+        });
+        
+        await usersRepository.save(user);
         
         console.log(`✅ ${userData.username} creado exitosamente`);
         createdUsers.push(userData.username);
@@ -231,7 +228,6 @@ async function seedUsers() {
         console.log(`   Rol: "${sistemas2.role}"`);
         console.log(`   Tipo de dato: ${typeof sistemas2.role}`);
         console.log(`   ¿Es "admin"? ${sistemas2.role === 'admin'}`);
-
       }
     }
 
@@ -245,19 +241,6 @@ async function seedUsers() {
   } catch (error) {
     console.error('\n❌ Error fatal en seed:', error);
     console.error('Stack:', error.stack);
-    
-    // Intentar hacer rollback si es posible
-    try {
-      if (dataSource.isInitialized) {
-        console.log('🔄 Intentando rollback...');
-        const queryRunner = dataSource.createQueryRunner();
-        await queryRunner.connect();
-        await queryRunner.rollbackTransaction();
-        await queryRunner.release();
-      }
-    } catch (rollbackError) {
-      console.error('❌ Error en rollback:', rollbackError.message);
-    }
     
   } finally {
     if (dataSource.isInitialized) {

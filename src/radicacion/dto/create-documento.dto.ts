@@ -1,50 +1,71 @@
 // src/radicacion/dto/create-documento.dto.ts
-import { IsString, IsNotEmpty, IsOptional, Length, Matches } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 
 export class CreateDocumentoDto {
-  @IsString()
-  @IsNotEmpty()
-  @Matches(/^R\d{4}-\d{3}$/, { message: 'Formato: RAAAA-NNN (ej: R2024-001)' })
-  numeroRadicado: string;
+    @IsString()
+    @Matches(/^R\d{4}-\d{3}$/)
+    numeroRadicado: string;
 
-  @IsString()
-  @IsNotEmpty()
-  numeroContrato: string;
+    @IsString()
+    @MaxLength(50)
+    numeroContrato: string;
 
-  @IsString()
-  @IsNotEmpty()
-  nombreContratista: string;
+    @IsString()
+    @MaxLength(200)
+    nombreContratista: string;
 
-  @IsString()
-  @IsNotEmpty()
-  documentoContratista: string;
+    @IsString()
+    @MaxLength(50)
+    documentoContratista: string;
 
-  @IsString()
-  @IsNotEmpty()
-  fechaInicio: string;
+    @IsString()
+    fechaInicio: string;
 
-  @IsString()
-  @IsNotEmpty()
-  fechaFin: string;
+    @IsString()
+    fechaFin: string;
 
-  // ACTUALIZADO: Nuevos campos de descripción
-  @IsString()
-  @IsOptional()
-  @Length(0, 200)
-  descripcionCuentaCobro?: string;
+    @IsString()
+    @IsOptional()
+    @MaxLength(200)
+    descripcionCuentaCobro?: string;
 
-  @IsString()
-  @IsOptional()
-  @Length(0, 200)
-  descripcionSeguridadSocial?: string;
+    @IsString()
+    @IsOptional()
+    @MaxLength(200)
+    descripcionSeguridadSocial?: string;
 
-  @IsString()
-  @IsOptional()
-  @Length(0, 200)
-  descripcionInformeActividades?: string;
+    @IsString()
+    @IsOptional()
+    @MaxLength(200)
+    descripcionInformeActividades?: string;
 
-  // Nuevo campo de observación
-  @IsString()
-  @IsOptional()
-  observacion?: string;
+    @IsString()
+    @IsOptional()
+    @MaxLength(500)
+    observacion?: string;
+
+    // ✅ CORREGIDO: Transformar string a booleano
+    @IsOptional()
+    @Transform(({ value }) => {
+        // Si ya es booleano, devolverlo directamente
+        if (typeof value === 'boolean') return value;
+        
+        // Si es string, convertirlo
+        if (typeof value === 'string') {
+            return value.toLowerCase() === 'true' || value === '1';
+        }
+        
+        // Si es número (1/0)
+        if (typeof value === 'number') {
+            return value === 1;
+        }
+        
+        // Cualquier otro caso, convertir a booleano
+        return Boolean(value);
+    })
+    @IsBoolean({ 
+        message: 'primerRadicadoDelAno debe ser un valor booleano (true o false)' 
+    })
+    primerRadicadoDelAno?: boolean;
 }

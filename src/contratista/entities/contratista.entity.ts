@@ -13,5 +13,4 @@ export class Contratista {
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
-
 }

@@ -1,24 +1,29 @@
+// src/app.module.ts
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
-import { AuthModule } from './auth/auth.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
-import { EmailModule } from './email/email.module';
-import { ormconfig } from './config/ormconfig';
+import { AuthModule } from './auth/auth.module';
 import { RadicacionModule } from './radicacion/radicacion.module';
 import { SupervisorModule } from './supervision/supervisor.module';
+import { EstadosModule } from './estados/estados.module';
+import { AppDataSource } from './config/ormconfig'; // ✅ Cambiado a AppDataSource
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    TypeOrmModule.forRoot(ormconfig),
-    AuthModule,
+    TypeOrmModule.forRoot(AppDataSource.options), // ✅ Usar .options
     UsersModule,
-    EmailModule,
+    AuthModule,
     RadicacionModule,
-    SupervisorModule 
+    SupervisorModule,
+    EstadosModule,
   ],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule {}

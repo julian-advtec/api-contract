@@ -1,3 +1,4 @@
+// scripts/create-admin.ts
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { User } from '../src/users/entities/user.entity';
@@ -49,9 +50,6 @@ async function createAdminUser() {
       console.log('✅ Conexión cerrada');
     }
   }
-
-
-  
 }
 
 // Ejecutar el script

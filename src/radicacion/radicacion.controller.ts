@@ -1,8 +1,8 @@
-// src/radicacion/radicacion.controller.ts
 import {
   Controller,
   Post,
   Get,
+  Put,
   Param,
   Body,
   UseGuards,
@@ -16,7 +16,9 @@ import {
   BadRequestException,
   Query,
   NotFoundException,
-  UnauthorizedException
+  UnauthorizedException,
+  Delete,
+  Patch
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import type { Request, Response } from 'express';
@@ -30,6 +32,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
+import { Like, Not } from 'typeorm';
+import { PrimerRadicadoInfo } from './interfaces/primer-radicado-info.interface';
 
 @Controller('radicacion')
 export class RadicacionController {
@@ -240,7 +244,6 @@ export class RadicacionController {
     }
   }
 
-
   // ===============================
   // CRUD PRINCIPAL
   // ===============================
@@ -273,7 +276,141 @@ export class RadicacionController {
     };
   }
 
+  @Get('estadisticas')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPERVISOR)
+  async obtenerEstadisticas() {
+    try {
+      const estadisticas = await this.radicacionService.obtenerEstadisticasGenerales();
+      return {
+        success: true,
+        data: estadisticas
+      };
+    } catch (error: any) {
+      this.logger.error(`❌ Error obteniendo estadísticas: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al obtener estadísticas'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
 
+  @Get('buscar')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.RADICADOR,
+    UserRole.ADMIN,
+    UserRole.SUPERVISOR,
+    UserRole.AUDITOR_CUENTAS
+  )
+  async buscar(
+    @Query('numeroRadicado') numeroRadicado?: string,
+    @Query('numeroContrato') numeroContrato?: string,
+    @Query('documentoContratista') documentoContratista?: string,
+    @Query('estado') estado?: string,
+    @Query('fechaDesde') fechaDesde?: string,
+    @Query('fechaHasta') fechaHasta?: string,
+    @Req() req: Request
+  ) {
+    try {
+      const user = req.user as any;
+      
+      this.logger.log(`🔍 Usuario ${user.username} realizando búsqueda`);
+
+      const criterios: any = {};
+      if (numeroRadicado) criterios.numeroRadicado = numeroRadicado;
+      if (numeroContrato) criterios.numeroContrato = numeroContrato;
+      if (documentoContratista) criterios.documentoContratista = documentoContratista;
+      if (estado) criterios.estado = estado;
+      if (fechaDesde) criterios.fechaDesde = new Date(fechaDesde);
+      if (fechaHasta) criterios.fechaHasta = new Date(fechaHasta);
+
+      const documentos = await this.radicacionService.buscarDocumentos(criterios, user);
+
+      return {
+        success: true,
+        count: documentos.length,
+        data: documentos
+      };
+    } catch (error: any) {
+      this.logger.error(`❌ Error en búsqueda: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al buscar documentos'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Get('contratista/:documento')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.RADICADOR,
+    UserRole.ADMIN,
+    UserRole.SUPERVISOR
+  )
+  async obtenerPorContratista(
+    @Param('documento') documento: string,
+    @Req() req: Request
+  ) {
+    try {
+      const user = req.user as any;
+      this.logger.log(`🔍 Buscando documentos del contratista: ${documento}`);
+
+      const documentos = await this.radicacionService.obtenerDocumentosPorContratista(documento, user);
+
+      return {
+        success: true,
+        count: documentos.length,
+        data: documentos
+      };
+    } catch (error: any) {
+      this.logger.error(`❌ Error obteniendo documentos por contratista: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al obtener documentos del contratista'
+        },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Get('vencidos')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.RADICADOR,
+    UserRole.ADMIN,
+    UserRole.SUPERVISOR
+  )
+  async obtenerVencidos(@Req() req: Request) {
+    try {
+      const user = req.user as any;
+      this.logger.log(`⚠️ Usuario ${user.username} solicitando documentos vencidos`);
+
+      const documentos = await this.radicacionService.obtenerDocumentosVencidos(user);
+
+      return {
+        success: true,
+        count: documentos.length,
+        data: documentos
+      };
+    } catch (error: any) {
+      this.logger.error(`❌ Error obteniendo documentos vencidos: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al obtener documentos vencidos'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
 
   @Get(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -362,6 +499,119 @@ export class RadicacionController {
           timestamp: new Date().toISOString(),
         },
         status,
+      );
+    }
+  }
+
+  @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
+  async actualizarDocumento(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Req() req: Request
+  ) {
+    try {
+      const user = req.user as any;
+      this.logger.log(`✏️ Usuario ${user.username} actualizando documento ${id}`);
+
+      const documento = await this.radicacionService.actualizarDocumentoConFlujo(id, body, user);
+
+      return {
+        success: true,
+        message: 'Documento actualizado exitosamente',
+        data: documento
+      };
+    } catch (error: any) {
+      this.logger.error(`❌ Error actualizando documento: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Error al actualizar documento'
+        },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Put(':id/cambiar-estado')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.RADICADOR,
+    UserRole.ADMIN,
+    UserRole.SUPERVISOR,
+    UserRole.AUDITOR_CUENTAS
+  )
+  async cambiarEstado(
+    @Param('id') id: string,
+    @Body() body: { estado: string; observacion?: string },
+    @Req() req: Request
+  ) {
+    try {
+      const user = req.user as any;
+      this.logger.log(`🔄 Usuario ${user.username} cambiando estado del documento ${id} a ${body.estado}`);
+
+      const documento = await this.radicacionService.cambiarEstadoDocumento(
+        id,
+        body.estado,
+        user.id,
+        body.observacion
+      );
+
+      return {
+        success: true,
+        message: 'Estado del documento actualizado exitosamente',
+        data: documento
+      };
+    } catch (error: any) {
+      this.logger.error(`❌ Error cambiando estado: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Error al cambiar estado del documento'
+        },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Patch(':id/campos')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.RADICADOR,
+    UserRole.ADMIN,
+    UserRole.SUPERVISOR
+  )
+  async actualizarCampos(
+    @Param('id') id: string,
+    @Body() body: {
+      estado?: string;
+      comentarios?: string;
+      correcciones?: string;
+      usuarioAsignadoId?: string;
+      fechaLimiteRevision?: Date;
+    },
+    @Req() req: Request
+  ) {
+    try {
+      const user = req.user as any;
+      this.logger.log(`✏️ Usuario ${user.username} actualizando campos del documento ${id}`);
+
+      const documento = await this.radicacionService.actualizarCampos(id, body, user);
+
+      return {
+        success: true,
+        message: 'Campos del documento actualizados exitosamente',
+        data: documento
+      };
+    } catch (error: any) {
+      this.logger.error(`❌ Error actualizando campos: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Error al actualizar campos del documento'
+        },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -489,5 +739,247 @@ export class RadicacionController {
     );
 
     return fs.createReadStream(filePath).pipe(res);
+  }
+
+  // ===============================
+  // ✅ NUEVO ENDPOINT: Primeros radicados por año
+  // ===============================
+
+  @Get('estadisticas/primer-radicado-ano')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.RADICADOR)
+  async obtenerPrimerosRadicadosPorAno(@Query('ano') ano?: string) {
+    try {
+      this.logger.log(`📊 Consultando primeros radicados por año`);
+
+      const query = this.radicacionService['documentoRepository']
+        .createQueryBuilder('documento')
+        .where('documento.primer_radicado_ano = :esPrimer', { esPrimer: true })
+        .orderBy('documento.numeroRadicado', 'ASC');
+
+      if (ano) {
+        query.andWhere('documento.numeroRadicado LIKE :ano', { ano: `R${ano}-%` });
+      }
+
+      const primerosRadicados = await query.getMany();
+
+      // ✅ USANDO LA INTERFAZ
+      const agrupadosPorAno = primerosRadicados.reduce((acc: Record<string, PrimerRadicadoInfo[]>, documento) => {
+        const ano = documento.numeroRadicado.substring(1, 5);
+        if (!acc[ano]) {
+          acc[ano] = [];
+        }
+        acc[ano].push({
+          id: documento.id,
+          numeroRadicado: documento.numeroRadicado,
+          nombreContratista: documento.nombreContratista,
+          fechaRadicacion: documento.fechaRadicacion,
+          radicador: documento.nombreRadicador,
+          primerRadicadoDelAno: documento.primerRadicadoDelAno
+        });
+        return acc;
+      }, {} as Record<string, PrimerRadicadoInfo[]>);
+
+      return {
+        success: true,
+        data: {
+          total: primerosRadicados.length,
+          porAno: agrupadosPorAno,
+          detalles: primerosRadicados.map(doc => ({
+            id: doc.id,
+            numeroRadicado: doc.numeroRadicado,
+            ano: doc.numeroRadicado.substring(1, 5),
+            primerRadicadoDelAno: doc.primerRadicadoDelAno,
+            contratista: doc.nombreContratista,
+            fecha: doc.fechaRadicacion,
+            radicador: doc.nombreRadicador
+          }))
+        }
+      };
+
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo primeros radicados: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al obtener estadísticas'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  // ===============================
+  // ✅ NUEVO ENDPOINT: Verificar primer radicado disponible
+  // ===============================
+
+  @Get('verificar-primer-radicado/:ano')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.RADICADOR)
+  async verificarPrimerRadicadoDisponible(@Param('ano') ano: string) {
+    try {
+      this.logger.log(`🔍 Verificando primer radicado disponible para el año ${ano}`);
+
+      // Verificar si ya existe un primer radicado para este año
+      const existePrimerRadicado = await this.radicacionService['documentoRepository']
+        .findOne({
+          where: {
+            primerRadicadoDelAno: true,
+            numeroRadicado: Like(`R${ano}-%`)
+          }
+        });
+
+      const disponible = !existePrimerRadicado;
+
+      return {
+        success: true,
+        data: {
+          ano,
+          disponible,
+          primerRadicadoExistente: existePrimerRadicado ? {
+            numeroRadicado: existePrimerRadicado.numeroRadicado,
+            fechaRadicacion: existePrimerRadicado.fechaRadicacion,
+            radicador: existePrimerRadicado.nombreRadicador,
+            contratista: existePrimerRadicado.nombreContratista
+          } : null,
+          mensaje: disponible ?
+            `✅ Disponible: Puede marcar un documento como primer radicado del año ${ano}` :
+            `⚠️ Ya existe: El año ${ano} ya tiene un primer radicado registrado`
+        }
+      };
+
+    } catch (error) {
+      this.logger.error(`❌ Error verificando primer radicado: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al verificar primer radicado'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  // ===============================
+  // ✅ NUEVO ENDPOINT: Actualizar primer radicado manualmente
+  // ===============================
+
+  @Put(':id/marcar-primer-radicado')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.RADICADOR)
+  async marcarComoPrimerRadicado(
+    @Param('id') id: string,
+    @Body() body: { esPrimerRadicado: boolean },
+    @Req() req: Request
+  ) {
+    try {
+      const user = req.user as any;
+      this.logger.log(`🏷️ Usuario ${user.username} marcando documento ${id} como primer radicado: ${body.esPrimerRadicado}`);
+
+      const documento = await this.radicacionService['documentoRepository'].findOne({
+        where: { id }
+      });
+
+      if (!documento) {
+        throw new NotFoundException('Documento no encontrado');
+      }
+
+      // Extraer año del documento
+      const ano = documento.numeroRadicado.substring(1, 5);
+
+      if (body.esPrimerRadicado) {
+        // Verificar si ya existe un primer radicado para este año
+        const primerRadicadoExistente = await this.radicacionService['documentoRepository'].findOne({
+          where: {
+            id: Not(id), // Excluir el documento actual
+            primerRadicadoDelAno: true,
+            numeroRadicado: Like(`R${ano}-%`)
+          }
+        });
+
+        if (primerRadicadoExistente) {
+          throw new BadRequestException(`Ya existe un primer radicado para el año ${ano}: ${primerRadicadoExistente.numeroRadicado}`);
+        }
+      }
+
+      // Actualizar el campo
+      documento.primerRadicadoDelAno = body.esPrimerRadicado;
+      documento.fechaActualizacion = new Date();
+      documento.ultimoUsuario = user.username;
+
+      const documentoActualizado = await this.radicacionService['documentoRepository'].save(documento);
+
+      // Agregar al historial
+      const historial = documentoActualizado.historialEstados || [];
+      historial.push({
+        fecha: new Date(),
+        estado: documentoActualizado.estado,
+        usuarioId: user.id,
+        usuarioNombre: user.username,
+        rolUsuario: user.role,
+        observacion: body.esPrimerRadicado ? 
+          `Marcado como primer radicado del año ${ano}` : 
+          `Desmarcado como primer radicado del año ${ano}`
+      });
+      documentoActualizado.historialEstados = historial;
+
+      await this.radicacionService['documentoRepository'].save(documentoActualizado);
+
+      return {
+        success: true,
+        message: body.esPrimerRadicado ?
+          `✅ Documento marcado como primer radicado del año ${ano}` :
+          `✅ Documento desmarcado como primer radicado del año ${ano}`,
+        data: {
+          id: documentoActualizado.id,
+          numeroRadicado: documentoActualizado.numeroRadicado,
+          primerRadicadoDelAno: documentoActualizado.primerRadicadoDelAno,
+          ano,
+          fechaActualizacion: documentoActualizado.fechaActualizacion
+        }
+      };
+
+    } catch (error) {
+      this.logger.error(`❌ Error marcando primer radicado: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Error al marcar como primer radicado'
+        },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  // ===============================
+  // ✅ ENDPOINT: Obtener conteo de documentos radicados
+  // ===============================
+
+  @Get('conteo/radicados')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPERVISOR)
+  async obtenerConteoRadicados() {
+    try {
+      this.logger.log(`📊 Obteniendo conteo de documentos radicados`);
+
+      const conteo = await this.radicacionService.obtenerConteoDocumentosRadicados();
+
+      return {
+        success: true,
+        data: {
+          conteo,
+          fecha: new Date().toISOString()
+        }
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo conteo: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al obtener conteo de documentos'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
   }
 }

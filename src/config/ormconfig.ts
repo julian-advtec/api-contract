@@ -1,10 +1,12 @@
-import { DataSourceOptions } from 'typeorm';
+// src/config/ormconfig.ts
+import { DataSource, DataSourceOptions } from 'typeorm';
 import { User } from '../users/entities/user.entity';
 import { Documento } from '../radicacion/entities/documento.entity';
-import { Contratista } from '../radicacion/entities/contratista.entity';
-import { SupervisorDocumento } from '../supervision/entities/supervisor.entity'; // ¡IMPORTANTE!
+import { Contratista } from '../contratista/entities/contratista.entity';
+import { SupervisorDocumento } from '../supervision/entities/supervisor.entity';
 import 'dotenv/config';
 
+// Opciones de configuración
 export const ormconfig: DataSourceOptions = {
   type: 'postgres',
   host: process.env.DB_HOST || 'localhost',
@@ -13,12 +15,12 @@ export const ormconfig: DataSourceOptions = {
   password: process.env.DB_PASS || 'password',
   database: process.env.DB_NAME || 'contract_db',
   
-  // ✅ LISTA COMPLETA DE ENTIDADES (¡AGREGA SupervisorDocumento!)
+  // ✅ LISTA COMPLETA DE ENTIDADES
   entities: [
     User, 
     Documento,
     Contratista,
-    SupervisorDocumento, // ← ¡¡¡ESTO ES LO QUE FALTA!!!
+    SupervisorDocumento,
   ],
   
   synchronize: process.env.NODE_ENV !== 'production',
@@ -29,3 +31,6 @@ export const ormconfig: DataSourceOptions = {
     trustServerCertificate: true,
   },
 };
+
+// DataSource para TypeORM CLI
+export const AppDataSource = new DataSource(ormconfig);

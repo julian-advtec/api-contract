@@ -20,6 +20,14 @@ export class Documento {
   @Column({ name: 'numero_radicado', length: 50, unique: true })
   numeroRadicado: string;
 
+  // ✅ NUEVO CAMPO: Primer radicado del año
+  @Column({ 
+    name: 'primer_radicado_ano', 
+    type: 'boolean', 
+    default: false 
+  })
+  primerRadicadoDelAno: boolean;
+
   @Column({ name: 'numero_contrato', length: 50 })
   numeroContrato: string;
 
@@ -80,10 +88,10 @@ export class Documento {
   // USUARIO ASIGNADO ACTUALMENTE - CORREGIDO
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'usuario_asignado_id' })
-  usuarioAsignado: User | null; // Permitir null
+  usuarioAsignado: User | null;
 
   @Column({ name: 'usuario_asignado_nombre', length: 100, nullable: true })
-  usuarioAsignadoNombre: string; // Solo string, nullable: true ya lo hace opcional
+  usuarioAsignadoNombre: string;
 
   // ✅ NUEVA RELACIÓN: Documentos asignados a supervisores
   @OneToMany(() => SupervisorDocumento, supervisorDocumento => supervisorDocumento.documento)
