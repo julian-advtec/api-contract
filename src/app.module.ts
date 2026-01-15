@@ -10,6 +10,7 @@ import { RadicacionModule } from './radicacion/radicacion.module';
 import { SupervisorModule } from './supervision/supervisor.module';
 import { EstadosModule } from './estados/estados.module';
 import { AppDataSource } from './config/ormconfig'; // ✅ Cambiado a AppDataSource
+import { ContratistaModule } from './contratista/contratista.module';
 
 @Module({
   imports: [
@@ -22,8 +23,9 @@ import { AppDataSource } from './config/ormconfig'; // ✅ Cambiado a AppDataSou
     RadicacionModule,
     SupervisorModule,
     EstadosModule,
+    ContratistaModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }

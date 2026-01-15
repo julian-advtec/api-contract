@@ -307,17 +307,17 @@ export class RadicacionController {
     UserRole.AUDITOR_CUENTAS
   )
   async buscar(
+    @Req() req: Request,
     @Query('numeroRadicado') numeroRadicado?: string,
     @Query('numeroContrato') numeroContrato?: string,
     @Query('documentoContratista') documentoContratista?: string,
     @Query('estado') estado?: string,
     @Query('fechaDesde') fechaDesde?: string,
-    @Query('fechaHasta') fechaHasta?: string,
-    @Req() req: Request
+    @Query('fechaHasta') fechaHasta?: string
   ) {
     try {
       const user = req.user as any;
-      
+
       this.logger.log(`🔍 Usuario ${user.username} realizando búsqueda`);
 
       const criterios: any = {};
@@ -917,8 +917,8 @@ export class RadicacionController {
         usuarioId: user.id,
         usuarioNombre: user.username,
         rolUsuario: user.role,
-        observacion: body.esPrimerRadicado ? 
-          `Marcado como primer radicado del año ${ano}` : 
+        observacion: body.esPrimerRadicado ?
+          `Marcado como primer radicado del año ${ano}` :
           `Desmarcado como primer radicado del año ${ano}`
       });
       documentoActualizado.historialEstados = historial;

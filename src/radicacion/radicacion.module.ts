@@ -9,12 +9,14 @@ import { User } from '../users/entities/user.entity';
 import { RegistroAcceso } from './entities/registro-acceso.entity';
 import { EstadosModule } from '../estados/estados.module';
 import { SupervisorModule } from '../supervision/supervisor.module';
+import { ContratistaModule } from '../contratista/contratista.module'; // 👈 AÑADIR ESTO
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Documento, Contratista, User, RegistroAcceso]),
+    ContratistaModule, // 👈 IMPORTAR EL MÓDULO COMPLETO
     EstadosModule,
-    forwardRef(() => SupervisorModule), // ✅ USAR forwardRef
+    forwardRef(() => SupervisorModule),
   ],
   controllers: [RadicacionController],
   providers: [RadicacionService],
