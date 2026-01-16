@@ -11,6 +11,7 @@ import { SupervisorModule } from './supervision/supervisor.module';
 import { EstadosModule } from './estados/estados.module';
 import { AppDataSource } from './config/ormconfig'; // ✅ Cambiado a AppDataSource
 import { ContratistaModule } from './contratista/contratista.module';
+import { AuditorModule } from './auditor/auditor.module';
 
 @Module({
   imports: [
@@ -24,6 +25,8 @@ import { ContratistaModule } from './contratista/contratista.module';
     SupervisorModule,
     EstadosModule,
     ContratistaModule,
+    AuditorModule,
+    
   ],
   controllers: [AppController],
   providers: [AppService],

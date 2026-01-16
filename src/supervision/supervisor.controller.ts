@@ -68,35 +68,43 @@ export class SupervisorController {
   }
 
   // ===============================
-  // ENDPOINT REVISAR DOCUMENTO CORREGIDO
+  // ENDPOINT REVISAR DOCUMENTO CON PAZ Y SALVO
   // ===============================
 
   @Post('revisar/:documentoId')
   @UseInterceptors(FileInterceptor('archivo'))
+  @UseInterceptors(FileInterceptor('pazSalvo'))
   async revisarDocumento(
     @Param('documentoId') documentoId: string,
     @Body() revisarDto: RevisarDocumentoDto,
     @UploadedFile() archivo?: Express.Multer.File,
+    @UploadedFile() pazSalvo?: Express.Multer.File,
     @Req() req?: any
   ) {
     const user = req.user;
     const userId = this.getUserIdFromRequest(req);
     
-    // ✅ LOGGING PARA DEPURACIÓN
     this.logger.log(`🔍 ${user.role} ${user.username} revisando documento ${documentoId}`);
     this.logger.log(`📝 Datos DTO recibidos: ${JSON.stringify(revisarDto)}`);
     this.logger.log(`📝 Body completo: ${JSON.stringify(req.body)}`);
-    this.logger.log(`📝 ¿Tiene archivo?: ${!!archivo}`);
+    this.logger.log(`📝 ¿Tiene archivo de aprobación?: ${!!archivo}`);
+    this.logger.log(`📝 ¿Tiene archivo de paz y salvo?: ${!!pazSalvo}`);
 
     try {
       // Validación adicional
       if (revisarDto.estado === 'APROBADO' && !archivo) {
-        this.logger.error('❌ APROBADO requiere archivo');
+        this.logger.error('❌ APROBADO requiere archivo de aprobación');
         throw new BadRequestException('Debe adjuntar un archivo de aprobación');
       }
 
+      // Validar que si requiere paz y salvo, se adjunte
+      if (revisarDto.estado === 'APROBADO' && revisarDto.requierePazSalvo && !pazSalvo) {
+        this.logger.error('❌ Requiere archivo de paz y salvo');
+        throw new BadRequestException('Debe adjuntar el archivo de paz y salvo');
+      }
+
       // Validar que no tenga propiedades extrañas
-      const propiedadesPermitidas = ['estado', 'observacion', 'correcciones'];
+      const propiedadesPermitidas = ['estado', 'observacion', 'correcciones', 'requierePazSalvo'];
       const propiedadesRecibidas = Object.keys(revisarDto);
       const propiedadesExtra = propiedadesRecibidas.filter(prop => !propiedadesPermitidas.includes(prop));
       
@@ -109,7 +117,8 @@ export class SupervisorController {
         documentoId,
         userId,
         revisarDto,
-        archivo
+        archivo,
+        pazSalvo
       );
 
       this.logger.log(`✅ Documento ${documentoId} revisado exitosamente. Estado: ${revisarDto.estado}`);
@@ -133,7 +142,8 @@ export class SupervisorController {
             estado: result.supervisor.estado,
             observacion: result.supervisor.observacion,
             fechaAprobacion: result.supervisor.fechaAprobacion,
-            nombreArchivoSupervisor: result.supervisor.nombreArchivoSupervisor
+            nombreArchivoSupervisor: result.supervisor.nombreArchivoSupervisor,
+            pazSalvo: result.supervisor.pazSalvo
           }
         }
       };
@@ -149,6 +159,84 @@ export class SupervisorController {
         },
         status
       );
+    }
+  }
+
+  // ===============================
+  // ENDPOINTS PARA PAZ Y SALVO
+  // ===============================
+
+  @Get('descargar-paz-salvo/:nombreArchivo')
+  async descargarPazSalvo(
+    @Param('nombreArchivo') nombreArchivo: string,
+    @Req() req: any,
+    @Res() res: Response
+  ) {
+    const user = req.user;
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`📥 ${user.role} ${user.username} descargando paz y salvo: ${nombreArchivo}`);
+
+    try {
+      const { ruta, nombre } = await this.supervisorService.obtenerArchivoPazSalvo(userId, nombreArchivo);
+
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
+
+      const fileStream = fs.createReadStream(ruta);
+      fileStream.pipe(res);
+
+    } catch (error) {
+      this.logger.error(`❌ Error descargando paz y salvo: ${error.message}`);
+
+      if (!res.headersSent) {
+        const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
+        res.status(status).json({
+          success: false,
+          message: error.message || 'Error al descargar archivo'
+        });
+      }
+    }
+  }
+
+  @Get('ver-paz-salvo/:nombreArchivo')
+  async verPazSalvo(
+    @Param('nombreArchivo') nombreArchivo: string,
+    @Req() req: any,
+    @Res() res: Response
+  ) {
+    const user = req.user;
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`👁️ ${user.role} ${user.username} viendo paz y salvo: ${nombreArchivo}`);
+
+    try {
+      const { ruta, nombre } = await this.supervisorService.obtenerArchivoPazSalvo(userId, nombreArchivo);
+
+      const extension = path.extname(nombre).toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        '.pdf': 'application/pdf',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      };
+
+      res.setHeader('Content-Type', mimeTypes[extension] || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${nombre}"`);
+
+      const fileStream = fs.createReadStream(ruta);
+      fileStream.pipe(res);
+
+    } catch (error) {
+      this.logger.error(`❌ Error viendo paz y salvo: ${error.message}`);
+
+      if (!res.headersSent) {
+        const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
+        res.status(status).json({
+          success: false,
+          message: error.message || 'Error al ver archivo'
+        });
+      }
     }
   }
 
@@ -764,7 +852,8 @@ export class SupervisorController {
             id: a.id,
             documento: a.documento?.numeroRadicado,
             supervisor: a.supervisor?.username,
-            estado: a.estado
+            estado: a.estado,
+            pazSalvo: a.pazSalvo
           }))
         }
       };

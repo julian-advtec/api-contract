@@ -460,59 +460,59 @@ export class ContratistasController {
   }
 
   @Get('autocomplete/documento')
-async autocompletePorDocumento(@Query('q') query: string) {
+  async autocompletePorDocumento(@Query('q') query: string) {
     try {
-        this.logger.log(`🔍 Autocomplete por documento: "${query}"`);
+      this.logger.log(`🔍 Autocomplete por documento: "${query}"`);
 
-        if (!query || query.trim().length < 1) {
-            return {
-                ok: true,
-                data: {
-                    success: true,
-                    data: []
-                }
-            };
-        }
-
-        const contratistas = await this.contratistaService.buscarPorDocumento(query);
-        
-        // ✅ AGREGAR LOG PARA VERIFICAR
-        console.log(`🔍 Backend: contratistas encontrados: ${contratistas.length}`);
-        console.log('🔍 Backend: Primero:', contratistas.length > 0 ? contratistas[0] : 'Ninguno');
-
-        const resultados = contratistas.map((c) => ({
-            id: c.id,
-            value: c.documentoIdentidad,
-            label: `${c.documentoIdentidad} - ${c.nombreCompleto}`,
-            documento: c.documentoIdentidad,
-            nombreCompleto: c.nombreCompleto,
-            documentoIdentidad: c.documentoIdentidad,
-            numeroContrato: c.numeroContrato || 'Sin contrato',
-            createdAt: c.createdAt
-        }));
-
-        const response = {
-            ok: true,
-            data: {
-                success: true,
-                data: resultados
-            }
-        };
-        
-        console.log('🔍 Backend: Response completo:', JSON.stringify(response));
-        
-        return response;
-    } catch (error) {
-        this.logger.error(`❌ Error en autocomplete: ${error.message}`);
+      if (!query || query.trim().length < 1) {
         return {
-            ok: true,
-            data: {
-                success: true,
-                data: []
-            }
+          ok: true,
+          data: {
+            success: true,
+            data: []
+          }
         };
+      }
+
+      const contratistas = await this.contratistaService.buscarPorDocumento(query);
+
+      // ✅ AGREGAR LOG PARA VERIFICAR
+      console.log(`🔍 Backend: contratistas encontrados: ${contratistas.length}`);
+      console.log('🔍 Backend: Primero:', contratistas.length > 0 ? contratistas[0] : 'Ninguno');
+
+      const resultados = contratistas.map((c) => ({
+        id: c.id,
+        value: c.documentoIdentidad,
+        label: `${c.documentoIdentidad} - ${c.nombreCompleto}`,
+        documento: c.documentoIdentidad,
+        nombreCompleto: c.nombreCompleto,
+        documentoIdentidad: c.documentoIdentidad,
+        numeroContrato: c.numeroContrato || 'Sin contrato',
+        createdAt: c.createdAt
+      }));
+
+      const response = {
+        ok: true,
+        data: {
+          success: true,
+          data: resultados
+        }
+      };
+
+      console.log('🔍 Backend: Response completo:', JSON.stringify(response));
+
+      return response;
+    } catch (error) {
+      this.logger.error(`❌ Error en autocomplete: ${error.message}`);
+      return {
+        ok: true,
+        data: {
+          success: true,
+          data: []
+        }
+      };
     }
-}
+  }
 
   @Get('autocomplete/contrato')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)

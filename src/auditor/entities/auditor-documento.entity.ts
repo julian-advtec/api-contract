@@ -1,3 +1,4 @@
+// src/auditor/entities/auditor-documento.entity.ts
 import { 
   Entity, 
   PrimaryGeneratedColumn, 
@@ -12,22 +13,22 @@ import {
 import { Documento } from '../../radicacion/entities/documento.entity';
 import { User } from '../../users/entities/user.entity';
 
-export enum SupervisorEstado {
+export enum AuditorEstado {
   DISPONIBLE = 'DISPONIBLE',
   EN_REVISION = 'EN_REVISION',
   APROBADO = 'APROBADO',
   OBSERVADO = 'OBSERVADO',
   RECHAZADO = 'RECHAZADO',
-  DEVUELTO = 'DEVUELTO'
+  COMPLETADO = 'COMPLETADO'
 }
 
-@Entity('supervisor_documentos')
-@Unique(['documento', 'supervisor'])
+@Entity('auditor_documentos')
+@Unique(['documento', 'auditor'])
 @Index(['documento', 'estado'])
-@Index(['supervisor', 'estado'])
+@Index(['auditor', 'estado'])
 @Index(['fechaCreacion'])
 @Index(['fechaAprobacion'])
-export class SupervisorDocumento {
+export class AuditorDocumento {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -36,27 +37,37 @@ export class SupervisorDocumento {
   documento: Documento;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'supervisor_id' })
-  supervisor: User;
+  @JoinColumn({ name: 'auditor_id' })
+  auditor: User;
 
   @Column({
     type: 'varchar',
     length: 50,
-    default: SupervisorEstado.DISPONIBLE
+    default: AuditorEstado.DISPONIBLE
   })
-  estado: SupervisorEstado;
+  estado: AuditorEstado;
 
   @Column({ type: 'text', nullable: true })
-  observacion: string;
+  observaciones: string;
 
-  @Column({ type: 'text', nullable: true })
-  correcciones: string;
+  // Campos para los archivos específicos del auditor
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  rpPath: string;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
-  nombreArchivoSupervisor: string;
+  cdpPath: string;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
-  pazSalvo: string; // NUEVO: Nombre del archivo de paz y salvo
+  polizaPath: string;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  certificadoBancarioPath: string;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  minutaPath: string;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  actaInicioPath: string;
 
   @CreateDateColumn({ type: 'timestamp' })
   fechaCreacion: Date;
@@ -91,23 +102,41 @@ export class SupervisorDocumento {
   @Column({ type: 'varchar', length: 255, nullable: true })
   dispositivoUltimoAcceso: string;
 
-  // Métodos auxiliares
-  public getRutaArchivoSupervisor(): string | null {
-    if (!this.nombreArchivoSupervisor || !this.documento) {
+  // Métodos auxiliares - CORREGIDO
+  public getRutaArchivo(tipo: string): string | null {
+    // Usar un switch para evitar el error de tipo
+    let archivoPath: string;
+    switch (tipo) {
+      case 'rp':
+        archivoPath = this.rpPath;
+        break;
+      case 'cdp':
+        archivoPath = this.cdpPath;
+        break;
+      case 'poliza':
+        archivoPath = this.polizaPath;
+        break;
+      case 'certificadoBancario':
+        archivoPath = this.certificadoBancarioPath;
+        break;
+      case 'minuta':
+        archivoPath = this.minutaPath;
+        break;
+      case 'actaInicio':
+        archivoPath = this.actaInicioPath;
+        break;
+      default:
+        return null;
+    }
+    
+    if (!archivoPath || !this.documento) {
       return null;
     }
-    return `${this.documento.rutaCarpetaRadicado}/supervisor/${this.nombreArchivoSupervisor}`;
-  }
-
-  public getRutaPazSalvo(): string | null {
-    if (!this.pazSalvo || !this.documento) {
-      return null;
-    }
-    return `${this.documento.rutaCarpetaRadicado}/supervisor/${this.pazSalvo}`;
+    return `${this.documento.rutaCarpetaRadicado}/auditor/${this.auditor.id}/${archivoPath}`;
   }
 
   public iniciarRevision(ip?: string, dispositivo?: string): void {
-    this.estado = SupervisorEstado.EN_REVISION;
+    this.estado = AuditorEstado.EN_REVISION;
     this.fechaInicioRevision = new Date();
     this.fechaActualizacion = new Date();
     this.intentosRevision += 1;
@@ -116,14 +145,25 @@ export class SupervisorDocumento {
     if (dispositivo) this.dispositivoUltimoAcceso = dispositivo;
   }
 
-  public finalizarRevision(estado: SupervisorEstado, observacion?: string): void {
+  public finalizarRevision(estado: AuditorEstado, observaciones?: string): void {
     this.estado = estado;
     this.fechaFinRevision = new Date();
     this.fechaActualizacion = new Date();
-    this.observacion = observacion || this.observacion;
+    this.observaciones = observaciones || this.observaciones;
     
-    if (estado === SupervisorEstado.APROBADO) {
+    if (estado === AuditorEstado.APROBADO || estado === AuditorEstado.COMPLETADO) {
       this.fechaAprobacion = new Date();
     }
+  }
+
+  public tieneTodosDocumentos(): boolean {
+    return !!(
+      this.rpPath &&
+      this.cdpPath &&
+      this.polizaPath &&
+      this.certificadoBancarioPath &&
+      this.minutaPath &&
+      this.actaInicioPath
+    );
   }
 }

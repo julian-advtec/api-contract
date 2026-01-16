@@ -42,13 +42,12 @@ export class SupervisorService {
   }
 
   /**
-   * ✅ OBTENER DOCUMENTOS DISPONIBLES PARA REVISIÓN - VERSIÓN CORREGIDA
+   * ✅ OBTENER DOCUMENTOS DISPONIBLES PARA REVISIÓN
    */
   async obtenerDocumentosDisponibles(supervisorId: string): Promise<any[]> {
     this.logger.log(`📋 Supervisor ${supervisorId} solicitando documentos disponibles`);
 
     try {
-      // 1. Buscar documentos SOLO en estado RADICADO
       const documentos = await this.documentoRepository
         .createQueryBuilder('documento')
         .leftJoinAndSelect('documento.radicador', 'radicador')
@@ -59,7 +58,6 @@ export class SupervisorService {
 
       this.logger.log(`✅ Encontrados ${documentos.length} documentos en estado RADICADO`);
 
-      // 2. Verificar si el supervisor ya tiene algún documento en revisión
       const supervisorDocs = await this.supervisorRepository.find({
         where: {
           supervisor: { id: supervisorId },
@@ -70,7 +68,6 @@ export class SupervisorService {
 
       const documentosEnRevisionIds = supervisorDocs.map(sd => sd.documento.id);
 
-      // 3. Mapear respuesta
       const documentosConEstado = documentos.map(documento => {
         const estaRevisandoYo = documentosEnRevisionIds.includes(documento.id);
 
@@ -106,13 +103,12 @@ export class SupervisorService {
   }
 
   /**
-   * ✅ TOMAR DOCUMENTO PARA REVISIÓN - VERSIÓN CORREGIDA
+   * ✅ TOMAR DOCUMENTO PARA REVISIÓN
    */
   async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Promise<{ success: boolean; message: string; documento: any }> {
     this.logger.log(`🤝 Supervisor ${supervisorId} tomando documento ${documentoId} para revisión`);
 
     try {
-      // 1. Verificar documento (estado RADICADO)
       const documento = await this.documentoRepository.findOne({
         where: { id: documentoId, estado: 'RADICADO' },
         relations: ['radicador', 'usuarioAsignado']
@@ -122,7 +118,6 @@ export class SupervisorService {
         throw new NotFoundException('Documento no encontrado o no está disponible para revisión (debe estar en estado RADICADO)');
       }
 
-      // 2. Verificar supervisor
       const supervisor = await this.userRepository.findOne({
         where: { id: supervisorId }
       });
@@ -131,22 +126,17 @@ export class SupervisorService {
         throw new NotFoundException('Supervisor no encontrado');
       }
 
-      // 3. Verificar si ya está asignado a otro usuario
       if (documento.usuarioAsignado && documento.usuarioAsignado.id !== supervisorId) {
         throw new BadRequestException(`Este documento ya está asignado a ${documento.usuarioAsignadoNombre}`);
       }
 
-      // 4. ✅ CRÍTICO: ACTUALIZAR ESTADO DEL DOCUMENTO PRINCIPAL
       documento.estado = 'EN_REVISION_SUPERVISOR';
       documento.fechaActualizacion = new Date();
       documento.ultimoAcceso = new Date();
       documento.ultimoUsuario = `Supervisor: ${supervisor.fullName || supervisor.username}`;
-
-      // Actualizar usuario asignado
       documento.usuarioAsignado = supervisor;
       documento.usuarioAsignadoNombre = supervisor.fullName || supervisor.username;
 
-      // Agregar al historial del documento
       const historial = documento.historialEstados || [];
       historial.push({
         fecha: new Date(),
@@ -158,11 +148,9 @@ export class SupervisorService {
       });
       documento.historialEstados = historial;
 
-      // Guardar cambios en el documento principal
       await this.documentoRepository.save(documento);
       this.logger.log(`📝 Documento principal actualizado a estado: ${documento.estado}`);
 
-      // 5. Buscar si ya existe una asignación para este supervisor
       let supervisorDoc = await this.supervisorRepository.findOne({
         where: {
           documento: { id: documentoId },
@@ -172,13 +160,11 @@ export class SupervisorService {
       });
 
       if (supervisorDoc) {
-        // Actualizar a EN_REVISION
         supervisorDoc.estado = SupervisorEstado.EN_REVISION;
         supervisorDoc.fechaActualizacion = new Date();
         supervisorDoc.fechaInicioRevision = new Date();
         supervisorDoc.observacion = 'Documento tomado para revisión';
       } else {
-        // Crear nueva asignación
         supervisorDoc = this.supervisorRepository.create({
           documento: documento,
           supervisor: supervisor,
@@ -190,10 +176,8 @@ export class SupervisorService {
         });
       }
 
-      // 6. Guardar asignación del supervisor
       await this.supervisorRepository.save(supervisorDoc);
 
-      // 7. Registrar acceso en archivo de log
       if (documento && documento.rutaCarpetaRadicado) {
         await this.registrarAccesoSupervisor(
           documento.rutaCarpetaRadicado,
@@ -223,7 +207,6 @@ export class SupervisorService {
     this.logger.log(`📋 Supervisor ${supervisorId} solicitando documentos en revisión`);
 
     try {
-      // Buscar documentos que estén EN_REVISION_SUPERVISOR y asignados a este supervisor
       const documentos = await this.documentoRepository
         .createQueryBuilder('documento')
         .leftJoinAndSelect('documento.radicador', 'radicador')
@@ -234,7 +217,6 @@ export class SupervisorService {
         .orderBy('sd.fechaInicioRevision', 'DESC')
         .getMany();
 
-      // También obtener las asignaciones para mapear correctamente
       const supervisorDocs = await this.supervisorRepository.find({
         where: {
           supervisor: { id: supervisorId },
@@ -260,13 +242,12 @@ export class SupervisorService {
   }
 
   /**
-   * ✅ LIBERAR DOCUMENTO - VERSIÓN CORREGIDA
+   * ✅ LIBERAR DOCUMENTO
    */
   async liberarDocumento(documentoId: string, supervisorId: string): Promise<{ success: boolean; message: string }> {
     this.logger.log(`🔄 Supervisor ${supervisorId} liberando documento ${documentoId}`);
 
     try {
-      // Buscar asignación activa
       const supervisorDoc = await this.supervisorRepository.findOne({
         where: {
           documento: { id: documentoId },
@@ -282,18 +263,13 @@ export class SupervisorService {
 
       const documento = supervisorDoc.documento;
 
-      // ✅ CRÍTICO: REVERTIR ESTADO DEL DOCUMENTO PRINCIPAL
       documento.estado = 'RADICADO';
       documento.fechaActualizacion = new Date();
       documento.ultimoAcceso = new Date();
       documento.ultimoUsuario = `Supervisor: liberado`;
-
-      // Limpiar usuario asignado - CORREGIDO
       documento.usuarioAsignado = null;
       documento.usuarioAsignadoNombre = '';
 
-
-      // Agregar al historial
       const historial = documento.historialEstados || [];
       historial.push({
         fecha: new Date(),
@@ -305,10 +281,8 @@ export class SupervisorService {
       });
       documento.historialEstados = historial;
 
-      // Guardar cambios en documento principal
       await this.documentoRepository.save(documento);
 
-      // Cambiar estado del supervisor a DISPONIBLE
       supervisorDoc.estado = SupervisorEstado.DISPONIBLE;
       supervisorDoc.fechaActualizacion = new Date();
       supervisorDoc.fechaFinRevision = new Date();
@@ -316,7 +290,6 @@ export class SupervisorService {
 
       await this.supervisorRepository.save(supervisorDoc);
 
-      // Registrar acceso
       if (documento.rutaCarpetaRadicado) {
         await this.registrarAccesoSupervisor(
           documento.rutaCarpetaRadicado,
@@ -537,7 +510,6 @@ export class SupervisorService {
         throw new NotFoundException('Supervisor no encontrado');
       }
 
-      // Verificar si el documento está en revisión por este supervisor
       const supervisorDoc = await this.supervisorRepository.findOne({
         where: {
           documento: { id: documentoId },
@@ -631,7 +603,9 @@ export class SupervisorService {
         estado: supervisorDoc.estado,
         observacion: supervisorDoc.observacion,
         fechaCreacion: supervisorDoc.fechaCreacion,
-        fechaInicioRevision: supervisorDoc.fechaInicioRevision
+        fechaInicioRevision: supervisorDoc.fechaInicioRevision,
+        nombreArchivoSupervisor: supervisorDoc.nombreArchivoSupervisor,
+        pazSalvo: supervisorDoc.pazSalvo
       } : null
     };
   }
@@ -700,13 +674,14 @@ export class SupervisorService {
   }
 
   /**
-   * REVISAR DOCUMENTO (APROBAR/OBSERVAR/RECHAZAR)
+   * REVISAR DOCUMENTO CON PAZ Y SALVO
    */
   async revisarDocumento(
     documentoId: string,
     supervisorId: string,
     revisarDto: RevisarDocumentoDto,
-    archivoSupervisor?: Express.Multer.File
+    archivoSupervisor?: Express.Multer.File,
+    pazSalvoArchivo?: Express.Multer.File
   ): Promise<{ supervisor: SupervisorDocumento; documento: Documento }> {
     this.logger.log(`🔍 Supervisor ${supervisorId} revisando documento ${documentoId} - Estado: ${revisarDto.estado}`);
 
@@ -731,9 +706,16 @@ export class SupervisorService {
       throw new BadRequestException('Se requiere una observación para este estado');
     }
 
+    // Guardar archivo de aprobación si existe
     if (archivoSupervisor && revisarDto.estado === SupervisorEstado.APROBADO) {
-      const nombreArchivo = await this.guardarArchivoSupervisor(documento, archivoSupervisor);
+      const nombreArchivo = await this.guardarArchivoSupervisor(documento, archivoSupervisor, 'aprobacion');
       supervisorDoc.nombreArchivoSupervisor = nombreArchivo;
+    }
+
+    // Guardar archivo de paz y salvo si existe
+    if (pazSalvoArchivo && revisarDto.estado === SupervisorEstado.APROBADO && revisarDto.requierePazSalvo) {
+      const nombrePazSalvo = await this.guardarArchivoSupervisor(documento, pazSalvoArchivo, 'paz_salvo');
+      supervisorDoc.pazSalvo = nombrePazSalvo;
     }
 
     const estadoAnterior = supervisorDoc.estado;
@@ -788,11 +770,12 @@ export class SupervisorService {
   }
 
   /**
-   * GUARDAR ARCHIVO DEL SUPERVISOR
+   * GUARDAR ARCHIVO DEL SUPERVISOR (MODIFICADO PARA PAZ Y SALVO)
    */
   private async guardarArchivoSupervisor(
     documento: Documento,
-    archivo: Express.Multer.File
+    archivo: Express.Multer.File,
+    tipo: 'aprobacion' | 'paz_salvo' = 'aprobacion'
   ): Promise<string> {
     try {
       const maxSize = 10 * 1024 * 1024;
@@ -818,7 +801,9 @@ export class SupervisorService {
       }
 
       const extension = path.extname(archivo.originalname);
-      const nombreBase = `aprobacion_supervisor_${documento.numeroRadicado}`;
+      const nombreBase = tipo === 'paz_salvo'
+        ? `paz_salvo_${documento.numeroRadicado}`
+        : `aprobacion_supervisor_${documento.numeroRadicado}`;
       const timestamp = Date.now();
       const hash = crypto.randomBytes(4).toString('hex');
       const nombreArchivo = `${nombreBase}_${timestamp}_${hash}${extension}`;
@@ -832,7 +817,8 @@ export class SupervisorService {
         mimeType: archivo.mimetype,
         tamanio: archivo.size,
         fechaSubida: new Date().toISOString(),
-        descripcion: 'Aprobación del supervisor'
+        descripcion: tipo === 'paz_salvo' ? 'Paz y salvo del supervisor' : 'Aprobación del supervisor',
+        tipo: tipo
       };
 
       fs.writeFileSync(
@@ -840,13 +826,46 @@ export class SupervisorService {
         JSON.stringify(metadatos, null, 2)
       );
 
-      this.logger.log(`💾 Archivo de supervisor guardado: ${rutaCompleta} (${archivo.size} bytes)`);
+      this.logger.log(`💾 Archivo de ${tipo} guardado: ${rutaCompleta} (${archivo.size} bytes)`);
 
       return nombreArchivo;
     } catch (error) {
-      this.logger.error(`❌ Error guardando archivo de supervisor: ${error.message}`);
+      this.logger.error(`❌ Error guardando archivo de ${tipo}: ${error.message}`);
       throw new BadRequestException(`Error al guardar archivo: ${error.message}`);
     }
+  }
+
+  /**
+   * NUEVO: OBTENER ARCHIVO DE PAZ Y SALVO
+   */
+  async obtenerArchivoPazSalvo(
+    supervisorId: string,
+    nombreArchivo: string
+  ): Promise<{ ruta: string; nombre: string }> {
+    const supervisorDoc = await this.supervisorRepository.findOne({
+      where: {
+        supervisor: { id: supervisorId },
+        pazSalvo: nombreArchivo
+      },
+      relations: ['documento']
+    });
+
+    if (!supervisorDoc) {
+      throw new NotFoundException('Archivo de paz y salvo no encontrado');
+    }
+
+    const documento = supervisorDoc.documento;
+    const rutaSupervisor = path.join(documento.rutaCarpetaRadicado, 'supervisor');
+    const rutaCompleta = path.join(rutaSupervisor, nombreArchivo);
+
+    if (!fs.existsSync(rutaCompleta)) {
+      throw new NotFoundException('El archivo de paz y salvo no existe en el servidor');
+    }
+
+    return {
+      ruta: rutaCompleta,
+      nombre: nombreArchivo
+    };
   }
 
   /**
@@ -948,7 +967,9 @@ export class SupervisorService {
       fechaActualizacion: sd.fechaActualizacion,
       fechaAprobacion: sd.fechaAprobacion,
       tieneArchivo: !!sd.nombreArchivoSupervisor,
-      nombreArchivoSupervisor: sd.nombreArchivoSupervisor
+      nombreArchivoSupervisor: sd.nombreArchivoSupervisor,
+      tienePazSalvo: !!sd.pazSalvo,
+      pazSalvo: sd.pazSalvo
     }));
   }
 
