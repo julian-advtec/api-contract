@@ -1010,46 +1010,47 @@ export class SupervisorService {
   }
 
   /**
-   * OBTENER HISTORIAL DE REVISIONES DEL SUPERVISOR
-   */
-  async obtenerHistorialSupervisor(supervisorId: string): Promise<any[]> {
-    const supervisorDocs = await this.supervisorRepository.find({
-      where: { supervisor: { id: supervisorId } },
-      relations: ['documento', 'documento.radicador'],
-      order: { fechaActualizacion: 'DESC' },
-      take: 50
-    });
+ * OBTENER HISTORIAL DE REVISIONES DEL SUPERVISOR
+ */
+async obtenerHistorialSupervisor(supervisorId: string): Promise<any[]> {
+  const supervisorDocs = await this.supervisorRepository.find({
+    where: { supervisor: { id: supervisorId } },
+    relations: ['documento', 'documento.radicador'],
+    order: { fechaActualizacion: 'DESC' },
+    take: 50
+  });
 
-    return supervisorDocs.map(sd => ({
-      id: sd.id,
-      documento: {
-        id: sd.documento.id,
-        numeroRadicado: sd.documento.numeroRadicado,
-        nombreContratista: sd.documento.nombreContratista,
-        documentoContratista: sd.documento.documentoContratista,
-        numeroContrato: sd.documento.numeroContrato,
-        fechaInicio: sd.documento.fechaInicio,
-        fechaFin: sd.documento.fechaFin,
-        fechaRadicacion: sd.documento.fechaRadicacion,
-        estado: sd.documento.estado,
-        cuentaCobro: sd.documento.cuentaCobro,
-        seguridadSocial: sd.documento.seguridadSocial,
-        informeActividades: sd.documento.informeActividades,
-        observacion: sd.documento.observacion,
-        nombreRadicador: sd.documento.nombreRadicador
-      },
-      supervisorRevisor: sd.supervisor?.fullName || sd.supervisor?.username,
-      estado: sd.estado,
-      observacion: sd.observacion,
-      fechaCreacion: sd.fechaCreacion,
-      fechaActualizacion: sd.fechaActualizacion,
-      fechaAprobacion: sd.fechaAprobacion,
-      tieneArchivo: !!sd.nombreArchivoSupervisor,
-      nombreArchivoSupervisor: sd.nombreArchivoSupervisor,
-      tienePazSalvo: !!sd.pazSalvo,
-      pazSalvo: sd.pazSalvo
-    }));
-  }
+  return supervisorDocs.map(sd => ({
+    id: sd.id,
+    documento: {
+      id: sd.documento.id,
+      numeroRadicado: sd.documento.numeroRadicado,
+      nombreContratista: sd.documento.nombreContratista,
+      documentoContratista: sd.documento.documentoContratista,
+      numeroContrato: sd.documento.numeroContrato,
+      fechaInicio: sd.documento.fechaInicio,
+      fechaFin: sd.documento.fechaFin,
+      fechaRadicacion: sd.documento.fechaRadicacion,
+      estado: sd.documento.estado,
+      cuentaCobro: sd.documento.cuentaCobro,
+      seguridadSocial: sd.documento.seguridadSocial,
+      informeActividades: sd.documento.informeActividades,
+      observacion: sd.documento.observacion,
+      nombreRadicador: sd.documento.nombreRadicador
+    },
+    supervisorRevisor: sd.supervisor?.fullName || sd.supervisor?.username,
+    estado: sd.estado,
+    observacion: sd.observacion,
+    correcciones: sd.correcciones || '',  // ← AÑADE ESTA LÍNEA
+    fechaCreacion: sd.fechaCreacion,
+    fechaActualizacion: sd.fechaActualizacion,
+    fechaAprobacion: sd.fechaAprobacion,
+    tieneArchivo: !!sd.nombreArchivoSupervisor,
+    nombreArchivoSupervisor: sd.nombreArchivoSupervisor,
+    tienePazSalvo: !!sd.pazSalvo,
+    pazSalvo: sd.pazSalvo,
+  }));
+}
 
   /**
    * OBTENER ESTADÍSTICAS DEL SUPERVISOR
