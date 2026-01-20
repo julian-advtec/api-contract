@@ -1,4 +1,5 @@
 import { IsEnum, IsOptional, IsString, MaxLength, MinLength, IsBoolean } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { SupervisorEstado } from '../entities/supervisor.entity';
 
 export class RevisarDocumentoDto {
@@ -18,5 +19,37 @@ export class RevisarDocumentoDto {
 
     @IsBoolean()
     @IsOptional()
+    @Transform(({ value }) => {
+        if (value === 'true' || value === true || value === 1 || value === '1') {
+            return true;
+        }
+        if (value === 'false' || value === false || value === 0 || value === '0') {
+            return false;
+        }
+        return value;
+    })
     requierePazSalvo?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    @Transform(({ value }) => {
+        console.log(`🔄 Transformando esUltimoRadicado:`, {
+            valor: value,
+            tipo: typeof value,
+            valorOriginal: JSON.stringify(value)
+        });
+
+        // Aceptar string, boolean o number
+        if (value === 'true' || value === true || value === 1 || value === '1') {
+            return true;
+        }
+        if (value === 'false' || value === false || value === 0 || value === '0') {
+            return false;
+        }
+
+        // Si no se puede convertir, devolver el valor original
+        console.warn(`⚠️ No se pudo transformar esUltimoRadicado: ${value}`);
+        return value;
+    })
+    esUltimoRadicado?: boolean;
 }

@@ -7,6 +7,7 @@ import {
   Param,
   UseGuards,
   UploadedFile,
+  UploadedFiles,
   UseInterceptors,
   Req,
   Res,
@@ -32,13 +33,15 @@ import { SupervisorDocumento } from './entities/supervisor.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../users/entities/user.entity';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { ValidationPipe } from '@nestjs/common';
 
 @Controller('supervisor')
 @UseGuards(JwtAuthGuard, RolesGuard, SupervisorGuard)
 @Roles(UserRole.SUPERVISOR, UserRole.ADMIN)
 export class SupervisorController {
   private readonly logger = new Logger(SupervisorController.name);
-  
+
   constructor(
     private readonly supervisorService: SupervisorService,
     @InjectRepository(User)
@@ -49,21 +52,16 @@ export class SupervisorController {
     private supervisorRepository: Repository<SupervisorDocumento>,
   ) { }
 
-  private getUserIdFromRequest(req: any): string {
-    const user = req.user;
+  private getUserIdFromRequest(req: Request): string {
+    const user = (req as any).user;
     const userId = user?.id || user?.userId || user?.sub || user?.user?.id;
 
     if (!userId) {
-      this.logger.error('❌ No se pudo obtener el ID del usuario');
       throw new HttpException(
-        {
-          success: false,
-          message: 'No se pudo identificar al usuario'
-        },
-        HttpStatus.UNAUTHORIZED
+        { success: false, message: 'No se pudo identificar al usuario' },
+        HttpStatus.UNAUTHORIZED,
       );
     }
-
     return userId;
   }
 
@@ -71,95 +69,175 @@ export class SupervisorController {
   // ENDPOINT REVISAR DOCUMENTO CON PAZ Y SALVO
   // ===============================
 
+  // ===============================
+  // REVISAR DOCUMENTO (con archivos)
+  // ===============================
   @Post('revisar/:documentoId')
-  @UseInterceptors(FileInterceptor('archivo'))
-  @UseInterceptors(FileInterceptor('pazSalvo'))
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'archivoAprobacion', maxCount: 1 },
+      { name: 'pazSalvo', maxCount: 1 },
+    ]),
+  )
   async revisarDocumento(
     @Param('documentoId') documentoId: string,
-    @Body() revisarDto: RevisarDocumentoDto,
-    @UploadedFile() archivo?: Express.Multer.File,
-    @UploadedFile() pazSalvo?: Express.Multer.File,
-    @Req() req?: any
+    @Body(new ValidationPipe({ transform: true })) dto: RevisarDocumentoDto,
+    @UploadedFiles() files: {
+      archivoAprobacion?: Express.Multer.File[];
+      pazSalvo?: Express.Multer.File[];
+    },
+    @Req() req: Request,
   ) {
-    const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    
-    this.logger.log(`🔍 ${user.role} ${user.username} revisando documento ${documentoId}`);
-    this.logger.log(`📝 Datos DTO recibidos: ${JSON.stringify(revisarDto)}`);
-    this.logger.log(`📝 Body completo: ${JSON.stringify(req.body)}`);
-    this.logger.log(`📝 ¿Tiene archivo de aprobación?: ${!!archivo}`);
-    this.logger.log(`📝 ¿Tiene archivo de paz y salvo?: ${!!pazSalvo}`);
+    const archivoAprobacion = files.archivoAprobacion?.[0];
+    const pazSalvo = files.pazSalvo?.[0];
 
     try {
-      // Validación adicional
-      if (revisarDto.estado === 'APROBADO' && !archivo) {
-        this.logger.error('❌ APROBADO requiere archivo de aprobación');
-        throw new BadRequestException('Debe adjuntar un archivo de aprobación');
-      }
-
-      // Validar que si requiere paz y salvo, se adjunte
-      if (revisarDto.estado === 'APROBADO' && revisarDto.requierePazSalvo && !pazSalvo) {
-        this.logger.error('❌ Requiere archivo de paz y salvo');
-        throw new BadRequestException('Debe adjuntar el archivo de paz y salvo');
-      }
-
-      // Validar que no tenga propiedades extrañas
-      const propiedadesPermitidas = ['estado', 'observacion', 'correcciones', 'requierePazSalvo'];
-      const propiedadesRecibidas = Object.keys(revisarDto);
-      const propiedadesExtra = propiedadesRecibidas.filter(prop => !propiedadesPermitidas.includes(prop));
-      
-      if (propiedadesExtra.length > 0) {
-        this.logger.error(`❌ Propiedades no permitidas: ${propiedadesExtra.join(', ')}`);
-        throw new BadRequestException(`Propiedades no permitidas: ${propiedadesExtra.join(', ')}`);
-      }
-
       const result = await this.supervisorService.revisarDocumento(
         documentoId,
         userId,
-        revisarDto,
-        archivo,
-        pazSalvo
+        dto,
+        archivoAprobacion,
+        pazSalvo,
       );
-
-      this.logger.log(`✅ Documento ${documentoId} revisado exitosamente. Estado: ${revisarDto.estado}`);
 
       return {
         success: true,
-        message: `Documento ${revisarDto.estado.toLowerCase()} correctamente`,
-        data: {
-          documento: {
-            id: result.documento.id,
-            numeroRadicado: result.documento.numeroRadicado,
-            estado: result.documento.estado,
-            observacion: result.documento.observacion,
-            comentarios: result.documento.comentarios,
-            correcciones: result.documento.correcciones,
-            fechaActualizacion: result.documento.fechaActualizacion,
-            ultimoAcceso: result.documento.ultimoAcceso,
-            ultimoUsuario: result.documento.ultimoUsuario
-          },
-          supervisor: {
-            estado: result.supervisor.estado,
-            observacion: result.supervisor.observacion,
-            fechaAprobacion: result.supervisor.fechaAprobacion,
-            nombreArchivoSupervisor: result.supervisor.nombreArchivoSupervisor,
-            pazSalvo: result.supervisor.pazSalvo
-          }
-        }
+        message: `Documento revisado (${dto.estado})`,
+        data: result,
       };
     } catch (error) {
-      this.logger.error(`❌ Error revisando documento: ${error.message}`);
-      this.logger.error(`❌ Stack: ${error.stack}`);
-      const status = error instanceof HttpException ? error.getStatus() : HttpStatus.BAD_REQUEST;
+      this.logger.error(`Error revisando documento: ${error.message}`);
       throw new HttpException(
-        {
-          success: false,
-          message: error.message || 'Error al revisar documento',
-          detalles: error.response?.message || error.message
-        },
-        status
+        { success: false, message: error.message || 'Error al revisar' },
+        error instanceof HttpException ? error.getStatus() : HttpStatus.BAD_REQUEST,
       );
     }
+  }
+
+  // ===============================
+  // DESCARGAR / VER ARCHIVOS RADICADOS (CORREGIDO: sin restricción estricta)
+  // ===============================
+  @Get('descargar/:documentoId/archivo/:numeroArchivo')
+  async descargarArchivoRadicado(
+    @Param('documentoId') documentoId: string,
+    @Param('numeroArchivo') numeroArchivo: number,
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('download') download?: string,
+  ) {
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`📥 Usuario ${userId} descargando archivo ${numeroArchivo} de ${documentoId}`);
+
+    try {
+      const { ruta, nombre } = await this.supervisorService.descargarArchivoRadicado(
+        documentoId,
+        numeroArchivo,
+        userId,
+      );
+
+      const isDownload = download === 'true';
+
+      res.setHeader('Content-Type', 'application/octet-stream');
+      if (isDownload) {
+        res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
+      } else {
+        // Para previsualización inline (PDF, imágenes)
+        const ext = path.extname(nombre).toLowerCase();
+        const mime = {
+          '.pdf': 'application/pdf',
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.png': 'image/png',
+          '.doc': 'application/msword',
+          '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        }[ext] || 'application/octet-stream';
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Content-Disposition', `inline; filename="${nombre}"`);
+      }
+
+      const stream = fs.createReadStream(ruta);
+      stream.pipe(res);
+    } catch (error) {
+      this.logger.error(`❌ Error descargando archivo: ${error.message}`);
+      if (!res.headersSent) {
+        res.status(HttpStatus.NOT_FOUND).json({
+          success: false,
+          message: error.message || 'Archivo no encontrado',
+        });
+      }
+    }
+  }
+
+  // ===============================
+  // DESCARGAR / VER ARCHIVOS DEL SUPERVISOR (PAZ Y SALVO, APROBACIÓN)
+  // ===============================
+  @Get('descargar-archivo/:nombreArchivo')
+  async descargarArchivoSupervisor(
+    @Param('nombreArchivo') nombreArchivo: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const userId = this.getUserIdFromRequest(req);
+    try {
+      const { ruta, nombre } = await this.supervisorService.obtenerArchivoSupervisor(
+        userId,
+        nombreArchivo,
+      );
+
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
+      fs.createReadStream(ruta).pipe(res);
+    } catch (error) {
+      res.status(HttpStatus.NOT_FOUND).json({
+        success: false,
+        message: error.message || 'Archivo no encontrado',
+      });
+    }
+  }
+
+  @Get('ver-archivo-supervisor/:nombreArchivo')
+  async verArchivoSupervisor(
+    @Param('nombreArchivo') nombreArchivo: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const userId = this.getUserIdFromRequest(req);
+    try {
+      const { ruta, nombre } = await this.supervisorService.obtenerArchivoSupervisor(
+        userId,
+        nombreArchivo,
+      );
+
+      const ext = path.extname(nombre).toLowerCase();
+      const mime = {
+        '.pdf': 'application/pdf',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      }[ext] || 'application/octet-stream';
+
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Content-Disposition', `inline; filename="${nombre}"`);
+      fs.createReadStream(ruta).pipe(res);
+    } catch (error) {
+      res.status(HttpStatus.NOT_FOUND).json({
+        success: false,
+        message: error.message || 'Archivo no encontrado',
+      });
+    }
+  }
+
+  // ===============================
+  // OTROS ENDPOINTS (sin cambios importantes)
+  // ===============================
+  @Get('documentos-disponibles')
+  async obtenerDocumentosDisponibles(@Req() req: Request) {
+    const userId = this.getUserIdFromRequest(req);
+    const docs = await this.supervisorService.obtenerDocumentosDisponibles(userId);
+    return { success: true, data: docs };
   }
 
   // ===============================
@@ -240,35 +318,8 @@ export class SupervisorController {
     }
   }
 
-  // ===============================
-  // EL RESTO DEL CÓDIGO PERMANECE IGUAL
-  // ===============================
-
-  @Get('documentos-disponibles')
-  async obtenerDocumentosDisponibles(@Req() req: any) {
-    const user = req.user;
-    this.logger.log(`📋 ${user.role} ${user.username} solicitando documentos disponibles`);
-    
-    try {
-      const userId = this.getUserIdFromRequest(req);
-      const documentos = await this.supervisorService.obtenerDocumentosDisponibles(userId);
-
-      return {
-        success: true,
-        count: documentos.length,
-        data: documentos
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error obteniendo documentos disponibles: ${error.message}`);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Error al obtener documentos disponibles: ' + error.message
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-  }
+  
+  
 
   @Post('tomar-documento/:documentoId')
   async tomarDocumento(@Param('documentoId') documentoId: string, @Req() req: any) {
@@ -342,66 +393,17 @@ export class SupervisorController {
 
   @Get('documento/:id')
   async obtenerDetalleDocumento(@Param('id') id: string, @Req() req: any) {
-    const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`🔍 ${user.role} ${user.username} solicitando detalle de documento ${id}`);
-
     try {
       const detalle = await this.supervisorService.obtenerDetalleDocumento(id, userId);
-
-      return {
-        success: true,
-        data: detalle
-      };
+      return { success: true, data: detalle };
     } catch (error) {
-      this.logger.error(`❌ Error obteniendo detalle: ${error.message}`);
       const status = error instanceof HttpException ? error.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
-      throw new HttpException(
-        {
-          success: false,
-          message: error.message || 'Error al obtener detalle del documento'
-        },
-        status
-      );
+      throw new HttpException({ success: false, message: error.message }, status);
     }
   }
 
-  @Get('descargar/:documentoId/archivo/:numeroArchivo')
-  async descargarArchivoRadicado(
-    @Param('documentoId') documentoId: string,
-    @Param('numeroArchivo') numeroArchivo: number,
-    @Req() req: any,
-    @Res() res: Response
-  ) {
-    const user = req.user;
-    const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`📥 ${user.role} ${user.username} descargando archivo ${numeroArchivo} del documento ${documentoId}`);
-
-    try {
-      const { ruta, nombre } = await this.supervisorService.descargarArchivoRadicado(
-        documentoId,
-        numeroArchivo,
-        userId
-      );
-
-      res.setHeader('Content-Type', 'application/octet-stream');
-      res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
-
-      const fileStream = fs.createReadStream(ruta);
-      fileStream.pipe(res);
-
-    } catch (error) {
-      this.logger.error(`❌ Error descargando archivo: ${error.message}`);
-
-      if (!res.headersSent) {
-        const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
-        res.status(status).json({
-          success: false,
-          message: error.message || 'Error al descargar archivo'
-        });
-      }
-    }
-  }
+ 
 
   @Get('ver/:documentoId/archivo/:numeroArchivo')
   async verArchivoRadicado(
@@ -453,7 +455,7 @@ export class SupervisorController {
   @Post('devolver/:documentoId')
   async devolverDocumento(
     @Param('documentoId') documentoId: string,
-    @Body() body: { motivo: string; instrucciones: string },
+    @Body() body: { motivo: string; instrucciones: string }, // ✅ Esto está bien
     @Req() req: any
   ) {
     const user = req.user;
@@ -504,25 +506,17 @@ export class SupervisorController {
 
   @Get('historial')
   async obtenerHistorial(@Req() req: any, @Query('limit') limit?: number) {
-    const user = req.user;
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`📊 ${user.role} ${user.username} solicitando historial`);
-
     try {
       const historial = await this.supervisorService.obtenerHistorialSupervisor(userId);
-
       return {
         success: true,
         count: historial.length,
         data: limit ? historial.slice(0, limit) : historial
       };
     } catch (error) {
-      this.logger.error(`❌ Error obteniendo historial: ${error.message}`);
       throw new HttpException(
-        {
-          success: false,
-          message: 'Error al obtener historial'
-        },
+        { success: false, message: 'Error al obtener historial' },
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
@@ -553,80 +547,7 @@ export class SupervisorController {
     }
   }
 
-  @Get('descargar-archivo/:nombreArchivo')
-  async descargarArchivoSupervisor(
-    @Param('nombreArchivo') nombreArchivo: string,
-    @Req() req: any,
-    @Res() res: Response
-  ) {
-    const user = req.user;
-    const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`📥 ${user.role} ${user.username} descargando su archivo: ${nombreArchivo}`);
-
-    try {
-      const { ruta, nombre } = await this.supervisorService.obtenerArchivoSupervisor(userId, nombreArchivo);
-
-      res.setHeader('Content-Type', 'application/octet-stream');
-      res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
-
-      const fileStream = fs.createReadStream(ruta);
-      fileStream.pipe(res);
-
-    } catch (error) {
-      this.logger.error(`❌ Error descargando archivo del supervisor: ${error.message}`);
-
-      if (!res.headersSent) {
-        const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
-        res.status(status).json({
-          success: false,
-          message: error.message || 'Error al descargar archivo'
-        });
-      }
-    }
-  }
-
-  @Get('ver-archivo-supervisor/:nombreArchivo')
-  async verArchivoSupervisor(
-    @Param('nombreArchivo') nombreArchivo: string,
-    @Req() req: any,
-    @Res() res: Response
-  ) {
-    const user = req.user;
-    const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`👁️ ${user.role} ${user.username} viendo su archivo: ${nombreArchivo}`);
-
-    try {
-      const { ruta, nombre } = await this.supervisorService.obtenerArchivoSupervisor(userId, nombreArchivo);
-
-      const extension = path.extname(nombre).toLowerCase();
-      const mimeTypes: Record<string, string> = {
-        '.pdf': 'application/pdf',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.doc': 'application/msword',
-        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      };
-
-      res.setHeader('Content-Type', mimeTypes[extension] || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${nombre}"`);
-
-      const fileStream = fs.createReadStream(ruta);
-      fileStream.pipe(res);
-
-    } catch (error) {
-      this.logger.error(`❌ Error viendo archivo del supervisor: ${error.message}`);
-
-      if (!res.headersSent) {
-        const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
-        res.status(status).json({
-          success: false,
-          message: error.message || 'Error al ver archivo'
-        });
-      }
-    }
-  }
-
+  
   // ===============================
   // ENDPOINTS ADMINISTRATIVOS
   // ===============================
@@ -954,6 +875,85 @@ export class SupervisorController {
         {
           success: false,
           message: 'Error al obtener documentos radicados: ' + error.message
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Post('migracion/corregir-inconsistencias')
+  @Roles(UserRole.ADMIN)
+  async corregirInconsistencias(@Req() req: any) {
+    const user = req.user;
+    this.logger.log(`👑 Admin ${user.username} ejecutando corrección de inconsistencias`);
+
+    try {
+      const resultado = await this.supervisorService.corregirDatosInconsistentes();
+
+      return {
+        success: true,
+        message: `Migración completada: ${resultado.corregidos} de ${resultado.total} documentos corregidos`,
+        data: resultado
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error en migración: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al corregir inconsistencias: ' + error.message
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  // ✅ ENDPOINT PARA VERIFICAR INCONSISTENCIAS (diagnóstico)
+  @Get('diagnostico/inconsistencias')
+  @Roles(UserRole.ADMIN, UserRole.SUPERVISOR)
+  async verificarInconsistencias(@Req() req: any) {
+    const user = req.user;
+    this.logger.log(`🔍 ${user.role} ${user.username} verificando inconsistencias`);
+
+    try {
+      // Consultar SQL para encontrar inconsistencias
+      const inconsistencias = await this.documentoRepository
+        .createQueryBuilder('documento')
+        .innerJoin('supervisor_documentos', 'supervisor', 'supervisor.documento_id = documento.id')
+        .where('supervisor.paz_salvo IS NOT NULL')
+        .andWhere('supervisor.paz_salvo != :empty', { empty: '' })
+        .andWhere('(documento.es_ultimo_radicado = :false OR documento.es_ultimo_radicado IS NULL)', { false: false })
+        .select([
+          'documento.id as documento_id',
+          'documento.numero_radicado',
+          'documento.es_ultimo_radicado',
+          'supervisor.paz_salvo',
+          'supervisor.estado as estado_supervision'
+        ])
+        .getRawMany();
+
+      const totalDocumentos = await this.documentoRepository.count();
+      const totalConPazSalvo = await this.supervisorRepository
+        .createQueryBuilder('supervisor')
+        .where('supervisor.paz_salvo IS NOT NULL')
+        .andWhere('supervisor.paz_salvo != :empty', { empty: '' })
+        .getCount();
+
+      return {
+        success: true,
+        data: {
+          totalDocumentos,
+          totalConPazSalvo,
+          inconsistenciasEncontradas: inconsistencias.length,
+          detalles: inconsistencias,
+          fechaVerificacion: new Date().toISOString()
+        }
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error verificando inconsistencias: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Error al verificar inconsistencias'
         },
         HttpStatus.INTERNAL_SERVER_ERROR
       );

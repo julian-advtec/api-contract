@@ -1,4 +1,3 @@
-// src/radicacion/entities/documento.entity.ts
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -20,13 +19,21 @@ export class Documento {
   @Column({ name: 'numero_radicado', length: 50, unique: true })
   numeroRadicado: string;
 
-  // ✅ NUEVO CAMPO: Primer radicado del año
   @Column({ 
     name: 'primer_radicado_ano', 
     type: 'boolean', 
     default: false 
   })
   primerRadicadoDelAno: boolean;
+
+  // ✅ AÑADIR ESTA NUEVA PROPIEDAD
+  @Column({ 
+    name: 'es_ultimo_radicado', 
+    type: 'boolean', 
+    default: false,
+    nullable: true 
+  })
+  esUltimoRadicado: boolean;
 
   @Column({ name: 'numero_contrato', length: 50 })
   numeroContrato: string;
@@ -43,7 +50,6 @@ export class Documento {
   @Column({ name: 'fecha_fin' })
   fechaFin: Date;
 
-  // ESTADOS DEL FLUJO
   @Column({
     name: 'estado',
     default: 'RADICADO',
@@ -52,7 +58,6 @@ export class Documento {
   })
   estado: string;
 
-  // ARCHIVOS
   @Column({ name: 'cuenta_cobro', nullable: true })
   cuentaCobro: string;
 
@@ -74,7 +79,6 @@ export class Documento {
   @Column({ name: 'observacion', type: 'text', nullable: true })
   observacion: string;
 
-  // USUARIO RADICADOR
   @ManyToOne(() => User, { nullable: false })
   @JoinColumn({ name: 'radicador_id' })
   radicador: User;
@@ -85,7 +89,6 @@ export class Documento {
   @Column({ name: 'usuario_radicador', length: 50 })
   usuarioRadicador: string;
 
-  // USUARIO ASIGNADO ACTUALMENTE - CORREGIDO
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'usuario_asignado_id' })
   usuarioAsignado: User | null;
@@ -93,11 +96,9 @@ export class Documento {
   @Column({ name: 'usuario_asignado_nombre', length: 100, nullable: true })
   usuarioAsignadoNombre: string;
 
-  // ✅ NUEVA RELACIÓN: Documentos asignados a supervisores
   @OneToMany(() => SupervisorDocumento, supervisorDocumento => supervisorDocumento.documento)
   supervisorDocumentos: SupervisorDocumento[];
 
-  // SEGUIMIENTO
   @CreateDateColumn({ name: 'fecha_radicacion' })
   fechaRadicacion: Date;
 
@@ -113,7 +114,6 @@ export class Documento {
   @Column({ name: 'ultimo_usuario', length: 100, nullable: true })
   ultimoUsuario: string;
 
-  // COMENTARIOS Y CORRECCIONES
   @Column({ name: 'comentarios', type: 'text', nullable: true })
   comentarios: string;
 
@@ -123,7 +123,6 @@ export class Documento {
   @Column({ name: 'fecha_limite_revision', nullable: true })
   fechaLimiteRevision: Date;
 
-  // TOKEN PÚBLICO
   @Column({ name: 'token_publico', nullable: true, unique: true })
   tokenPublico: string;
 
@@ -136,7 +135,6 @@ export class Documento {
   @Column({ name: 'contratista_id', nullable: true })
   contratistaId?: string;
 
-  // HISTORIAL (se almacena como JSON)
   @Column({ name: 'historial_estados', type: 'json', nullable: true })
   historialEstados: Array<{
     fecha: Date;

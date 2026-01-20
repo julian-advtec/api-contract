@@ -56,7 +56,7 @@ export class SupervisorDocumento {
   nombreArchivoSupervisor: string;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
-  pazSalvo: string; // NUEVO: Nombre del archivo de paz y salvo
+  pazSalvo: string;
 
   @CreateDateColumn({ type: 'timestamp' })
   fechaCreacion: Date;
@@ -91,7 +91,6 @@ export class SupervisorDocumento {
   @Column({ type: 'varchar', length: 255, nullable: true })
   dispositivoUltimoAcceso: string;
 
-  // Métodos auxiliares
   public getRutaArchivoSupervisor(): string | null {
     if (!this.nombreArchivoSupervisor || !this.documento) {
       return null;

@@ -1,13 +1,15 @@
+// src/auditor/services/auditor.service.ts (versión completa y corregida)
 import {
   Injectable,
   NotFoundException,
   BadRequestException,
   Logger,
   InternalServerErrorException,
-  ForbiddenException
+  ForbiddenException,
+  ConflictException
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { AuditorDocumento, AuditorEstado } from './entities/auditor-documento.entity';
 import { Documento } from './../radicacion/entities/documento.entity';
 import { User } from './../users/entities/user.entity';
@@ -37,12 +39,14 @@ export class AuditorService {
   }
 
   /**
-   * ✅ OBTENER DOCUMENTOS APROBADOS POR SUPERVISOR (estado APROBADO_SUPERVISOR)
+   * ✅ OBTENER DOCUMENTOS DISPONIBLES PARA AUDITORÍA (estado APROBADO_SUPERVISOR)
+   * Con verificación de primer_radicado_ano
    */
   async obtenerDocumentosDisponibles(auditorId: string): Promise<any[]> {
     this.logger.log(`📋 Auditor ${auditorId} solicitando documentos disponibles`);
 
     try {
+      // Buscar documentos en estado APROBADO_SUPERVISOR
       const documentos = await this.documentoRepository
         .createQueryBuilder('documento')
         .leftJoinAndSelect('documento.radicador', 'radicador')
@@ -53,6 +57,7 @@ export class AuditorService {
 
       this.logger.log(`✅ Encontrados ${documentos.length} documentos en estado APROBADO_SUPERVISOR`);
 
+      // Obtener documentos que ya estoy revisando
       const auditorDocs = await this.auditorRepository.find({
         where: {
           auditor: { id: auditorId },
@@ -63,8 +68,10 @@ export class AuditorService {
 
       const documentosEnRevisionIds = auditorDocs.map(ad => ad.documento.id);
 
+      // Mapear documentos con información de asignación
       const documentosConEstado = documentos.map(documento => {
         const estaRevisandoYo = documentosEnRevisionIds.includes(documento.id);
+        const puedeSubirDocumentos = documento.primerRadicadoDelAno;
 
         return {
           id: documento.id,
@@ -79,10 +86,12 @@ export class AuditorService {
           radicador: documento.nombreRadicador,
           supervisor: documento.usuarioAsignadoNombre,
           observacion: documento.observacion || '',
+          primerRadicadoDelAno: documento.primerRadicadoDelAno,
           disponible: true,
           asignacion: {
             enRevision: estaRevisandoYo,
             puedoTomar: !estaRevisandoYo && documento.estado === 'APROBADO_SUPERVISOR',
+            puedeSubirDocumentos: puedeSubirDocumentos,
             supervisorAsignado: documento.usuarioAsignadoNombre,
             tieneSupervisor: !!documento.usuarioAsignadoNombre
           }
@@ -103,17 +112,23 @@ export class AuditorService {
   async tomarDocumentoParaRevision(documentoId: string, auditorId: string): Promise<{ success: boolean; message: string; documento: any }> {
     this.logger.log(`🤝 Auditor ${auditorId} tomando documento ${documentoId} para revisión`);
 
+    const queryRunner = this.auditorRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
     try {
-      const documento = await this.documentoRepository.findOne({
+      // Buscar documento con bloqueo para evitar condiciones de carrera
+      const documento = await queryRunner.manager.findOne(Documento, {
         where: { id: documentoId, estado: 'APROBADO_SUPERVISOR' },
-        relations: ['radicador', 'usuarioAsignado']
+        relations: ['radicador', 'usuarioAsignado'],
+        lock: { mode: 'pessimistic_write' }
       });
 
       if (!documento) {
         throw new NotFoundException('Documento no encontrado o no está disponible para auditoría (debe estar en estado APROBADO_SUPERVISOR)');
       }
 
-      const auditor = await this.userRepository.findOne({
+      const auditor = await queryRunner.manager.findOne(User, {
         where: { id: auditorId }
       });
 
@@ -121,18 +136,20 @@ export class AuditorService {
         throw new NotFoundException('Auditor no encontrado');
       }
 
-      if (documento.usuarioAsignado && documento.usuarioAsignado.id !== auditorId) {
-        // Verificar si ya hay un auditor asignado a través de la tabla auditor_documentos
-        const auditorDocExistente = await this.auditorRepository.findOne({
-          where: { 
-            documento: { id: documentoId },
-            estado: AuditorEstado.EN_REVISION
-          }
-        });
+      // Verificar si ya está siendo revisado por otro auditor
+      const auditorDocExistente = await queryRunner.manager.findOne(AuditorDocumento, {
+        where: { 
+          documento: { id: documentoId },
+          estado: AuditorEstado.EN_REVISION
+        },
+        relations: ['auditor']
+      });
 
-        if (auditorDocExistente) {
-          throw new BadRequestException(`Este documento ya está siendo revisado por otro auditor`);
-        }
+      if (auditorDocExistente) {
+        const otroAuditor = auditorDocExistente.auditor;
+        throw new ConflictException(
+          `Este documento ya está siendo revisado por el auditor ${otroAuditor.fullName || otroAuditor.username}`
+        );
       }
 
       // Actualizar documento principal
@@ -155,11 +172,11 @@ export class AuditorService {
       });
       documento.historialEstados = historial;
 
-      await this.documentoRepository.save(documento);
+      await queryRunner.manager.save(Documento, documento);
       this.logger.log(`📝 Documento principal actualizado a estado: ${documento.estado}`);
 
       // Crear o actualizar registro en auditor_documentos
-      let auditorDoc = await this.auditorRepository.findOne({
+      let auditorDoc = await queryRunner.manager.findOne(AuditorDocumento, {
         where: {
           documento: { id: documentoId },
           auditor: { id: auditorId }
@@ -173,7 +190,7 @@ export class AuditorService {
         auditorDoc.fechaInicioRevision = new Date();
         auditorDoc.observaciones = 'Documento tomado para revisión de auditoría';
       } else {
-        auditorDoc = this.auditorRepository.create({
+        auditorDoc = queryRunner.manager.create(AuditorDocumento, {
           documento: documento,
           auditor: auditor,
           estado: AuditorEstado.EN_REVISION,
@@ -184,7 +201,7 @@ export class AuditorService {
         });
       }
 
-      await this.auditorRepository.save(auditorDoc);
+      await queryRunner.manager.save(AuditorDocumento, auditorDoc);
 
       // Registrar acceso
       if (documento && documento.rutaCarpetaRadicado) {
@@ -195,6 +212,7 @@ export class AuditorService {
         );
       }
 
+      await queryRunner.commitTransaction();
       this.logger.log(`✅ Documento ${documento.numeroRadicado} tomado para revisión por ${auditor.username}. Estado actualizado a EN_REVISION_AUDITOR`);
 
       return {
@@ -204,8 +222,11 @@ export class AuditorService {
       };
 
     } catch (error) {
+      await queryRunner.rollbackTransaction();
       this.logger.error(`❌ Error tomando documento: ${error.message}`, error.stack);
       throw error;
+    } finally {
+      await queryRunner.release();
     }
   }
 
@@ -216,32 +237,16 @@ export class AuditorService {
     this.logger.log(`📋 Auditor ${auditorId} solicitando documentos en revisión`);
 
     try {
-      const documentos = await this.documentoRepository
-        .createQueryBuilder('documento')
-        .leftJoinAndSelect('documento.radicador', 'radicador')
-        .leftJoin('auditor_documentos', 'ad', 'ad.documento_id = documento.id')
-        .where('ad.auditor_id = :auditorId', { auditorId })
-        .andWhere('ad.estado = :estado', { estado: AuditorEstado.EN_REVISION })
-        .andWhere('documento.estado = :docEstado', { docEstado: 'EN_REVISION_AUDITOR' })
-        .orderBy('ad.fechaInicioRevision', 'DESC')
-        .getMany();
-
       const auditorDocs = await this.auditorRepository.find({
         where: {
           auditor: { id: auditorId },
           estado: AuditorEstado.EN_REVISION
         },
-        relations: ['auditor', 'documento']
+        relations: ['documento', 'documento.radicador', 'auditor']
       });
 
-      const mapaAsignaciones = new Map();
-      auditorDocs.forEach(ad => {
-        mapaAsignaciones.set(ad.documento.id, ad);
-      });
-
-      return documentos.map(documento => {
-        const asignacion = mapaAsignaciones.get(documento.id);
-        return this.mapearDocumentoParaRespuesta(documento, asignacion);
+      return auditorDocs.map(auditorDoc => {
+        return this.mapearDocumentoParaRespuesta(auditorDoc.documento, auditorDoc);
       });
 
     } catch (error) {
@@ -268,10 +273,9 @@ export class AuditorService {
       const auditorDoc = await this.auditorRepository.findOne({
         where: {
           documento: { id: documentoId },
-          auditor: { id: auditorId },
-          estado: AuditorEstado.EN_REVISION
+          auditor: { id: auditorId }
         },
-        relations: ['documento', 'documento.radicador', 'documento.usuarioAsignado'],
+        relations: ['documento', 'documento.radicador', 'documento.usuarioAsignado', 'auditor'],
       });
 
       const documento = await this.documentoRepository.findOne({
@@ -283,30 +287,34 @@ export class AuditorService {
         throw new NotFoundException('Documento no encontrado');
       }
 
-      if (documento.estado !== 'APROBADO_SUPERVISOR' && documento.estado !== 'EN_REVISION_AUDITOR') {
-        throw new BadRequestException('Solo puedes acceder a documentos en estado APROBADO_SUPERVISOR o EN_REVISION_AUDITOR');
+      // Verificar permisos de acceso
+      if (!auditorDoc && documento.estado !== 'APROBADO_SUPERVISOR') {
+        throw new ForbiddenException('No tienes acceso a este documento');
+      }
+
+      // Si está en revisión, asegurarse que es del auditor actual
+      if (documento.estado === 'EN_REVISION_AUDITOR' && (!auditorDoc || auditorDoc.auditor.id !== auditorId)) {
+        throw new ForbiddenException('Este documento está siendo revisado por otro auditor');
       }
 
       return this.construirRespuestaDetalle(documento, auditorDoc, auditor);
 
     } catch (error) {
       this.logger.error(`❌ Error obteniendo detalle: ${error.message}`);
-      if (error instanceof ForbiddenException || error instanceof NotFoundException) {
-        throw error;
-      }
-      throw new InternalServerErrorException('Error al obtener detalle del documento');
+      throw error;
     }
   }
 
   /**
    * ✅ SUBIR DOCUMENTOS DE AUDITORÍA
+   * Solo si es primer_radicado_ano = true
    */
-    async subirDocumentosAuditor(
+  async subirDocumentosAuditor(
     documentoId: string,
     auditorId: string,
     subirDto: SubirDocumentosAuditorDto,
     files: { [fieldname: string]: Express.Multer.File[] }
-  ): Promise<{ auditor: AuditorDocumento; documento: Documento }> {
+  ): Promise<{ success: boolean; message: string; auditor: AuditorDocumento; documento: Documento }> {
     this.logger.log(`📤 Auditor ${auditorId} subiendo documentos para documento ${documentoId}`);
 
     const auditorDoc = await this.auditorRepository.findOne({
@@ -324,6 +332,11 @@ export class AuditorService {
 
     const documento = auditorDoc.documento;
 
+    // Verificar si es primer radicado del año y puede subir documentos
+    if (!documento.primerRadicadoDelAno) {
+      throw new BadRequestException('Este documento no es el primer radicado del año. Solo se pueden subir documentos en el primer radicado del año.');
+    }
+
     // Verificar que todos los archivos requeridos están presentes
     const archivosRequeridos = ['rp', 'cdp', 'poliza', 'certificadoBancario', 'minuta', 'actaInicio'];
     const archivosFaltantes = archivosRequeridos.filter(tipo => !files[tipo] || files[tipo].length === 0);
@@ -338,12 +351,12 @@ export class AuditorService {
       fs.mkdirSync(rutaAuditor, { recursive: true });
     }
 
-    // Guardar cada archivo y actualizar los paths - CORREGIDO (usando switch)
+    // Guardar cada archivo
     for (const tipo of archivosRequeridos) {
       const archivo = files[tipo][0];
       const nombreArchivo = await this.guardarArchivoAuditor(documento, archivo, tipo, auditorId);
       
-      // ✅ CORRECCIÓN: Usar switch en lugar de acceso dinámico
+      // Asignar el path según el tipo de documento
       switch (tipo) {
         case 'rp':
           auditorDoc.rpPath = nombreArchivo;
@@ -384,22 +397,24 @@ export class AuditorService {
       usuarioId: auditorId,
       usuarioNombre: auditorDoc.auditor.fullName || auditorDoc.auditor.username,
       rolUsuario: auditorDoc.auditor.role,
-      observacion: 'Documentos de auditoría subidos'
+      observacion: 'Documentos de auditoría subidos (primer radicado del año)'
     });
     documento.historialEstados = historial;
 
     await this.registrarAccesoAuditor(
       documento.rutaCarpetaRadicado,
       auditorId,
-      `SUBIO documentos de auditoría: RP, CDP, Póliza, Certificado Bancario, Minuta, Acta de Inicio`
+      `SUBIO documentos de auditoría (primer radicado): RP, CDP, Póliza, Certificado Bancario, Minuta, Acta de Inicio`
     );
 
     await this.documentoRepository.save(documento);
     const savedAuditorDoc = await this.auditorRepository.save(auditorDoc);
 
-    this.logger.log(`✅ Documentos de auditoría subidos para documento ${documento.numeroRadicado}`);
+    this.logger.log(`✅ Documentos de auditoría subidos para documento ${documento.numeroRadicado} (primer radicado)`);
 
     return {
+      success: true,
+      message: 'Documentos de auditoría subidos correctamente',
       auditor: savedAuditorDoc,
       documento
     };
@@ -412,7 +427,7 @@ export class AuditorService {
     documentoId: string,
     auditorId: string,
     revisarDto: RevisarAuditorDocumentoDto
-  ): Promise<{ auditor: AuditorDocumento; documento: Documento }> {
+  ): Promise<{ success: boolean; message: string; auditor: AuditorDocumento; documento: Documento }> {
     this.logger.log(`🔍 Auditor ${auditorId} revisando documento ${documentoId} - Estado: ${revisarDto.estado}`);
 
     const auditorDoc = await this.auditorRepository.findOne({
@@ -430,8 +445,8 @@ export class AuditorService {
 
     const documento = auditorDoc.documento;
 
-    // Verificar que se hayan subido todos los documentos requeridos
-    if (!auditorDoc.tieneTodosDocumentos()) {
+    // Verificar si es primer radicado y si se requieren documentos
+    if (documento.primerRadicadoDelAno && !auditorDoc.tieneTodosDocumentos()) {
       throw new BadRequestException('Debes subir todos los documentos requeridos (RP, CDP, Póliza, Certificado Bancario, Minuta, Acta de Inicio) antes de revisar');
     }
 
@@ -456,27 +471,35 @@ export class AuditorService {
     documento.fechaActualizacion = new Date();
 
     // Actualizar estado del documento según la decisión del auditor
+    let mensajeEstado = '';
     switch (revisarDto.estado) {
       case AuditorEstado.APROBADO:
         documento.estado = 'APROBADO_AUDITOR';
         documento.comentarios = revisarDto.observaciones || 'Aprobado por auditor de cuentas';
+        mensajeEstado = 'Documento aprobado por auditor';
         break;
 
       case AuditorEstado.OBSERVADO:
         documento.estado = 'OBSERVADO_AUDITOR';
         documento.comentarios = revisarDto.observaciones || 'Observado por auditor de cuentas';
         documento.correcciones = revisarDto.correcciones?.trim() || '';
+        mensajeEstado = 'Documento observado por auditor';
         break;
 
       case AuditorEstado.RECHAZADO:
         documento.estado = 'RECHAZADO_AUDITOR';
         documento.comentarios = revisarDto.observaciones || 'Rechazado por auditor de cuentas';
+        mensajeEstado = 'Documento rechazado por auditor';
         break;
 
       case AuditorEstado.COMPLETADO:
         documento.estado = 'COMPLETADO_AUDITOR';
         documento.comentarios = revisarDto.observaciones || 'Completado por auditor de cuentas';
+        mensajeEstado = 'Documento completado por auditor';
         break;
+
+      default:
+        throw new BadRequestException('Estado no válido para revisión');
     }
 
     this.agregarAlHistorial(documento, auditorDoc.auditor, estadoAnterior, revisarDto.estado, revisarDto.observaciones);
@@ -493,6 +516,8 @@ export class AuditorService {
     this.logger.log(`✅ Documento ${documento.numeroRadicado} revisado por auditor. Estado: ${revisarDto.estado}`);
 
     return {
+      success: true,
+      message: mensajeEstado,
       auditor: savedAuditorDoc,
       documento
     };
@@ -524,7 +549,7 @@ export class AuditorService {
       throw new NotFoundException('Documento no encontrado');
     }
 
-    // Verificar acceso: puede ver documentos en APROBADO_SUPERVISOR o si es suyo
+    // Verificar acceso
     const auditorDoc = await this.auditorRepository.findOne({
       where: {
         documento: { id: documentoId },
@@ -532,23 +557,35 @@ export class AuditorService {
       }
     });
 
+    // Puede acceder si:
+    // 1. Tiene un registro de auditor (está revisando o ha revisado)
+    // 2. O el documento está en estado APROBADO_SUPERVISOR (disponible para todos)
     if (!auditorDoc && documento.estado !== 'APROBADO_SUPERVISOR') {
       throw new ForbiddenException('No tienes permisos para acceder a este documento');
     }
 
     let nombreArchivo: string;
+    let descripcion: string;
+
     switch (numeroArchivo) {
       case 1:
         nombreArchivo = documento.cuentaCobro;
+        descripcion = documento.descripcionCuentaCobro;
         break;
       case 2:
         nombreArchivo = documento.seguridadSocial;
+        descripcion = documento.descripcionSeguridadSocial;
         break;
       case 3:
         nombreArchivo = documento.informeActividades;
+        descripcion = documento.descripcionInformeActividades;
         break;
       default:
         throw new BadRequestException('Número de archivo inválido (1-3)');
+    }
+
+    if (!nombreArchivo) {
+      throw new NotFoundException(`Archivo no encontrado para el documento`);
     }
 
     const rutaCompleta = path.join(documento.rutaCarpetaRadicado, nombreArchivo);
@@ -560,7 +597,7 @@ export class AuditorService {
     this.registrarAccesoAuditor(
       documento.rutaCarpetaRadicado,
       auditorId,
-      `DESCARGÓ archivo radicado: ${nombreArchivo}`
+      `DESCARGÓ archivo radicado: ${descripcion || nombreArchivo}`
     );
 
     return {
@@ -572,7 +609,7 @@ export class AuditorService {
   /**
    * ✅ DESCARGAR ARCHIVO SUBIDO POR EL AUDITOR
    */
-   async descargarArchivoAuditor(
+  async descargarArchivoAuditor(
     documentoId: string,
     tipoArchivo: string,
     auditorId: string
@@ -593,7 +630,6 @@ export class AuditorService {
 
     const documento = auditorDoc.documento;
     
-    // ✅ CORRECCIÓN: Usar switch en lugar de acceso dinámico
     let nombreArchivo: string;
     switch (tipoArchivo) {
       case 'rp':
@@ -619,7 +655,7 @@ export class AuditorService {
     }
 
     if (!nombreArchivo) {
-      throw new NotFoundException(`Archivo de tipo ${tipoArchivo} no encontrado`);
+      throw new NotFoundException(`Archivo de tipo ${tipoArchivo} no fue subido para este documento`);
     }
 
     const rutaCompleta = path.join(documento.rutaCarpetaRadicado, 'auditor', auditorId, nombreArchivo);
@@ -640,8 +676,12 @@ export class AuditorService {
   async liberarDocumento(documentoId: string, auditorId: string): Promise<{ success: boolean; message: string }> {
     this.logger.log(`🔄 Auditor ${auditorId} liberando documento ${documentoId}`);
 
+    const queryRunner = this.auditorRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
     try {
-      const auditorDoc = await this.auditorRepository.findOne({
+      const auditorDoc = await queryRunner.manager.findOne(AuditorDocumento, {
         where: {
           documento: { id: documentoId },
           auditor: { id: auditorId },
@@ -660,7 +700,7 @@ export class AuditorService {
       documento.estado = 'APROBADO_SUPERVISOR';
       documento.fechaActualizacion = new Date();
       documento.ultimoAcceso = new Date();
-      documento.ultimoUsuario = `Auditor: liberado`;
+      documento.ultimoUsuario = `Auditor: ${auditorDoc.auditor.fullName || auditorDoc.auditor.username} (liberado)`;
       documento.usuarioAsignado = null;
       documento.usuarioAsignadoNombre = '';
 
@@ -670,13 +710,13 @@ export class AuditorService {
         fecha: new Date(),
         estado: 'APROBADO_SUPERVISOR',
         usuarioId: auditorId,
-        usuarioNombre: 'Sistema',
+        usuarioNombre: auditorDoc.auditor.fullName || auditorDoc.auditor.username,
         rolUsuario: 'AUDITOR_CUENTAS',
         observacion: 'Documento liberado por auditor - Volvió a estado APROBADO_SUPERVISOR'
       });
       documento.historialEstados = historial;
 
-      await this.documentoRepository.save(documento);
+      await queryRunner.manager.save(Documento, documento);
 
       // Actualizar registro de auditor
       auditorDoc.estado = AuditorEstado.DISPONIBLE;
@@ -684,7 +724,7 @@ export class AuditorService {
       auditorDoc.fechaFinRevision = new Date();
       auditorDoc.observaciones = 'Documento liberado - Disponible para otros auditores';
 
-      await this.auditorRepository.save(auditorDoc);
+      await queryRunner.manager.save(AuditorDocumento, auditorDoc);
 
       if (documento.rutaCarpetaRadicado) {
         await this.registrarAccesoAuditor(
@@ -694,6 +734,7 @@ export class AuditorService {
         );
       }
 
+      await queryRunner.commitTransaction();
       this.logger.log(`✅ Documento ${documento.numeroRadicado} liberado por ${auditorId}. Estado revertido a APROBADO_SUPERVISOR`);
 
       return {
@@ -702,8 +743,11 @@ export class AuditorService {
       };
 
     } catch (error) {
+      await queryRunner.rollbackTransaction();
       this.logger.error(`❌ Error liberando documento: ${error.message}`);
       throw error;
+    } finally {
+      await queryRunner.release();
     }
   }
 
@@ -714,47 +758,69 @@ export class AuditorService {
     try {
       this.logger.log(`📊 Obteniendo estadísticas para auditor: ${auditorId}`);
 
-      const totalDocumentosAprobadosSupervisor = await this.documentoRepository.count({
-        where: { estado: 'APROBADO_SUPERVISOR' }
-      });
+      const [
+        totalDocumentosDisponibles,
+        enRevision,
+        aprobados,
+        observados,
+        rechazados,
+        completados,
+        primerRadicados
+      ] = await Promise.all([
+        // Total documentos disponibles
+        this.documentoRepository.count({
+          where: { estado: 'APROBADO_SUPERVISOR' }
+        }),
 
-      const [enRevision, aprobados, observados, rechazados, completados] = await Promise.all([
-        this.auditorRepository
-          .createQueryBuilder('auditor')
-          .leftJoin('auditor.auditor', 'usuario')
-          .where('usuario.id = :auditorId', { auditorId })
-          .andWhere('auditor.estado = :estado', { estado: AuditorEstado.EN_REVISION })
-          .getCount(),
+        // Documentos en revisión
+        this.auditorRepository.count({
+          where: {
+            auditor: { id: auditorId },
+            estado: AuditorEstado.EN_REVISION
+          }
+        }),
 
-        this.auditorRepository
-          .createQueryBuilder('auditor')
-          .leftJoin('auditor.auditor', 'usuario')
-          .where('usuario.id = :auditorId', { auditorId })
-          .andWhere('auditor.estado = :estado', { estado: AuditorEstado.APROBADO })
-          .getCount(),
+        // Aprobados
+        this.auditorRepository.count({
+          where: {
+            auditor: { id: auditorId },
+            estado: AuditorEstado.APROBADO
+          }
+        }),
 
-        this.auditorRepository
-          .createQueryBuilder('auditor')
-          .leftJoin('auditor.auditor', 'usuario')
-          .where('usuario.id = :auditorId', { auditorId })
-          .andWhere('auditor.estado = :estado', { estado: AuditorEstado.OBSERVADO })
-          .getCount(),
+        // Observados
+        this.auditorRepository.count({
+          where: {
+            auditor: { id: auditorId },
+            estado: AuditorEstado.OBSERVADO
+          }
+        }),
 
-        this.auditorRepository
-          .createQueryBuilder('auditor')
-          .leftJoin('auditor.auditor', 'usuario')
-          .where('usuario.id = :auditorId', { auditorId })
-          .andWhere('auditor.estado = :estado', { estado: AuditorEstado.RECHAZADO })
-          .getCount(),
+        // Rechazados
+        this.auditorRepository.count({
+          where: {
+            auditor: { id: auditorId },
+            estado: AuditorEstado.RECHAZADO
+          }
+        }),
 
-        this.auditorRepository
-          .createQueryBuilder('auditor')
-          .leftJoin('auditor.auditor', 'usuario')
-          .where('usuario.id = :auditorId', { auditorId })
-          .andWhere('auditor.estado = :estado', { estado: AuditorEstado.COMPLETADO })
+        // Completados
+        this.auditorRepository.count({
+          where: {
+            auditor: { id: auditorId },
+            estado: AuditorEstado.COMPLETADO
+          }
+        }),
+
+        // Primer radicados del año
+        this.auditorRepository.createQueryBuilder('ad')
+          .leftJoin('ad.documento', 'documento')
+          .where('ad.auditor_id = :auditorId', { auditorId })
+          .andWhere('documento.primer_radicado_ano = true')
           .getCount()
       ]);
 
+      // Documentos procesados recientemente (últimos 7 días)
       const fechaLimite = new Date();
       fechaLimite.setDate(fechaLimite.getDate() - 7);
 
@@ -765,49 +831,48 @@ export class AuditorService {
         .andWhere('auditor.fechaCreacion >= :fechaLimite', { fechaLimite })
         .getCount();
 
-      const aprobadosCompletos = await this.auditorRepository
-        .createQueryBuilder('auditor')
-        .leftJoin('auditor.auditor', 'usuario')
-        .where('usuario.id = :auditorId', { auditorId })
-        .andWhere('auditor.estado IN (:...estados)', { estados: [AuditorEstado.APROBADO, AuditorEstado.COMPLETADO] })
-        .andWhere('auditor.fechaCreacion IS NOT NULL')
-        .andWhere('auditor.fechaAprobacion IS NOT NULL')
-        .select(['auditor.fechaCreacion', 'auditor.fechaAprobacion'])
+      // Tiempo promedio de revisión
+      const revisionesCompletas = await this.auditorRepository
+        .createQueryBuilder('ad')
+        .where('ad.auditor_id = :auditorId', { auditorId })
+        .andWhere('ad.estado IN (:...estados)', { 
+          estados: [AuditorEstado.APROBADO, AuditorEstado.COMPLETADO, AuditorEstado.RECHAZADO, AuditorEstado.OBSERVADO] 
+        })
+        .andWhere('ad.fechaInicioRevision IS NOT NULL')
+        .andWhere('ad.fechaFinRevision IS NOT NULL')
+        .select(['ad.fechaInicioRevision', 'ad.fechaFinRevision'])
         .getMany();
 
       let tiempoPromedioHoras = 0;
-      if (aprobadosCompletos.length > 0) {
-        const totalHoras = aprobadosCompletos.reduce((total, doc) => {
-          const inicio = new Date(doc.fechaCreacion);
-          const fin = new Date(doc.fechaAprobacion);
+      if (revisionesCompletas.length > 0) {
+        const totalHoras = revisionesCompletas.reduce((total, doc) => {
+          const inicio = new Date(doc.fechaInicioRevision);
+          const fin = new Date(doc.fechaFinRevision);
           const horas = (fin.getTime() - inicio.getTime()) / (1000 * 60 * 60);
           return total + horas;
         }, 0);
-        tiempoPromedioHoras = Math.round(totalHoras / aprobadosCompletos.length);
+        tiempoPromedioHoras = Math.round(totalHoras / revisionesCompletas.length);
       }
 
+      // Eficiencia
       const totalProcesados = aprobados + observados + rechazados + completados;
       const eficiencia = totalProcesados > 0 ?
         Math.round(((aprobados + completados) / totalProcesados) * 100) : 0;
 
       const estadisticas = {
-        totalDocumentosDisponibles: totalDocumentosAprobadosSupervisor,
-        enRevision: enRevision,
-        aprobados: aprobados,
-        observados: observados,
-        rechazados: rechazados,
-        completados: completados,
-        recientes: recientes,
-        tiempoPromedioHoras: tiempoPromedioHoras,
-        eficiencia: eficiencia,
-        totales: {
+        totalDocumentosDisponibles: totalDocumentosDisponibles,
+        misDocumentos: {
           enRevision: enRevision,
           aprobados: aprobados,
           observados: observados,
           rechazados: rechazados,
           completados: completados,
+          primerRadicados: primerRadicados,
           total: enRevision + aprobados + observados + rechazados + completados
         },
+        recientes: recientes,
+        tiempoPromedioHoras: tiempoPromedioHoras,
+        eficiencia: eficiencia,
         fechaConsulta: new Date().toISOString()
       };
 
@@ -818,6 +883,45 @@ export class AuditorService {
     } catch (error) {
       this.logger.error(`❌ Error calculando estadísticas: ${error.message}`);
       throw new InternalServerErrorException(`Error al obtener estadísticas: ${error.message}`);
+    }
+  }
+
+  /**
+   * ✅ OBTENER HISTORIAL DE AUDITORÍAS
+   */
+  async obtenerHistorialAuditor(auditorId: string): Promise<any[]> {
+    try {
+      const auditorDocs = await this.auditorRepository.find({
+        where: { auditor: { id: auditorId } },
+        relations: ['documento', 'documento.radicador'],
+        order: { fechaActualizacion: 'DESC' },
+        take: 50
+      });
+
+      return auditorDocs.map(ad => ({
+        id: ad.id,
+        documento: {
+          id: ad.documento.id,
+          numeroRadicado: ad.documento.numeroRadicado,
+          nombreContratista: ad.documento.nombreContratista,
+          documentoContratista: ad.documento.documentoContratista,
+          numeroContrato: ad.documento.numeroContrato,
+          fechaRadicacion: ad.documento.fechaRadicacion,
+          estado: ad.documento.estado,
+          primerRadicadoDelAno: ad.documento.primerRadicadoDelAno
+        },
+        auditor: ad.auditor?.fullName || ad.auditor?.username,
+        estado: ad.estado,
+        observaciones: ad.observaciones,
+        fechaCreacion: ad.fechaCreacion,
+        fechaActualizacion: ad.fechaActualizacion,
+        fechaAprobacion: ad.fechaAprobacion,
+        tieneDocumentos: ad.tieneTodosDocumentos()
+      }));
+
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo historial: ${error.message}`);
+      throw error;
     }
   }
 
@@ -841,11 +945,12 @@ export class AuditorService {
         'application/msword',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'image/jpeg',
-        'image/png'
+        'image/png',
+        'image/jpg'
       ];
 
       if (!allowedMimes.includes(archivo.mimetype)) {
-        throw new BadRequestException(`Tipo de archivo no permitido para ${tipo}`);
+        throw new BadRequestException(`Tipo de archivo no permitido para ${tipo}: ${archivo.mimetype}`);
       }
 
       const rutaAuditor = path.join(documento.rutaCarpetaRadicado, 'auditor', auditorId);
@@ -862,6 +967,7 @@ export class AuditorService {
 
       fs.writeFileSync(rutaCompleta, archivo.buffer);
 
+      // Guardar metadatos
       const metadatos = {
         nombreOriginal: archivo.originalname,
         nombreGuardado: nombreArchivo,
@@ -870,7 +976,9 @@ export class AuditorService {
         fechaSubida: new Date().toISOString(),
         tipoDocumento: tipo,
         descripcion: this.obtenerDescripcionTipo(tipo),
-        auditorId: auditorId
+        auditorId: auditorId,
+        documentoId: documento.id,
+        numeroRadicado: documento.numeroRadicado
       };
 
       fs.writeFileSync(
@@ -891,23 +999,16 @@ export class AuditorService {
    * ✅ HELPER: Obtener descripción del tipo de documento
    */
   private obtenerDescripcionTipo(tipo: string): string {
-    // ✅ CORRECCIÓN: Usar switch en lugar de objeto con index signature
-    switch (tipo) {
-      case 'rp':
-        return 'Resolución de Pago';
-      case 'cdp':
-        return 'Certificado de Disponibilidad Presupuestal';
-      case 'poliza':
-        return 'Póliza';
-      case 'certificadoBancario':
-        return 'Certificado Bancario';
-      case 'minuta':
-        return 'Minuta';
-      case 'actaInicio':
-        return 'Acta de Inicio';
-      default:
-        return tipo;
-    }
+    const descripciones: Record<string, string> = {
+      'rp': 'Resolución de Pago',
+      'cdp': 'Certificado de Disponibilidad Presupuestal',
+      'poliza': 'Póliza de Cumplimiento',
+      'certificadoBancario': 'Certificado Bancario',
+      'minuta': 'Minuta de Contrato',
+      'actaInicio': 'Acta de Inicio'
+    };
+    
+    return descripciones[tipo] || tipo;
   }
 
   /**
@@ -927,6 +1028,7 @@ export class AuditorService {
       radicador: documento.nombreRadicador,
       supervisor: documento.usuarioAsignadoNombre,
       observacion: documento.observacion,
+      primerRadicadoDelAno: documento.primerRadicadoDelAno,
       usuarioAsignadoNombre: documento.usuarioAsignadoNombre,
       asignacion: auditorDoc ? {
         id: auditorDoc.id,
@@ -937,7 +1039,8 @@ export class AuditorService {
           nombre: auditorDoc.auditor.fullName,
           username: auditorDoc.auditor.username
         },
-        tieneDocumentos: auditorDoc.tieneTodosDocumentos()
+        tieneDocumentos: auditorDoc.tieneTodosDocumentos(),
+        puedeSubirDocumentos: documento.primerRadicadoDelAno
       } : null
     };
   }
@@ -949,35 +1052,72 @@ export class AuditorService {
     // Archivos del radicador
     const archivosRadicados = [
       {
+        numero: 1,
         nombre: documento.cuentaCobro,
         descripcion: documento.descripcionCuentaCobro,
         tipo: 'cuenta_cobro',
-        existe: fs.existsSync(path.join(documento.rutaCarpetaRadicado, documento.cuentaCobro))
+        existe: documento.cuentaCobro ? fs.existsSync(path.join(documento.rutaCarpetaRadicado, documento.cuentaCobro)) : false,
+        ruta: documento.cuentaCobro ? path.join(documento.rutaCarpetaRadicado, documento.cuentaCobro) : null
       },
       {
+        numero: 2,
         nombre: documento.seguridadSocial,
         descripcion: documento.descripcionSeguridadSocial,
         tipo: 'seguridad_social',
-        existe: fs.existsSync(path.join(documento.rutaCarpetaRadicado, documento.seguridadSocial))
+        existe: documento.seguridadSocial ? fs.existsSync(path.join(documento.rutaCarpetaRadicado, documento.seguridadSocial)) : false,
+        ruta: documento.seguridadSocial ? path.join(documento.rutaCarpetaRadicado, documento.seguridadSocial) : null
       },
       {
+        numero: 3,
         nombre: documento.informeActividades,
         descripcion: documento.descripcionInformeActividades,
         tipo: 'informe_actividades',
-        existe: fs.existsSync(path.join(documento.rutaCarpetaRadicado, documento.informeActividades))
+        existe: documento.informeActividades ? fs.existsSync(path.join(documento.rutaCarpetaRadicado, documento.informeActividades)) : false,
+        ruta: documento.informeActividades ? path.join(documento.rutaCarpetaRadicado, documento.informeActividades) : null
       }
     ];
 
     // Archivos del auditor (si existen)
     const archivosAuditor = [
-      { tipo: 'rp', descripcion: 'Resolución de Pago', subido: !!auditorDoc?.rpPath },
-      { tipo: 'cdp', descripcion: 'Certificado de Disponibilidad Presupuestal', subido: !!auditorDoc?.cdpPath },
-      { tipo: 'poliza', descripcion: 'Póliza', subido: !!auditorDoc?.polizaPath },
-      { tipo: 'certificadoBancario', descripcion: 'Certificado Bancario', subido: !!auditorDoc?.certificadoBancarioPath },
-      { tipo: 'minuta', descripcion: 'Minuta', subido: !!auditorDoc?.minutaPath },
-      { tipo: 'actaInicio', descripcion: 'Acta de Inicio', subido: !!auditorDoc?.actaInicioPath }
+      { 
+        tipo: 'rp', 
+        descripcion: 'Resolución de Pago', 
+        subido: !!auditorDoc?.rpPath,
+        nombreArchivo: auditorDoc?.rpPath 
+      },
+      { 
+        tipo: 'cdp', 
+        descripcion: 'Certificado de Disponibilidad Presupuestal', 
+        subido: !!auditorDoc?.cdpPath,
+        nombreArchivo: auditorDoc?.cdpPath 
+      },
+      { 
+        tipo: 'poliza', 
+        descripcion: 'Póliza', 
+        subido: !!auditorDoc?.polizaPath,
+        nombreArchivo: auditorDoc?.polizaPath 
+      },
+      { 
+        tipo: 'certificadoBancario', 
+        descripcion: 'Certificado Bancario', 
+        subido: !!auditorDoc?.certificadoBancarioPath,
+        nombreArchivo: auditorDoc?.certificadoBancarioPath 
+      },
+      { 
+        tipo: 'minuta', 
+        descripcion: 'Minuta', 
+        subido: !!auditorDoc?.minutaPath,
+        nombreArchivo: auditorDoc?.minutaPath 
+      },
+      { 
+        tipo: 'actaInicio', 
+        descripcion: 'Acta de Inicio', 
+        subido: !!auditorDoc?.actaInicioPath,
+        nombreArchivo: auditorDoc?.actaInicioPath 
+      }
     ];
 
+    // Actualizar último acceso
     documento.ultimoAcceso = new Date();
     documento.ultimoUsuario = `Auditor: ${auditor.username}`;
     this.documentoRepository.save(documento);
@@ -997,6 +1137,7 @@ export class AuditorService {
         observacion: documento.observacion,
         estadoActual: auditorDoc?.estado || 'DISPONIBLE',
         estadoDocumento: documento.estado,
+        primerRadicadoDelAno: documento.primerRadicadoDelAno,
         usuarioAsignado: documento.usuarioAsignadoNombre,
         historialEstados: documento.historialEstados || [],
         rutaCarpeta: documento.rutaCarpetaRadicado,
@@ -1016,8 +1157,11 @@ export class AuditorService {
         observaciones: auditorDoc.observaciones,
         fechaCreacion: auditorDoc.fechaCreacion,
         fechaInicioRevision: auditorDoc.fechaInicioRevision,
+        fechaFinRevision: auditorDoc.fechaFinRevision,
+        fechaAprobacion: auditorDoc.fechaAprobacion,
         tieneTodosDocumentos: auditorDoc.tieneTodosDocumentos(),
-        documentosSubidos: archivosAuditor.filter(a => a.subido).map(a => a.tipo)
+        documentosSubidos: archivosAuditor.filter(a => a.subido).map(a => a.tipo),
+        puedeSubirDocumentos: documento.primerRadicadoDelAno
       } : null
     };
   }

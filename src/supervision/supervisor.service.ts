@@ -513,8 +513,8 @@ export class SupervisorService {
       const supervisorDoc = await this.supervisorRepository.findOne({
         where: {
           documento: { id: documentoId },
-          supervisor: { id: supervisorId },
-          estado: SupervisorEstado.EN_REVISION
+          supervisor: { id: supervisorId }
+          // ✅ QUITAR: estado: SupervisorEstado.EN_REVISION (permitir todos los estados)
         },
         relations: ['documento', 'documento.radicador', 'documento.usuarioAsignado'],
       });
@@ -528,11 +528,18 @@ export class SupervisorService {
         throw new NotFoundException('Documento no encontrado');
       }
 
-      if (documento.estado !== 'RADICADO' && documento.estado !== 'EN_REVISION_SUPERVISOR') {
-        throw new BadRequestException('Solo puedes acceder a documentos en estado RADICADO o EN_REVISION_SUPERVISOR');
+      // ✅ MODIFICAR: Permitir acceso en todos los estados para consulta
+      // Solo restringir si NO es el supervisor asignado y el documento NO está disponible
+      if (supervisorDoc) {
+        // Si tiene asignación, permitir acceso sin importar el estado
+        return this.construirRespuestaDetalle(documento, supervisorDoc, supervisor);
+      } else {
+        // Si no tiene asignación, solo permitir acceso si está en estados disponibles
+        if (documento.estado !== 'RADICADO' && documento.estado !== 'EN_REVISION_SUPERVISOR') {
+          throw new BadRequestException('Solo puedes acceder a documentos en estado RADICADO o EN_REVISION_SUPERVISOR');
+        }
+        return this.construirRespuestaDetalle(documento, null, supervisor);
       }
-
-      return this.construirRespuestaDetalle(documento, supervisorDoc, supervisor);
 
     } catch (error) {
       this.logger.error(`❌ Error obteniendo detalle: ${error.message}`);
@@ -611,33 +618,29 @@ export class SupervisorService {
   }
 
   /**
-   * DESCARGAR ARCHIVO DEL RADICADOR
+   * ✅ DESCARGAR ARCHIVO RADICADO – PERMISO RELAJADO
    */
   async descargarArchivoRadicado(
     documentoId: string,
     numeroArchivo: number,
-    supervisorId: string
+    userId: string,
   ): Promise<{ ruta: string; nombre: string }> {
-    this.logger.log(`📥 Supervisor ${supervisorId} descargando archivo ${numeroArchivo} del documento ${documentoId}`);
-
-    const supervisor = await this.userRepository.findOne({
-      where: { id: supervisorId }
-    });
-
-    if (!supervisor) {
-      throw new NotFoundException('Supervisor no encontrado');
-    }
+    this.logger.log(`📥 Usuario ${userId} solicitando archivo ${numeroArchivo} de ${documentoId}`);
 
     const documento = await this.documentoRepository.findOne({
-      where: { id: documentoId }
+      where: { id: documentoId },
+      relations: ['radicador', 'usuarioAsignado'],
     });
 
     if (!documento) {
       throw new NotFoundException('Documento no encontrado');
     }
 
-    if (documento.estado !== 'RADICADO' && documento.estado !== 'EN_REVISION_SUPERVISOR') {
-      throw new ForbiddenException('No tienes permisos para acceder a este documento');
+    // ✅ PERMISO RELAJADO: Cualquiera autenticado puede descargar/ver
+    // Solo se restringe si el documento está en estado muy avanzado o eliminado
+    if (documento.estado === 'FINALIZADO' || documento.estado === 'RECHAZADO_PERMANENTE') {
+      // Puedes mantener esta restricción si quieres, o quitarla
+      throw new ForbiddenException('Este documento ya no está disponible para descarga');
     }
 
     let nombreArchivo: string;
@@ -655,27 +658,78 @@ export class SupervisorService {
         throw new BadRequestException('Número de archivo inválido (1-3)');
     }
 
+    if (!nombreArchivo) {
+      throw new NotFoundException('Este archivo no existe en el documento');
+    }
+
     const rutaCompleta = path.join(documento.rutaCarpetaRadicado, nombreArchivo);
 
     if (!fs.existsSync(rutaCompleta)) {
-      throw new NotFoundException(`Archivo no encontrado en el servidor: ${nombreArchivo}`);
+      throw new NotFoundException(`Archivo físico no encontrado: ${nombreArchivo}`);
     }
 
+    // Registrar acceso (opcional)
     this.registrarAccesoSupervisor(
       documento.rutaCarpetaRadicado,
-      supervisorId,
-      `DESCARGÓ archivo: ${nombreArchivo}`
+      userId,
+      `ACCEDIÓ a archivo ${numeroArchivo}: ${nombreArchivo}`,
     );
 
-    return {
-      ruta: rutaCompleta,
-      nombre: nombreArchivo
-    };
+    return { ruta: rutaCompleta, nombre: nombreArchivo };
   }
 
-  /**
-   * REVISAR DOCUMENTO CON PAZ Y SALVO
-   */
+
+  async corregirDatosInconsistentes(): Promise<{ corregidos: number; total: number }> {
+    try {
+      this.logger.log('🔄 Iniciando corrección de datos inconsistentes...');
+
+      // 1. Encontrar supervisiones con paz y salvo pero radicado sin marcar como último
+      const supervisionesConPazSalvo = await this.supervisorRepository
+        .createQueryBuilder('supervisor')
+        .leftJoinAndSelect('supervisor.documento', 'documento')
+        .where('supervisor.paz_salvo IS NOT NULL')
+        .andWhere('supervisor.paz_salvo != :empty', { empty: '' })
+        .andWhere('(documento.esUltimoRadicado = :false OR documento.esUltimoRadicado IS NULL)', { false: false })
+        .getMany();
+
+      this.logger.log(`📊 Encontradas ${supervisionesConPazSalvo.length} supervisiones con paz y salvo pero sin marcar como último radicado`);
+
+      let documentosCorregidos = 0;
+
+      // 2. Actualizar cada documento
+      for (const supervisorDoc of supervisionesConPazSalvo) {
+        try {
+          const documento = supervisorDoc.documento;
+
+          if (documento) {
+            documento.esUltimoRadicado = true;
+            documento.fechaActualizacion = new Date();
+            documento.ultimoUsuario = `Sistema: corrección automática`;
+
+            await this.documentoRepository.save(documento);
+            documentosCorregidos++;
+
+            this.logger.log(`✅ Documento ${documento.numeroRadicado} marcado como último radicado (tiene paz y salvo)`);
+          }
+        } catch (error) {
+          this.logger.error(`❌ Error corrigiendo documento ${supervisorDoc.documento?.numeroRadicado}: ${error.message}`);
+        }
+      }
+
+      this.logger.log(`✅ Corrección completada: ${documentosCorregidos} documentos corregidos`);
+
+      return {
+        corregidos: documentosCorregidos,
+        total: supervisionesConPazSalvo.length
+      };
+
+    } catch (error) {
+      this.logger.error(`❌ Error en corrección de datos: ${error.message}`);
+      throw new InternalServerErrorException('Error al corregir datos inconsistentes');
+    }
+  }
+
+  // ✅ MODIFICAR EL MÉTODO revisarDocumento para asegurar consistencia
   async revisarDocumento(
     documentoId: string,
     supervisorId: string,
@@ -684,6 +738,26 @@ export class SupervisorService {
     pazSalvoArchivo?: Express.Multer.File
   ): Promise<{ supervisor: SupervisorDocumento; documento: Documento }> {
     this.logger.log(`🔍 Supervisor ${supervisorId} revisando documento ${documentoId} - Estado: ${revisarDto.estado}`);
+
+    // ✅ LOG ADICIONAL: Verificar datos recibidos
+    this.logger.log(`📝 DTO recibido:`, JSON.stringify(revisarDto));
+    this.logger.log(`📝 ¿Tiene archivo supervisor?: ${!!archivoSupervisor}`);
+    this.logger.log(`📝 ¿Tiene pazSalvo archivo?: ${!!pazSalvoArchivo}`);
+    this.logger.log(`📝 Requiere paz y salvo?: ${revisarDto.requierePazSalvo}`);
+    this.logger.log(`📝 Es último radicado?: ${revisarDto.esUltimoRadicado}`);
+
+    // ✅ VALIDACIÓN MEJORADA: Si se sube paz y salvo, forzar que sea último radicado
+    if (pazSalvoArchivo && !revisarDto.esUltimoRadicado) {
+      this.logger.warn('⚠️ Se subió archivo de paz y salvo pero no está marcado como último radicado. Forzando...');
+      revisarDto.esUltimoRadicado = true;
+    }
+
+    // ✅ VALIDACIÓN MEJORADA: Si es último radicado y aprobado, requiere paz y salvo
+    if (revisarDto.estado === SupervisorEstado.APROBADO &&
+      revisarDto.esUltimoRadicado &&
+      !pazSalvoArchivo) {
+      throw new BadRequestException('Para marcar como último radicado APROBADO debe adjuntar el archivo de paz y salvo');
+    }
 
     const supervisorDoc = await this.supervisorRepository.findOne({
       where: {
@@ -700,6 +774,10 @@ export class SupervisorService {
 
     const documento = supervisorDoc.documento;
 
+    // ✅ ACTUALIZAR EL DOCUMENTO PRINCIPAL CON ES_ULTIMO_RADICADO
+    documento.esUltimoRadicado = revisarDto.esUltimoRadicado || false;
+
+    // Resto del código permanece igual...
     if ((revisarDto.estado === SupervisorEstado.OBSERVADO ||
       revisarDto.estado === SupervisorEstado.RECHAZADO) &&
       (!revisarDto.observacion || revisarDto.observacion.trim() === '')) {
@@ -713,7 +791,7 @@ export class SupervisorService {
     }
 
     // Guardar archivo de paz y salvo si existe
-    if (pazSalvoArchivo && revisarDto.estado === SupervisorEstado.APROBADO && revisarDto.requierePazSalvo) {
+    if (pazSalvoArchivo && revisarDto.estado === SupervisorEstado.APROBADO && revisarDto.esUltimoRadicado) {
       const nombrePazSalvo = await this.guardarArchivoSupervisor(documento, pazSalvoArchivo, 'paz_salvo');
       supervisorDoc.pazSalvo = nombrePazSalvo;
     }
@@ -761,7 +839,7 @@ export class SupervisorService {
     await this.documentoRepository.save(documento);
     const savedSupervisorDoc = await this.supervisorRepository.save(supervisorDoc);
 
-    this.logger.log(`✅ Documento ${documento.numeroRadicado} revisado por supervisor. Estado: ${revisarDto.estado}`);
+    this.logger.log(`✅ Documento ${documento.numeroRadicado} revisado por supervisor. Estado: ${revisarDto.estado}, Último radicado: ${revisarDto.esUltimoRadicado}`);
 
     return {
       supervisor: savedSupervisorDoc,
@@ -1182,4 +1260,6 @@ export class SupervisorService {
       where: { estado: 'RADICADO' }
     });
   }
+
+
 }
