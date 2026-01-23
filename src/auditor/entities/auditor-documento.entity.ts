@@ -80,13 +80,42 @@ export class AuditorDocumento {
 
   // Método para verificar si tiene todos los documentos subidos
   tieneTodosDocumentos(): boolean {
+    // Versión flexible: Considera que tiene documentos si al menos hay alguno
     return !!(
-      this.rpPath &&
-      this.cdpPath &&
-      this.polizaPath &&
-      this.certificadoBancarioPath &&
-      this.minutaPath &&
+      this.rpPath ||
+      this.cdpPath ||
+      this.polizaPath ||
+      this.certificadoBancarioPath ||
+      this.minutaPath ||
       this.actaInicioPath
     );
+  }
+
+  // O mejor, agregar métodos más específicos:
+  getDocumentosFaltantes(): string[] {
+    const documentosRequeridos = ['rp', 'cdp', 'poliza', 'certificadoBancario', 'minuta', 'actaInicio'];
+    const faltantes: string[] = [];
+
+    if (!this.rpPath) faltantes.push('rp');
+    if (!this.cdpPath) faltantes.push('cdp');
+    if (!this.polizaPath) faltantes.push('poliza');
+    if (!this.certificadoBancarioPath) faltantes.push('certificadoBancario');
+    if (!this.minutaPath) faltantes.push('minuta');
+    if (!this.actaInicioPath) faltantes.push('actaInicio');
+
+    return faltantes;
+  }
+
+  getDocumentosSubidos(): string[] {
+    const subidos: string[] = [];
+
+    if (this.rpPath) subidos.push('rp');
+    if (this.cdpPath) subidos.push('cdp');
+    if (this.polizaPath) subidos.push('poliza');
+    if (this.certificadoBancarioPath) subidos.push('certificadoBancario');
+    if (this.minutaPath) subidos.push('minuta');
+    if (this.actaInicioPath) subidos.push('actaInicio');
+
+    return subidos;
   }
 }

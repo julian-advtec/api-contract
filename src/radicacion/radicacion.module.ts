@@ -8,7 +8,7 @@ import { Contratista } from '../contratista/entities/contratista.entity';
 import { User } from '../users/entities/user.entity';
 import { RegistroAcceso } from './entities/registro-acceso.entity';
 import { EstadosModule } from '../estados/estados.module';
-import { SupervisorModule } from '../supervision/supervisor.module';
+import { SupervisionModule } from '../supervision/supervisor.module';
 import { ContratistaModule } from '../contratista/contratista.module'; // 👈 AÑADIR ESTO
 
 @Module({
@@ -16,7 +16,7 @@ import { ContratistaModule } from '../contratista/contratista.module'; // 👈 A
     TypeOrmModule.forFeature([Documento, Contratista, User, RegistroAcceso]),
     ContratistaModule, // 👈 IMPORTAR EL MÓDULO COMPLETO
     EstadosModule,
-    forwardRef(() => SupervisorModule),
+    forwardRef(() => SupervisionModule),
   ],
   controllers: [RadicacionController],
   providers: [RadicacionService],

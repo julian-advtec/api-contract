@@ -23,7 +23,7 @@ import * as jwt from 'jsonwebtoken';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { EstadosService } from '../estados/estados.service';
-import { SupervisorService } from '../supervision/supervisor.service';
+import { SupervisorService } from '../supervision/services/supervisor.service';
 import { ContratistaService } from '../contratista/contratista.service';
 
 const execAsync = promisify(exec);

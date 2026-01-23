@@ -1,4 +1,3 @@
-// src/auditor/controllers/auditor.controller.ts
 import {
   Controller,
   Get,
@@ -15,7 +14,7 @@ import {
   Delete
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
-import type { Response } from 'express'; // ✅ CAMBIO: Importar como type
+import type { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -34,55 +33,34 @@ import { multerAuditorConfig } from './../config/multer-auditor.config';
 @UseGuards(JwtAuthGuard, RolesGuard, AuditorGuard)
 @Roles(UserRole.AUDITOR_CUENTAS, UserRole.ADMIN)
 export class AuditorController {
-  constructor(private readonly auditorService: AuditorService) {}
+  constructor(private readonly auditorService: AuditorService) { }
 
-  /**
-   * ✅ ENDPOINT 1: Obtener documentos disponibles para auditoría
-   * GET /auditor/documentos/disponibles
-   */
   @Get('documentos/disponibles')
   async getDocumentosDisponibles(@GetUser() user: any) {
-    return this.auditorService.obtenerDocumentosDisponibles(user.id); // ✅ user.id en lugar de user.userId
+    return this.auditorService.obtenerDocumentosDisponibles(user.id);
   }
 
-  /**
-   * ✅ ENDPOINT 2: Tomar documento para revisión
-   * POST /auditor/documentos/:documentoId/tomar
-   */
   @Post('documentos/:documentoId/tomar')
   async tomarDocumentoParaRevision(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
     @GetUser() user: any
   ) {
-    return this.auditorService.tomarDocumentoParaRevision(documentoId, user.id); // ✅ user.id
+    return this.auditorService.tomarDocumentoParaRevision(documentoId, user.id);
   }
 
-  /**
-   * ✅ ENDPOINT 3: Obtener documentos que estoy revisando
-   * GET /auditor/mis-documentos
-   */
   @Get('mis-documentos')
   async getMisDocumentos(@GetUser() user: any) {
-    return this.auditorService.obtenerDocumentosEnRevision(user.id); // ✅ user.id
+    return this.auditorService.obtenerDocumentosEnRevision(user.id);
   }
 
-  /**
-   * ✅ ENDPOINT 4: Obtener detalle de un documento
-   * GET /auditor/documentos/:documentoId
-   */
   @Get('documentos/:documentoId')
   async getDetalleDocumento(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
     @GetUser() user: any
   ) {
-    return this.auditorService.obtenerDetalleDocumento(documentoId, user.id); // ✅ user.id
+    return this.auditorService.obtenerDetalleDocumento(documentoId, user.id);
   }
 
-  /**
-   * ✅ ENDPOINT 5: Subir documentos del auditor (MULTIPART)
-   * POST /auditor/documentos/:documentoId/subir-documentos
-   * IMPORTANTE: Sube los 6 archivos requeridos
-   */
   @Post('documentos/:documentoId/subir-documentos')
   @UseInterceptors(
     FileFieldsInterceptor(
@@ -97,24 +75,22 @@ export class AuditorController {
       multerAuditorConfig,
     ),
   )
+
   async subirDocumentosAuditor(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
     @GetUser() user: any,
     @Body() subirDto: SubirDocumentosAuditorDto,
     @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
   ) {
+
     return this.auditorService.subirDocumentosAuditor(
       documentoId,
-      user.id, // ✅ user.id
+      user.id,
       subirDto,
       files,
     );
   }
 
-  /**
-   * ✅ ENDPOINT 6: Revisar y aprobar/rechazar documento
-   * PUT /auditor/documentos/:documentoId/revisar
-   */
   @Put('documentos/:documentoId/revisar')
   async revisarDocumento(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
@@ -123,15 +99,11 @@ export class AuditorController {
   ) {
     return this.auditorService.revisarDocumento(
       documentoId,
-      user.id, // ✅ user.id
+      user.id,
       revisarDto,
     );
   }
 
-  /**
-   * ✅ ENDPOINT 7: Descargar archivo del radicador
-   * GET /auditor/documentos/:documentoId/descargar-radicado/:numeroArchivo
-   */
   @Get('documentos/:documentoId/descargar-radicado/:numeroArchivo')
   async descargarArchivoRadicado(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
@@ -142,16 +114,12 @@ export class AuditorController {
     const { ruta, nombre } = await this.auditorService.descargarArchivoRadicado(
       documentoId,
       numeroArchivo,
-      user.id, // ✅ user.id
+      user.id,
     );
 
     res.download(ruta, nombre);
   }
 
-  /**
-   * ✅ ENDPOINT 8: Descargar archivo subido por el auditor
-   * GET /auditor/documentos/:documentoId/descargar-auditor/:tipoArchivo
-   */
   @Get('documentos/:documentoId/descargar-auditor/:tipoArchivo')
   async descargarArchivoAuditor(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
@@ -162,37 +130,25 @@ export class AuditorController {
     const { ruta, nombre } = await this.auditorService.descargarArchivoAuditor(
       documentoId,
       tipoArchivo,
-      user.id, // ✅ user.id
+      user.id,
     );
 
     res.download(ruta, nombre);
   }
 
-  /**
-   * ✅ ENDPOINT 9: Liberar documento
-   * DELETE /auditor/documentos/:documentoId/liberar
-   */
   @Delete('documentos/:documentoId/liberar')
   async liberarDocumento(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
     @GetUser() user: any,
   ) {
-    return this.auditorService.liberarDocumento(documentoId, user.id); // ✅ user.id
+    return this.auditorService.liberarDocumento(documentoId, user.id);
   }
 
-  /**
-   * ✅ ENDPOINT 10: Obtener estadísticas
-   * GET /auditor/estadisticas
-   */
   @Get('estadisticas')
   async getEstadisticas(@GetUser() user: any) {
-    return this.auditorService.obtenerEstadisticasAuditor(user.id); // ✅ user.id
+    return this.auditorService.obtenerEstadisticasAuditor(user.id);
   }
 
-  /**
-   * ✅ ENDPOINT 11: Buscar documentos por criterios
-   * GET /auditor/buscar
-   */
   @Get('buscar')
   async buscarDocumentos(
     @GetUser() user: any,
@@ -203,17 +159,60 @@ export class AuditorController {
     @Query('fechaDesde') fechaDesde?: string,
     @Query('fechaHasta') fechaHasta?: string,
   ) {
-    return this.auditorService.obtenerDocumentosDisponibles(user.id); // ✅ user.id
+    return this.auditorService.obtenerDocumentosDisponibles(user.id);
   }
 
-  /**
-   * ✅ ENDPOINT 12: Obtener historial de auditorías realizadas
-   * GET /auditor/historial
-   */
   @Get('historial')
   async getHistorial(@GetUser() user: any) {
-    // Este método deberías implementarlo en el servicio
-    // Por ahora retornamos los documentos que ha revisado
-    return this.auditorService.obtenerDocumentosEnRevision(user.id); // ✅ user.id
+    return this.auditorService.obtenerHistorialAuditor(user.id);
   }
+
+  @Get('documentos/:documentoId/vista')
+  async getDocumentoParaVista(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @GetUser() user: any
+  ) {
+    console.log('[CONTROLLER] Solicitud para documento:', documentoId);
+    console.log('[CONTROLLER] Usuario:', user.id, user.username);
+
+    const resultado = await this.auditorService.obtenerDocumentoParaVista(documentoId, user?.id);
+
+    console.log('[CONTROLLER] Resultado a enviar:', {
+      success: resultado.success,
+      estado: resultado.data?.documento?.estado,
+      numeroRadicado: resultado.data?.documento?.numeroRadicado,
+      tieneDatos: !!resultado.data
+    });
+
+    return {
+      ...resultado,
+      estado: resultado.data?.documento?.estado || resultado.estado,
+      estadoDocumento: resultado.data?.documento?.estado || resultado.estado
+    };
+  }
+
+  @Get('mis-auditorias')
+  async getMisAuditorias(@GetUser() user: any) {
+    console.log('[MIS-AUDITORIAS] Usuario logueado ID:', user.id);
+    console.log('[MIS-AUDITORIAS] Nombre:', user.fullName || user.username);
+    return this.auditorService.obtenerMisAuditorias(user.id);
+  }
+
+  @Get('documentos/:documentoId/estado-archivos')
+  async getEstadoArchivos(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @GetUser() user: any
+  ) {
+    return this.auditorService.obtenerEstadoArchivos(documentoId, user.id);
+  }
+
+  @Get('documentos/:documentoId/debug')
+  async getDocumentoDebug(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @GetUser() user: any
+  ) {
+    console.log('[CONTROLLER-DEBUG] Solicitud debug para documento:', documentoId);
+    return this.auditorService.obtenerDocumentoDebug(documentoId, user.id);
+  }
+
 }

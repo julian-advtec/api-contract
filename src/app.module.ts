@@ -7,7 +7,7 @@ import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { RadicacionModule } from './radicacion/radicacion.module';
-import { SupervisorModule } from './supervision/supervisor.module';
+import { SupervisionModule } from './supervision/supervisor.module';
 import { EstadosModule } from './estados/estados.module';
 import { AppDataSource } from './config/ormconfig'; // ✅ Cambiado a AppDataSource
 import { ContratistaModule } from './contratista/contratista.module';
@@ -22,7 +22,7 @@ import { AuditorModule } from './auditor/auditor.module';
     UsersModule,
     AuthModule,
     RadicacionModule,
-    SupervisorModule,
+    SupervisionModule,
     EstadosModule,
     ContratistaModule,
     AuditorModule,

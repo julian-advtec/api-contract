@@ -2,16 +2,16 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { RadicacionModule } from '../../radicacion/radicacion.module';
-import { SupervisorModule } from '../../supervision/supervisor.module';
+import { SupervisionModule } from '../../supervision/supervisor.module';
 
 @Module({
   imports: [
     forwardRef(() => RadicacionModule),
-    forwardRef(() => SupervisorModule),
+    forwardRef(() => SupervisionModule),
   ],
   exports: [
     forwardRef(() => RadicacionModule),
-    forwardRef(() => SupervisorModule),
+    forwardRef(() => SupervisionModule),
   ],
 })
 export class SharedModule {}
