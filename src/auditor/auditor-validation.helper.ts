@@ -1,41 +1,8 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsOptional, IsEnum, IsNotEmpty } from 'class-validator';
-import { AuditorEstado } from '../entities/auditor-documento.entity';
+import { RevisarAuditorDocumentoDto } from './dto/revisar-auditor-documento.dto';
+import { AuditorEstado } from './entities/auditor-documento.entity';
 
-// ✅ DTO básico sin métodos para evitar problemas de TypeScript
-export class RevisarAuditorDocumentoDto {
-  @ApiProperty({ 
-    enum: AuditorEstado,
-    description: 'Estado resultante de la revisión',
-    example: AuditorEstado.APROBADO
-  })
-  @IsNotEmpty({ message: 'El estado es requerido' })
-  @IsEnum(AuditorEstado, { 
-    message: `Estado inválido. Estados permitidos: ${Object.values(AuditorEstado).join(', ')}` 
-  })
-  estado: AuditorEstado;
-
-  @ApiProperty({ 
-    required: false,
-    description: 'Observaciones del auditor',
-    example: 'Documento aprobado después de revisar todos los requisitos'
-  })
-  @IsOptional()
-  @IsString({ message: 'Las observaciones deben ser texto' })
-  observaciones?: string;
-
-  @ApiProperty({ 
-    required: false,
-    description: 'Correcciones necesarias',
-    example: 'Falta firmar la página 3 del contrato'
-  })
-  @IsOptional()
-  @IsString({ message: 'Las correcciones deben ser texto' })
-  correcciones?: string;
-}
-
-// ✅ Helper de validación separado
 export class AuditorValidationHelper {
+  
   static validateRevisarDto(dto: RevisarAuditorDocumentoDto): string[] {
     const errors: string[] = [];
 

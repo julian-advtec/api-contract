@@ -18,11 +18,13 @@ import { SubirDocumentosAuditorDto } from './dto/subir-documentos-auditor.dto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { AuditorValidationHelper } from './auditor-validation.helper';
 
 @Injectable()
 export class AuditorService {
   private readonly logger = new Logger(AuditorService.name);
   private basePath = '\\\\R2-D2\\api-contract';
+
 
   constructor(
     @InjectRepository(AuditorDocumento)
@@ -31,6 +33,9 @@ export class AuditorService {
     private documentoRepository: Repository<Documento>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    @InjectRepository(AuditorDocumento)
+    private auditorDocumentoRepository: Repository<AuditorDocumento>,
+
   ) {
     this.logger.log('📋 AuditorService inicializado');
   }
@@ -277,7 +282,16 @@ export class AuditorService {
  */
   async obtenerDocumentoParaVista(documentoId: string, auditorId?: string): Promise<any> {
     this.logger.log(`🔍 Solicitando documento ${documentoId} para vista de auditoría`);
-    console.log('[BACKEND DEBUG] Auditor ID:', auditorId);
+
+    // 🔴 IMPORTANTE: Loggear con más detalle
+    console.log('[BACKEND DEBUG] Auditor ID recibido:', auditorId);
+    console.log('[BACKEND DEBUG] ¿Es undefined?', auditorId === 'undefined' || !auditorId);
+
+    // Sanitizar el auditorId
+    let auditorIdSanitizado = auditorId;
+    if (auditorId === 'undefined' || !auditorId) {
+      console.log('[BACKEND DEBUG] Auditor ID inválido, intentando obtener del contexto...');
+    }
 
     try {
       // 1. Obtener documento
@@ -295,7 +309,8 @@ export class AuditorService {
         numeroRadicado: documento.numeroRadicado,
         estado: documento.estado,
         primerRadicadoDelAno: documento.primerRadicadoDelAno,
-        usuarioAsignadoNombre: documento.usuarioAsignadoNombre
+        usuarioAsignadoNombre: documento.usuarioAsignadoNombre,
+        rutaCarpetaRadicado: documento.rutaCarpetaRadicado
       });
 
       // 2. Estados permitidos para auditoría
@@ -314,156 +329,120 @@ export class AuditorService {
         );
       }
 
-      // 3. Obtener auditorDoc si hay auditorId
+      // 3. Obtener auditorDoc - MODIFICADO: Permitir buscar sin auditorId
       let auditorDoc = null;
       const archivosAuditor: any[] = [];
 
-      if (auditorId && auditorId !== 'undefined') {
-        auditorDoc = await this.auditorRepository.findOne({
-          where: {
-            documento: { id: documentoId },
-            auditor: { id: auditorId }
+      // 🔴 CRÍTICO: Buscar archivos AUNQUE el auditorId sea undefined
+      console.log(`[BACKEND DEBUG] ¿Es primer radicado? ${documento.primerRadicadoDelAno}`);
+
+      if (!documento.primerRadicadoDelAno) {
+        console.log('[BACKEND DEBUG] 📁 BÚSQUEDA INTENSIVA DE ARCHIVOS (NO PRIMER RADICADO)');
+        console.log('[BACKEND DEBUG] Ruta base del documento:', documento.rutaCarpetaRadicado);
+
+        // 🔍 BÚSQUEDA MEJORADA: Buscar en toda la estructura de carpetas
+        const archivosEncontrados = this.busquedaIntensivaArchivos(documento);
+
+        console.log('[BACKEND DEBUG] Archivos encontrados en servidor:', archivosEncontrados);
+
+        // Usar la búsqueda mejorada
+        archivosAuditor.push(
+          {
+            tipo: 'rp',
+            descripcion: 'Resolución de Pago',
+            subido: archivosEncontrados.rp ? true : false,
+            nombreArchivo: archivosEncontrados.rp || '',
+            rutaServidor: archivosEncontrados.rp ? this.construirRutaArchivo(documento, archivosEncontrados.rp) : null
           },
-          relations: ['auditor'],
-        });
-
-        console.log('[BACKEND DEBUG] AuditorDoc encontrado:', auditorDoc ? 'Sí' : 'No');
-
-        // Obtener archivos de auditor SIEMPRE (no solo si es primer radicado)
-        // Para NO primer radicado, buscar archivos existentes en el servidor
-        if (!documento.primerRadicadoDelAno) {
-          // Buscar archivos existentes en la carpeta del documento
-          const rutaBase = documento.rutaCarpetaRadicado;
-          if (rutaBase && fs.existsSync(rutaBase)) {
-            // Buscar en la carpeta principal
-            const archivosExistentes = this.buscarArchivosEnCarpeta(rutaBase, documento.numeroRadicado);
-
-            archivosAuditor.push(
-              {
-                tipo: 'rp',
-                descripcion: 'Resolución de Pago',
-                subido: archivosExistentes.rp ? true : (auditorDoc?.rpPath ? true : false),
-                nombreArchivo: archivosExistentes.rp || auditorDoc?.rpPath || '',
-                rutaServidor: archivosExistentes.rp ? path.join(rutaBase, archivosExistentes.rp) : null
-              },
-              {
-                tipo: 'cdp',
-                descripcion: 'Certificado de Disponibilidad Presupuestal',
-                subido: archivosExistentes.cdp ? true : (auditorDoc?.cdpPath ? true : false),
-                nombreArchivo: archivosExistentes.cdp || auditorDoc?.cdpPath || '',
-                rutaServidor: archivosExistentes.cdp ? path.join(rutaBase, archivosExistentes.cdp) : null
-              },
-              {
-                tipo: 'poliza',
-                descripcion: 'Póliza',
-                subido: archivosExistentes.poliza ? true : (auditorDoc?.polizaPath ? true : false),
-                nombreArchivo: archivosExistentes.poliza || auditorDoc?.polizaPath || '',
-                rutaServidor: archivosExistentes.poliza ? path.join(rutaBase, archivosExistentes.poliza) : null
-              },
-              {
-                tipo: 'certificadoBancario',
-                descripcion: 'Certificado Bancario',
-                subido: archivosExistentes.certificadoBancario ? true : (auditorDoc?.certificadoBancarioPath ? true : false),
-                nombreArchivo: archivosExistentes.certificadoBancario || auditorDoc?.certificadoBancarioPath || '',
-                rutaServidor: archivosExistentes.certificadoBancario ? path.join(rutaBase, archivosExistentes.certificadoBancario) : null
-              },
-              {
-                tipo: 'minuta',
-                descripcion: 'Minuta',
-                subido: archivosExistentes.minuta ? true : (auditorDoc?.minutaPath ? true : false),
-                nombreArchivo: archivosExistentes.minuta || auditorDoc?.minutaPath || '',
-                rutaServidor: archivosExistentes.minuta ? path.join(rutaBase, archivosExistentes.minuta) : null
-              },
-              {
-                tipo: 'actaInicio',
-                descripcion: 'Acta de Inicio',
-                subido: archivosExistentes.actaInicio ? true : (auditorDoc?.actaInicioPath ? true : false),
-                nombreArchivo: archivosExistentes.actaInicio || auditorDoc?.actaInicioPath || '',
-                rutaServidor: archivosExistentes.actaInicio ? path.join(rutaBase, archivosExistentes.actaInicio) : null
-              }
-            );
-          } else {
-            // Si no hay carpeta, usar datos de auditorDoc
-            archivosAuditor.push(
-              {
-                tipo: 'rp',
-                descripcion: 'Resolución de Pago',
-                subido: !!auditorDoc?.rpPath,
-                nombreArchivo: auditorDoc?.rpPath || ''
-              },
-              {
-                tipo: 'cdp',
-                descripcion: 'Certificado de Disponibilidad Presupuestal',
-                subido: !!auditorDoc?.cdpPath,
-                nombreArchivo: auditorDoc?.cdpPath || ''
-              },
-              {
-                tipo: 'poliza',
-                descripcion: 'Póliza',
-                subido: !!auditorDoc?.polizaPath,
-                nombreArchivo: auditorDoc?.polizaPath || ''
-              },
-              {
-                tipo: 'certificadoBancario',
-                descripcion: 'Certificado Bancario',
-                subido: !!auditorDoc?.certificadoBancarioPath,
-                nombreArchivo: auditorDoc?.certificadoBancarioPath || ''
-              },
-              {
-                tipo: 'minuta',
-                descripcion: 'Minuta',
-                subido: !!auditorDoc?.minutaPath,
-                nombreArchivo: auditorDoc?.minutaPath || ''
-              },
-              {
-                tipo: 'actaInicio',
-                descripcion: 'Acta de Inicio',
-                subido: !!auditorDoc?.actaInicioPath,
-                nombreArchivo: auditorDoc?.actaInicioPath || ''
-              }
-            );
+          {
+            tipo: 'cdp',
+            descripcion: 'Certificado de Disponibilidad Presupuestal',
+            subido: archivosEncontrados.cdp ? true : false,
+            nombreArchivo: archivosEncontrados.cdp || '',
+            rutaServidor: archivosEncontrados.cdp ? this.construirRutaArchivo(documento, archivosEncontrados.cdp) : null
+          },
+          {
+            tipo: 'poliza',
+            descripcion: 'Póliza',
+            subido: archivosEncontrados.poliza ? true : false,
+            nombreArchivo: archivosEncontrados.poliza || '',
+            rutaServidor: archivosEncontrados.poliza ? this.construirRutaArchivo(documento, archivosEncontrados.poliza) : null
+          },
+          {
+            tipo: 'certificadoBancario',
+            descripcion: 'Certificado Bancario',
+            subido: archivosEncontrados.certificadoBancario ? true : false,
+            nombreArchivo: archivosEncontrados.certificadoBancario || '',
+            rutaServidor: archivosEncontrados.certificadoBancario ? this.construirRutaArchivo(documento, archivosEncontrados.certificadoBancario) : null
+          },
+          {
+            tipo: 'minuta',
+            descripcion: 'Minuta',
+            subido: archivosEncontrados.minuta ? true : false,
+            nombreArchivo: archivosEncontrados.minuta || '',
+            rutaServidor: archivosEncontrados.minuta ? this.construirRutaArchivo(documento, archivosEncontrados.minuta) : null
+          },
+          {
+            tipo: 'actaInicio',
+            descripcion: 'Acta de Inicio',
+            subido: archivosEncontrados.actaInicio ? true : false,
+            nombreArchivo: archivosEncontrados.actaInicio || '',
+            rutaServidor: archivosEncontrados.actaInicio ? this.construirRutaArchivo(documento, archivosEncontrados.actaInicio) : null
           }
-        } else {
-          // Para primer radicado, usar datos de auditorDoc
-          archivosAuditor.push(
-            {
-              tipo: 'rp',
-              descripcion: 'Resolución de Pago',
-              subido: !!auditorDoc?.rpPath,
-              nombreArchivo: auditorDoc?.rpPath || ''
+        );
+      } else {
+        // Para primer radicado, intentar obtener auditorDoc
+        if (auditorIdSanitizado && auditorIdSanitizado !== 'undefined') {
+          auditorDoc = await this.auditorRepository.findOne({
+            where: {
+              documento: { id: documentoId },
+              auditor: { id: auditorIdSanitizado }
             },
-            {
-              tipo: 'cdp',
-              descripcion: 'Certificado de Disponibilidad Presupuestal',
-              subido: !!auditorDoc?.cdpPath,
-              nombreArchivo: auditorDoc?.cdpPath || ''
-            },
-            {
-              tipo: 'poliza',
-              descripcion: 'Póliza',
-              subido: !!auditorDoc?.polizaPath,
-              nombreArchivo: auditorDoc?.polizaPath || ''
-            },
-            {
-              tipo: 'certificadoBancario',
-              descripcion: 'Certificado Bancario',
-              subido: !!auditorDoc?.certificadoBancarioPath,
-              nombreArchivo: auditorDoc?.certificadoBancarioPath || ''
-            },
-            {
-              tipo: 'minuta',
-              descripcion: 'Minuta',
-              subido: !!auditorDoc?.minutaPath,
-              nombreArchivo: auditorDoc?.minutaPath || ''
-            },
-            {
-              tipo: 'actaInicio',
-              descripcion: 'Acta de Inicio',
-              subido: !!auditorDoc?.actaInicioPath,
-              nombreArchivo: auditorDoc?.actaInicioPath || ''
-            }
-          );
+            relations: ['auditor'],
+          });
+
+          console.log('[BACKEND DEBUG] AuditorDoc encontrado:', auditorDoc ? 'Sí' : 'No');
         }
+
+        // Usar datos de auditorDoc si existe, sino vacíos
+        archivosAuditor.push(
+          {
+            tipo: 'rp',
+            descripcion: 'Resolución de Pago',
+            subido: !!auditorDoc?.rpPath,
+            nombreArchivo: auditorDoc?.rpPath || ''
+          },
+          {
+            tipo: 'cdp',
+            descripcion: 'Certificado de Disponibilidad Presupuestal',
+            subido: !!auditorDoc?.cdpPath,
+            nombreArchivo: auditorDoc?.cdpPath || ''
+          },
+          {
+            tipo: 'poliza',
+            descripcion: 'Póliza',
+            subido: !!auditorDoc?.polizaPath,
+            nombreArchivo: auditorDoc?.polizaPath || ''
+          },
+          {
+            tipo: 'certificadoBancario',
+            descripcion: 'Certificado Bancario',
+            subido: !!auditorDoc?.certificadoBancarioPath,
+            nombreArchivo: auditorDoc?.certificadoBancarioPath || ''
+          },
+          {
+            tipo: 'minuta',
+            descripcion: 'Minuta',
+            subido: !!auditorDoc?.minutaPath,
+            nombreArchivo: auditorDoc?.minutaPath || ''
+          },
+          {
+            tipo: 'actaInicio',
+            descripcion: 'Acta de Inicio',
+            subido: !!auditorDoc?.actaInicioPath,
+            nombreArchivo: auditorDoc?.actaInicioPath || ''
+          }
+        );
       }
 
       console.log('[BACKEND DEBUG] Archivos auditor preparados:', archivosAuditor.length);
@@ -537,7 +516,12 @@ export class AuditorService {
         estado: respuesta.data.documento.estado,
         primerRadicado: respuesta.data.documento.primerRadicadoDelAno,
         archivosAuditor: respuesta.data.archivosAuditor.length,
-        archivosSubidos: respuesta.data.archivosAuditor.filter(a => a.subido).length
+        archivosSubidos: respuesta.data.archivosAuditor.filter(a => a.subido).length,
+        archivosDetalle: respuesta.data.archivosAuditor.map(a => ({
+          tipo: a.tipo,
+          subido: a.subido,
+          nombre: a.nombreArchivo
+        }))
       });
 
       return respuesta;
@@ -697,87 +681,334 @@ export class AuditorService {
     ];
   }
 
+  private crearNombreArchivoSeguro(
+    tipo: string,
+    radicado: string,
+    extension: string,
+  ): string {
+    const nombreLimpio = tipo
+      .toLowerCase()
+      .replace(/\s+/g, '_')
+      .replace(/[^\w._-]/g, '');
+
+    const randomName = Array(8)
+      .fill(null)
+      .map(() => Math.round(Math.random() * 16).toString(16))
+      .join('');
+
+    return `${nombreLimpio}_${radicado}-${randomName}${extension}`;
+  }
+
+  /**
+   * 🔍 BÚSQUEDA INTENSIVA: Busca archivos en toda la estructura del documento
+   */
+  private busquedaIntensivaArchivos(documento: Documento): {
+    rp: string | null;
+    cdp: string | null;
+    poliza: string | null;
+    certificadoBancario: string | null;
+    minuta: string | null;
+    actaInicio: string | null;
+  } {
+    const resultado: Record<'rp' | 'cdp' | 'poliza' | 'certificadoBancario' | 'minuta' | 'actaInicio', string | null> = {
+      rp: null,
+      cdp: null,
+      poliza: null,
+      certificadoBancario: null,
+      minuta: null,
+      actaInicio: null,
+    };
+
+    if (!documento.rutaCarpetaRadicado) {
+      console.log('[BUSQUEDA-INTENSIVA] ❌ No hay ruta de carpeta');
+      return resultado;
+    }
+
+    const rutaBase = documento.rutaCarpetaRadicado;
+    console.log('[BUSQUEDA-INTENSIVA] 🔍 Buscando en ruta:', rutaBase);
+
+    // 1. Primero buscar en la carpeta principal
+    const archivosCarpetaPrincipal = this.buscarArchivosEnCarpeta(rutaBase, documento.numeroRadicado);
+    console.log('[BUSQUEDA-INTENSIVA] Archivos en carpeta principal:', archivosCarpetaPrincipal);
+
+    // 2. Buscar en subcarpetas (auditor, documentos, anexos, etc.)
+    const subcarpetas = ['auditor', 'documentos', 'anexos', 'adjuntos', 'archivos'];
+
+    for (const subcarpeta of subcarpetas) {
+      const rutaSubcarpeta = path.join(rutaBase, subcarpeta);
+      if (fs.existsSync(rutaSubcarpeta)) {
+        console.log(`[BUSQUEDA-INTENSIVA] 🔎 Buscando en subcarpeta: ${subcarpeta}`);
+        const archivosSubcarpeta = this.buscarArchivosEnCarpeta(rutaSubcarpeta, documento.numeroRadicado);
+
+        // Actualizar resultados si encontramos archivos
+        (Object.keys(archivosSubcarpeta) as (keyof typeof resultado)[]).forEach(tipo => {
+          if (archivosSubcarpeta[tipo] && !resultado[tipo]) {
+            resultado[tipo] = archivosSubcarpeta[tipo];
+            console.log(`[BUSQUEDA-INTENSIVA] ✅ Encontrado ${tipo} en subcarpeta ${subcarpeta}:`, archivosSubcarpeta[tipo]);
+          }
+        });
+      }
+    }
+
+    // 3. Buscar en carpetas de auditor específicas (por ID de auditor)
+    if (fs.existsSync(rutaBase)) {
+      try {
+        const items = fs.readdirSync(rutaBase);
+        const carpetasAuditor = items.filter(item => {
+          const rutaItem = path.join(rutaBase, item);
+          return fs.statSync(rutaItem).isDirectory() &&
+            (item.includes('auditor') || /^[0-9a-f]{8}-/.test(item)); // UUID de auditor
+        });
+
+        for (const carpeta of carpetasAuditor) {
+          const rutaAuditorEspecifico = path.join(rutaBase, carpeta);
+          console.log(`[BUSQUEDA-INTENSIVA] 🔎 Buscando en carpeta auditor: ${carpeta}`);
+          const archivosAuditorEspecifico = this.buscarArchivosEnCarpeta(rutaAuditorEspecifico, documento.numeroRadicado);
+
+          (Object.keys(archivosAuditorEspecifico) as (keyof typeof resultado)[]).forEach(tipo => {
+            if (archivosAuditorEspecifico[tipo] && !resultado[tipo]) {
+              resultado[tipo] = archivosAuditorEspecifico[tipo];
+              console.log(`[BUSQUEDA-INTENSIVA] ✅ Encontrado ${tipo} en carpeta auditor ${carpeta}:`, archivosAuditorEspecifico[tipo]);
+            }
+          });
+        }
+      } catch (error) {
+        console.error('[BUSQUEDA-INTENSIVA] Error leyendo carpeta:', error.message);
+      }
+    }
+
+    // 4. Si aún no encontramos, buscar de forma más agresiva
+    if (Object.values(resultado).filter(v => v !== null).length === 0) {
+      console.log('[BUSQUEDA-INTENSIVA] 🔦 BUSQUEDA AGRESIVA - Recorriendo toda la estructura');
+      resultado.rp = this.buscarArchivoAgresivo(rutaBase, ['rp', 'resolucion', 'pago'], documento.numeroRadicado);
+      resultado.cdp = this.buscarArchivoAgresivo(rutaBase, ['cdp', 'certificado', 'disponibilidad'], documento.numeroRadicado);
+      resultado.poliza = this.buscarArchivoAgresivo(rutaBase, ['poliza', 'cumplimiento'], documento.numeroRadicado);
+      resultado.certificadoBancario = this.buscarArchivoAgresivo(rutaBase, ['certificado', 'bancario', 'banco'], documento.numeroRadicado);
+      resultado.minuta = this.buscarArchivoAgresivo(rutaBase, ['minuta', 'contrato'], documento.numeroRadicado);
+      resultado.actaInicio = this.buscarArchivoAgresivo(rutaBase, ['acta', 'inicio'], documento.numeroRadicado);
+    }
+
+    console.log('[BUSQUEDA-INTENSIVA] 🔍 RESULTADO FINAL:', resultado);
+    return resultado;
+  }
+
+  /**
+   * 🔦 BUSQUEDA AGRESIVA: Recorre toda la estructura de carpetas
+   */
+  private buscarArchivoAgresivo(rutaBase: string, palabrasClave: string[], numeroRadicado: string): string | null {
+    try {
+      if (!fs.existsSync(rutaBase)) return null;
+
+      const archivosEncontrados: string[] = [];
+
+      const buscarRecursivo = (ruta: string) => {
+        try {
+          const items = fs.readdirSync(ruta);
+
+          for (const item of items) {
+            const rutaItem = path.join(ruta, item);
+            const stat = fs.statSync(rutaItem);
+
+            if (stat.isDirectory()) {
+              // Buscar en subcarpetas
+              buscarRecursivo(rutaItem);
+            } else if (stat.isFile()) {
+              // Verificar si coincide con las palabras clave
+              const nombreLower = item.toLowerCase();
+              const radicadoLower = numeroRadicado.toLowerCase();
+
+              // Buscar coincidencias
+              const coincidePalabra = palabrasClave.some(palabra =>
+                nombreLower.includes(palabra.toLowerCase())
+              );
+
+              // También verificar si contiene el número de radicado
+              const coincideRadicado = nombreLower.includes(radicadoLower);
+
+              if (coincidePalabra || coincideRadicado) {
+                archivosEncontrados.push(item);
+                console.log(`[BUSQUEDA-AGRESIVA] 🔍 Coincidencia encontrada: ${item}`, {
+                  palabrasClave,
+                  coincidePalabra,
+                  coincideRadicado
+                });
+              }
+            }
+          }
+        } catch (error) {
+          console.error(`[BUSQUEDA-AGRESIVA] Error en ${ruta}:`, error.message);
+        }
+      };
+
+      buscarRecursivo(rutaBase);
+
+      // Devolver el primer archivo encontrado
+      return archivosEncontrados.length > 0 ? archivosEncontrados[0] : null;
+    } catch (error) {
+      console.error('[BUSQUEDA-AGRESIVA] Error general:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * 🛠️ Construir ruta completa del archivo
+   */
+  private construirRutaArchivo(documento: Documento, nombreArchivo: string): string | null {
+    if (!nombreArchivo || !documento.rutaCarpetaRadicado) {
+      return null;
+    }
+
+    // Buscar en múltiples ubicaciones posibles
+    const ubicacionesPosibles = [
+      documento.rutaCarpetaRadicado,
+      path.join(documento.rutaCarpetaRadicado, 'auditor'),
+      path.join(documento.rutaCarpetaRadicado, 'documentos'),
+      path.join(documento.rutaCarpetaRadicado, 'anexos'),
+    ];
+
+    for (const ubicacion of ubicacionesPosibles) {
+      const rutaCompleta = path.join(ubicacion, nombreArchivo);
+      if (fs.existsSync(rutaCompleta)) {
+        console.log(`[CONSTRUIR-RUTA] ✅ Archivo encontrado en: ${ubicacion}`);
+        return rutaCompleta;
+      }
+    }
+
+    console.log(`[CONSTRUIR-RUTA] ❌ Archivo no encontrado: ${nombreArchivo}`);
+    return null;
+  }
+
   async subirDocumentosAuditor(
     documentoId: string,
     auditorId: string,
-    subirDto: SubirDocumentosAuditorDto,
-    files: { [fieldname: string]: Express.Multer.File[] }
-  ): Promise<{ success: boolean; message: string; auditor: AuditorDocumento; documento: Documento }> {
+    datos: { observaciones?: string; estado?: AuditorEstado },
+    files: { [key: string]: Express.Multer.File[] },
+  ) {
     this.logger.log(`📤 Auditor ${auditorId} subiendo documentos para ${documentoId}`);
 
-    const auditorDoc = await this.auditorRepository.findOne({
+    // 1. Buscar el documento radicado principal
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId },
+    });
+
+    if (!documento) {
+      throw new NotFoundException(`Documento radicado ${documentoId} no encontrado`);
+    }
+
+    if (!documento.rutaCarpetaRadicado) {
+      throw new BadRequestException('El documento no tiene ruta de carpeta definida');
+    }
+
+    const rutaBase = documento.rutaCarpetaRadicado;
+    const rutaAuditor = path.join(rutaBase, 'auditor');
+
+    if (!fs.existsSync(rutaAuditor)) {
+      fs.mkdirSync(rutaAuditor, { recursive: true });
+      this.logger.log(`📁 Carpeta auditor creada/existe: ${rutaAuditor}`);
+    }
+
+    // 2. Buscar o crear registro en auditor_documentos
+    let auditorDoc = await this.auditorDocumentoRepository.findOne({
       where: {
         documento: { id: documentoId },
         auditor: { id: auditorId },
-        estado: AuditorEstado.EN_REVISION
       },
-      relations: ['documento', 'auditor']
     });
 
     if (!auditorDoc) {
-      throw new ForbiddenException('No tienes este documento en revisión');
+      auditorDoc = this.auditorDocumentoRepository.create({
+        documento: documento,
+        auditor: { id: auditorId } as any, // ← temporal, puedes cargar el user completo si quieres
+        estado: AuditorEstado.EN_REVISION,
+        fechaInicioRevision: new Date(),
+        observaciones: datos.observaciones || '',
+      });
+
+      await this.auditorDocumentoRepository.save(auditorDoc);
+      this.logger.log(`📝 Nuevo registro AuditorDocumento creado: ${auditorDoc.id}`);
+    } else {
+      auditorDoc.observaciones = datos.observaciones || auditorDoc.observaciones;
+      this.logger.log(`🔄 Actualizando registro AuditorDocumento existente: ${auditorDoc.id}`);
     }
 
-    const documento = auditorDoc.documento;
+    // 3. Procesamiento de los 6 archivos posibles
+    const nombresGuardados: Record<string, string> = {};
 
-    // ────────────────────────────────────────────────
-    // ¡ESTA VALIDACIÓN LA QUITAMOS O COMENTAMOS!
-    // if (!documento.primerRadicadoDelAno) {
-    //   throw new BadRequestException('Solo se pueden subir documentos en el primer radicado del año');
-    // }
-    // ────────────────────────────────────────────────
+    const camposProcesar = [
+      { frontend: 'rp', dbKey: 'rpPath' },
+      { frontend: 'cdp', dbKey: 'cdpPath' },
+      { frontend: 'poliza', dbKey: 'polizaPath' },
+      { frontend: 'certificadoBancario', dbKey: 'certificadoBancarioPath' },
+      { frontend: 'minuta', dbKey: 'minutaPath' },
+      { frontend: 'actaInicio', dbKey: 'actaInicioPath' },
+    ];
 
-    // Crear carpeta auditor si no existe
-    const rutaAuditor = path.join(documento.rutaCarpetaRadicado, 'auditor', auditorId);
-    if (!fs.existsSync(rutaAuditor)) {
-      fs.mkdirSync(rutaAuditor, { recursive: true });
-    }
+    for (const campo of camposProcesar) {
+      const fileArray = files[campo.frontend];
+      if (!fileArray?.length) continue;
 
-    const archivosRequeridos = ['rp', 'cdp', 'poliza', 'certificadoBancario', 'minuta', 'actaInicio'];
-    const archivosProcesados: { tipo: string; nombre: string }[] = [];
+      const file = fileArray[0];
 
-    // Procesar solo los archivos que vienen en esta subida
-    for (const tipo of archivosRequeridos) {
-      if (files[tipo]?.length > 0) {
-        const archivo = files[tipo][0];
-        const nombreArchivo = await this.guardarArchivoAuditor(documento, archivo, tipo, auditorId);
-
-        // Actualizar path en la entidad
-        this.actualizarPathAuditorDoc(auditorDoc, tipo, nombreArchivo);
-        archivosProcesados.push({ tipo, nombre: nombreArchivo });
+      // Verificación crítica (ahora con memoryStorage SIEMPRE debe existir)
+      if (!file.buffer) {
+        this.logger.error(`Archivo ${campo.frontend} llegó sin buffer → revisar multer config`);
+        continue;
       }
-      // Si no viene archivo → se mantiene lo que ya había (no se borra)
+
+      const extension = path.extname(file.originalname).toLowerCase();
+      const nombreSeguro = this.crearNombreArchivoSeguro(
+        campo.frontend,
+        documento.numeroRadicado,
+        extension
+      );
+
+      const rutaCompleta = path.join(rutaAuditor, nombreSeguro);
+      const rutaRelativa = path.join('auditor', nombreSeguro);
+
+      this.logger.log(`[GUARDANDO] ${campo.frontend} → ${rutaCompleta} (${file.size} bytes)`);
+
+      try {
+        // Guardamos usando buffer (la forma correcta con memoryStorage)
+        fs.writeFileSync(rutaCompleta, file.buffer);
+
+        // Asignamos el path relativo en la entidad
+        switch (campo.frontend) {
+          case 'rp': auditorDoc.rpPath = rutaRelativa; break;
+          case 'cdp': auditorDoc.cdpPath = rutaRelativa; break;
+          case 'poliza': auditorDoc.polizaPath = rutaRelativa; break;
+          case 'certificadoBancario': auditorDoc.certificadoBancarioPath = rutaRelativa; break;
+          case 'minuta': auditorDoc.minutaPath = rutaRelativa; break;
+          case 'actaInicio': auditorDoc.actaInicioPath = rutaRelativa; break;
+        }
+
+        nombresGuardados[campo.frontend] = nombreSeguro;
+        this.logger.log(`[OK] Guardado exitoso → ${rutaCompleta}`);
+      } catch (err) {
+        this.logger.error(`Fallo al guardar ${campo.frontend}:`, err);
+        throw new InternalServerErrorException(`Error guardando archivo ${campo.frontend}`);
+      }
     }
 
-    // Observaciones
-    if (subirDto.observaciones?.trim()) {
-      auditorDoc.observaciones = (auditorDoc.observaciones || '') + '\n' + subirDto.observaciones.trim();
+    // 4. Actualizar estado si viene en los datos
+    if (datos.estado) {
+      auditorDoc.estado = datos.estado;
+      if (datos.estado === AuditorEstado.APROBADO) {
+        auditorDoc.fechaAprobacion = new Date();
+        auditorDoc.fechaFinRevision = new Date();
+      }
     }
 
-    auditorDoc.fechaActualizacion = new Date();
+    // 5. Guardar todo
+    await this.auditorDocumentoRepository.save(auditorDoc);
 
-    // Historial en documento principal
-    const historial = documento.historialEstados || [];
-    historial.push({
-      fecha: new Date(),
-      estado: documento.estado,
-      usuarioId: auditorId,
-      usuarioNombre: auditorDoc.auditor.fullName || auditorDoc.auditor.username,
-      rolUsuario: auditorDoc.auditor.role,
-      observacion: `Archivos de auditoría ${archivosProcesados.length ? 'subidos/actualizados' : 'observaciones actualizadas'}`
-    });
-    documento.historialEstados = historial;
-
-    await this.documentoRepository.save(documento);
-    const savedAuditorDoc = await this.auditorRepository.save(auditorDoc);
+    this.logger.log(`✅ Auditoría guardada exitosamente para documento ${documentoId}`);
 
     return {
       success: true,
-      message: archivosProcesados.length
-        ? `${archivosProcesados.length} documento(s) procesado(s)`
-        : 'Observaciones actualizadas',
-      auditor: savedAuditorDoc,
-      documento
+      auditorDocumentoId: auditorDoc.id,
+      estado: auditorDoc.estado,
+      archivosGuardados: nombresGuardados,
+      observaciones: auditorDoc.observaciones,
     };
   }
 
@@ -888,7 +1119,12 @@ export class AuditorService {
     revisarDto: RevisarAuditorDocumentoDto
   ): Promise<{ success: boolean; message: string; auditor: AuditorDocumento; documento: Documento }> {
     this.logger.log(`🔍 Auditor ${auditorId} revisando documento ${documentoId} - Estado: ${revisarDto.estado}`);
-    console.log('[BACKEND DEBUG] Datos de revisión:', revisarDto);
+
+    // ✅ CORREGIDO: Usar el método estático correctamente
+    const validationErrors = AuditorValidationHelper.validateRevisarDto(revisarDto);
+    if (validationErrors.length > 0) {
+      throw new BadRequestException(validationErrors.join('; '));
+    }
 
     const auditorDoc = await this.auditorRepository.findOne({
       where: {
@@ -905,6 +1141,17 @@ export class AuditorService {
 
     const documento = auditorDoc.documento;
 
+    // ✅ MEJORAR LOGGING PARA DIAGNÓSTICO
+    console.log('[BACKEND DEBUG] 🧾 ESTADO ACTUAL DE ARCHIVOS EN BD:');
+    console.log('• RP:', auditorDoc.rpPath || 'NO SUBIDO');
+    console.log('• CDP:', auditorDoc.cdpPath || 'NO SUBIDO');
+    console.log('• Póliza:', auditorDoc.polizaPath || 'NO SUBIDO');
+    console.log('• Certificado Bancario:', auditorDoc.certificadoBancarioPath || 'NO SUBIDO');
+    console.log('• Minuta:', auditorDoc.minutaPath || 'NO SUBIDO');
+    console.log('• Acta Inicio:', auditorDoc.actaInicioPath || 'NO SUBIDO');
+    console.log('• ¿Documento es primer radicado?:', documento.primerRadicadoDelAno);
+    console.log('• ¿tieneTodosDocumentos()?:', auditorDoc.tieneTodosDocumentos());
+
     console.log('[BACKEND DEBUG] Validaciones:', {
       estadoDocumento: documento.estado,
       primerRadicadoDelAno: documento.primerRadicadoDelAno,
@@ -912,7 +1159,36 @@ export class AuditorService {
       estadoSolicitado: revisarDto.estado
     });
 
-    // IMPORTANTE: Solo validar archivos completos si es PRIMER RADICADO
+    // ✅ Solo validar archivos completos si es PRIMER RADICADO
+    if (documento.primerRadicadoDelAno && !auditorDoc.tieneTodosDocumentos()) {
+      console.log('[BACKEND DEBUG] ❌ Validación fallida: primer radicado sin documentos completos');
+
+      // Detallar exactamente qué falta
+      const faltantes = [];
+      if (!auditorDoc.rpPath) faltantes.push('RP');
+      if (!auditorDoc.cdpPath) faltantes.push('CDP');
+      if (!auditorDoc.polizaPath) faltantes.push('Póliza');
+      if (!auditorDoc.certificadoBancarioPath) faltantes.push('Certificado Bancario');
+      if (!auditorDoc.minutaPath) faltantes.push('Minuta');
+      if (!auditorDoc.actaInicioPath) faltantes.push('Acta de Inicio');
+
+      console.log('[BACKEND DEBUG] 📋 Documentos faltantes:', faltantes);
+
+      throw new BadRequestException(
+        `Debes subir todos los documentos requeridos. Faltan: ${faltantes.join(', ')}`
+      );
+    }
+
+
+
+    console.log('[BACKEND DEBUG] Validaciones:', {
+      estadoDocumento: documento.estado,
+      primerRadicadoDelAno: documento.primerRadicadoDelAno,
+      tieneTodosDocumentos: auditorDoc.tieneTodosDocumentos(),
+      estadoSolicitado: revisarDto.estado
+    });
+
+    // ✅ Solo validar archivos completos si es PRIMER RADICADO
     if (documento.primerRadicadoDelAno && !auditorDoc.tieneTodosDocumentos()) {
       console.log('[BACKEND DEBUG] Validación fallida: primer radicado sin documentos completos');
       throw new BadRequestException('Debes subir todos los documentos requeridos (RP, CDP, Póliza, Certificado Bancario, Minuta, Acta de Inicio) antes de revisar');
@@ -928,6 +1204,7 @@ export class AuditorService {
     const estadoAnterior = auditorDoc.estado;
     auditorDoc.estado = revisarDto.estado;
     auditorDoc.observaciones = revisarDto.observaciones?.trim() || '';
+    auditorDoc.correcciones = revisarDto.correcciones?.trim() || '';
     auditorDoc.fechaActualizacion = new Date();
     auditorDoc.fechaFinRevision = new Date();
 
@@ -965,20 +1242,34 @@ export class AuditorService {
         mensajeEstado = 'Documento completado por auditor';
         break;
       default:
-        throw new BadRequestException('Estado no válido para revisión');
+        throw new BadRequestException(`Estado no válido para revisión: ${revisarDto.estado}`);
     }
 
     documento.estado = estadoNuevoDocumento;
 
-    this.agregarAlHistorial(documento, auditorDoc.auditor, estadoAnterior, revisarDto.estado, revisarDto.observaciones);
+    // Agregar al historial
+    const historial = documento.historialEstados || [];
+    historial.push({
+      fecha: new Date(),
+      estado: estadoNuevoDocumento,
+      usuarioId: auditorId,
+      usuarioNombre: auditorDoc.auditor.fullName || auditorDoc.auditor.username,
+      rolUsuario: auditorDoc.auditor.role,
+      observacion: `Revisión de auditor: ${estadoAnterior} → ${revisarDto.estado} - ${revisarDto.observaciones?.substring(0, 100) || 'Sin observación'}`
+    });
+    documento.historialEstados = historial;
 
-    await this.registrarAccesoAuditor(
-      documento.rutaCarpetaRadicado,
-      auditorId,
-      `REALIZÓ REVISIÓN`,
-      `${estadoAnterior} → ${revisarDto.estado} - ${revisarDto.observaciones?.substring(0, 100) || 'Sin observación'}`
-    );
+    // Registrar acceso
+    if (documento.rutaCarpetaRadicado) {
+      await this.registrarAccesoAuditor(
+        documento.rutaCarpetaRadicado,
+        auditorId,
+        `REALIZÓ REVISIÓN`,
+        `${estadoAnterior} → ${revisarDto.estado} - ${revisarDto.observaciones?.substring(0, 100) || 'Sin observación'}`
+      );
+    }
 
+    // Guardar cambios
     await this.documentoRepository.save(documento);
     const savedAuditorDoc = await this.auditorRepository.save(auditorDoc);
 
@@ -986,7 +1277,8 @@ export class AuditorService {
       documento: documento.numeroRadicado,
       estadoAnterior: estadoAnterior,
       estadoNuevo: revisarDto.estado,
-      estadoDocumentoNuevo: estadoNuevoDocumento
+      estadoDocumentoNuevo: estadoNuevoDocumento,
+      mensaje: mensajeEstado
     });
 
     this.logger.log(`✅ Documento ${documento.numeroRadicado} revisado por auditor. Estado: ${revisarDto.estado}`);
@@ -1675,57 +1967,109 @@ export class AuditorService {
     }
   }
 
-  private buscarArchivosEnCarpeta(rutaCarpeta: string, numeroRadicado: string): any {
-    const archivosEncontrados: any = {
+  private buscarArchivosEnCarpeta(rutaCarpeta: string, numeroRadicado: string): {
+    rp: string | null;
+    cdp: string | null;
+    poliza: string | null;
+    certificadoBancario: string | null;
+    minuta: string | null;
+    actaInicio: string | null;
+  } {
+    const resultado: Record<'rp' | 'cdp' | 'poliza' | 'certificadoBancario' | 'minuta' | 'actaInicio', string | null> = {
       rp: null,
       cdp: null,
       poliza: null,
       certificadoBancario: null,
       minuta: null,
-      actaInicio: null
+      actaInicio: null,
     };
 
-    try {
-      if (!fs.existsSync(rutaCarpeta)) {
-        return archivosEncontrados;
-      }
-
-      const archivos = fs.readdirSync(rutaCarpeta);
-
-      // Patrones de búsqueda para cada tipo
-      const patrones = {
-        rp: ['rp_', 'resolucion_pago', 'resolucion de pago', 'rp' + numeroRadicado],
-        cdp: ['cdp_', 'certificado_disponibilidad', 'certificado disponibilidad', 'cdp' + numeroRadicado],
-        poliza: ['poliza_', 'poliza_cumplimiento', 'poliza cumplimiento', 'poliza' + numeroRadicado],
-        certificadoBancario: ['certificado_bancario', 'certificado bancario', 'certificado' + numeroRadicado],
-        minuta: ['minuta_', 'minuta_contrato', 'minuta contrato', 'minuta' + numeroRadicado],
-        actaInicio: ['acta_inicio', 'acta inicio', 'acta' + numeroRadicado]
-      };
-
-      archivos.forEach(archivo => {
-        const archivoLower = archivo.toLowerCase();
-
-        // Verificar cada tipo
-        for (const [tipo, keywords] of Object.entries(patrones)) {
-          if (!archivosEncontrados[tipo]) {
-            for (const keyword of keywords) {
-              if (archivoLower.includes(keyword.toLowerCase()) &&
-                !archivoLower.includes('_meta.json')) {
-                archivosEncontrados[tipo] = archivo;
-                break;
-              }
-            }
-          }
-        }
-      });
-
-      console.log('[BACKEND DEBUG] Archivos encontrados en carpeta:', archivosEncontrados);
-
-    } catch (error) {
-      console.error('[BACKEND DEBUG] Error buscando archivos en carpeta:', error.message);
+    if (!rutaCarpeta || !fs.existsSync(rutaCarpeta)) {
+      console.log(`[BUSCAR-CARPETA] ❌ Carpeta no existe: ${rutaCarpeta}`);
+      return resultado;
     }
 
-    return archivosEncontrados;
+    try {
+      const archivos = fs.readdirSync(rutaCarpeta);
+      console.log(`[BUSCAR-CARPETA] 📁 Archivos en ${rutaCarpeta}:`, archivos.length);
+
+      const patrones: Record<keyof typeof resultado, RegExp[]> = {
+        rp: [
+          new RegExp(`rp.*${numeroRadicado}`, 'i'),
+          /resoluci[oó]n.*pago/i,
+          /rp[_-]/i,
+          /^rp/i,
+          /.*pago.*/i,
+        ],
+        cdp: [
+          new RegExp(`cdp.*${numeroRadicado}`, 'i'),
+          /certificado.*disponibilidad/i,
+          /cdp[_-]/i,
+          /^cdp/i,
+          /.*disponibilidad.*/i,
+        ],
+        poliza: [
+          new RegExp(`poliza.*${numeroRadicado}`, 'i'),
+          /p[oó]liza.*cumplimiento/i,
+          /poliza[_-]/i,
+          /^poliza/i,
+          /.*cumplimiento.*/i,
+        ],
+        certificadoBancario: [
+          new RegExp(`certificado.*bancario.*${numeroRadicado}`, 'i'),
+          /certificado.*bancario/i,
+          /certificado[_-]bancario/i,
+          /.*bancario.*/i,
+          /.*banco.*/i,
+        ],
+        minuta: [
+          new RegExp(`minuta.*${numeroRadicado}`, 'i'),
+          /minuta.*contrato/i,
+          /minuta[_-]/i,
+          /^minuta/i,
+          /.*contrato.*/i,
+        ],
+        actaInicio: [
+          new RegExp(`acta.*inicio.*${numeroRadicado}`, 'i'),
+          /acta.*de.*inicio/i,
+          /acta[_-]inicio/i,
+          /^acta/i,
+          /.*inicio.*/i,
+        ],
+      };
+
+      const ignorar = [
+        /_meta\.json$/i,
+        /\.tmp$/i,
+        /~$/i,
+        /^\./,
+        /Thumbs\.db/i,
+        /desktop\.ini/i,
+      ];
+
+      archivos.forEach((archivo) => {
+        const nombreLower = archivo.toLowerCase();
+
+        if (ignorar.some((regex) => regex.test(nombreLower))) {
+          return;
+        }
+
+        (Object.keys(patrones) as (keyof typeof resultado)[]).forEach((tipo) => {
+          if (resultado[tipo] !== null) return; // ya encontrado
+
+          const regexList = patrones[tipo];
+          if (regexList.some((regex) => regex.test(nombreLower))) {
+            resultado[tipo] = archivo;
+            console.log(`[BUSCAR-CARPETA] ✅ ${tipo.toUpperCase()} encontrado: ${archivo}`);
+          }
+        });
+      });
+
+      return resultado;
+    } catch (error) {
+      console.error(`[BUSCAR-CARPETA] Error en ${rutaCarpeta}:`, error);
+      return resultado;
+    }
   }
 
   // Método para obtener documento en modo debug
@@ -1782,5 +2126,41 @@ export class AuditorService {
       }
     };
   }
-}
 
+  async diagnosticoDocumentos(documentoId: string, auditorId: string): Promise<any> {
+    const auditorDoc = await this.auditorRepository.findOne({
+      where: {
+        documento: { id: documentoId },
+        auditor: { id: auditorId }
+      },
+      relations: ['documento']
+    });
+
+    if (!auditorDoc) {
+      return { error: 'No se encontró registro de auditoría' };
+    }
+
+    return {
+      auditorDoc: {
+        id: auditorDoc.id,
+        estado: auditorDoc.estado,
+        tieneTodosDocumentos: auditorDoc.tieneTodosDocumentos(),
+        archivos: {
+          rp: auditorDoc.rpPath,
+          cdp: auditorDoc.cdpPath,
+          poliza: auditorDoc.polizaPath,
+          certificadoBancario: auditorDoc.certificadoBancarioPath,
+          minuta: auditorDoc.minutaPath,
+          actaInicio: auditorDoc.actaInicioPath
+        }
+      },
+      documento: {
+        id: auditorDoc.documento.id,
+        numeroRadicado: auditorDoc.documento.numeroRadicado,
+        primerRadicadoDelAno: auditorDoc.documento.primerRadicadoDelAno,
+        estado: auditorDoc.documento.estado
+      }
+    };
+  }
+
+}
