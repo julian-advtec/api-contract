@@ -4,7 +4,7 @@ import { Transform, Type } from 'class-transformer';
 
 export class CreateDocumentoDto {
     @IsString()
-    @Matches(/^R\d{4}-\d{3}$/)
+    @Matches(/^R\d{4}-\d{4}$/)
     numeroRadicado: string;
 
     @IsString()
