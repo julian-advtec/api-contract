@@ -14,11 +14,20 @@ import {
   Delete,
   BadRequestException,
   Logger,
-  Req
+  Req,
+  HttpStatus,
+  UnauthorizedException,
+  NotFoundException,
 } from '@nestjs/common';
-import type { Request } from 'express'; // Importa type de express
+
+import * as os from 'os';
+import * as crypto from 'crypto';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+import * as mime from 'mime-types';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Documento } from './../radicacion/entities/documento.entity';
@@ -34,16 +43,18 @@ import { RevisarAuditorDocumentoDto } from './dto/revisar-auditor-documento.dto'
 import { AuditorValidationHelper } from './auditor-validation.helper';
 import { multerAuditorConfig } from './../config/multer-auditor.config';
 import { AuditorDocumento } from './entities/auditor-documento.entity';
+import { LoadDocumentoInterceptor } from '../common/interceptors/load-documento.interceptor';
+import { Public } from './../common/decorators/public.decorator';  // ← Asegúrate de importar esto
+
+const execAsync = promisify(exec);
 
 @Controller('auditor')
 @UseGuards(JwtAuthGuard, RolesGuard, AuditorGuard)
 @Roles(UserRole.AUDITOR_CUENTAS, UserRole.ADMIN)
 export class AuditorController {
-  private readonly logger = new Logger(AuditorController.name); // Añadir logger
+  private readonly logger = new Logger(AuditorController.name);
 
-  constructor(private readonly auditorService: AuditorService) { }
-
-
+  constructor(private readonly auditorService: AuditorService) {}
 
   @Get('documentos/disponibles')
   async getDocumentosDisponibles(@GetUser() user: any) {
@@ -61,10 +72,8 @@ export class AuditorController {
         { name: 'minuta', maxCount: 1 },
         { name: 'actaInicio', maxCount: 1 },
       ],
-      multerAuditorConfig,   // ← usa la config que acabamos de crear
+      multerAuditorConfig,
     ),
-
-
   )
   async subirArchivosAuditoria(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
@@ -77,7 +86,6 @@ export class AuditorController {
     console.log('Body recibido:', body);
     console.log('Archivos recibidos:', Object.keys(files || {}));
 
-    // Aquí llamas al servicio
     return this.auditorService.subirDocumentosAuditor(
       documentoId,
       user.id,
@@ -137,10 +145,7 @@ export class AuditorController {
     this.logger.log(`[REVISAR] Usuario ${user.id} revisando documento ${documentoId}`);
 
     try {
-      // Crear DTO usando el helper
       const revisarDto = AuditorValidationHelper.crearDto(body);
-
-      // Validar usando el helper
       const validationErrors = AuditorValidationHelper.validateRevisarDto(revisarDto);
       if (validationErrors.length > 0) {
         throw new BadRequestException(validationErrors.join('; '));
@@ -153,7 +158,6 @@ export class AuditorController {
         user.id,
         revisarDto,
       );
-
     } catch (error) {
       this.logger.error(`[REVISAR ERROR] ${error.message}`, error.stack);
       throw error;
@@ -175,19 +179,84 @@ export class AuditorController {
     res.download(ruta, nombre);
   }
 
-  @Get('documentos/:documentoId/descargar-auditor/:tipoArchivo')
-  async descargarArchivoAuditor(
+  // RUTA PÚBLICA - SIN AUTENTICACIÓN
+  @Get('documentos/:documentoId/archivo-auditor/:tipo')
+  @Public()
+  async previsualizarArchivoAuditor(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
-    @Param('tipoArchivo') tipoArchivo: string,
-    @GetUser() user: any,
+    @Param('tipo') tipo: string,
+    @Query('download') download: string = 'false',
     @Res() res: Response,
   ) {
-    const { ruta, nombre } = await this.auditorService.descargarArchivoAuditor(
-      documentoId,
-      tipoArchivo,
-      user.id,
-    );
-    res.download(ruta, nombre);
+    this.logger.log(`[PUBLIC-PREVIEW] Acceso público → ${documentoId}/${tipo}`);
+
+    try {
+      const { rutaAbsoluta, nombreArchivo } = await this.auditorService.obtenerRutaArchivoAuditorFull(
+        documentoId,
+        tipo,
+        undefined
+      );
+
+      if (!fs.existsSync(rutaAbsoluta)) {
+        this.logger.error(`[PUBLIC-PREVIEW 404] No existe: ${rutaAbsoluta}`);
+        return res.status(HttpStatus.NOT_FOUND).json({ message: 'Archivo no encontrado' });
+      }
+
+      const ext = path.extname(nombreArchivo).toLowerCase();
+
+      if (['.doc', '.docx'].includes(ext) && download !== 'true') {
+        const tmpPdf = path.join(os.tmpdir(), `preview-${crypto.randomUUID()}.pdf`);
+        try {
+          await this.auditorService.convertirWordAPdf(rutaAbsoluta, tmpPdf);
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader('Content-Disposition', 'inline; filename="vista.pdf"');
+          const stream = fs.createReadStream(tmpPdf);
+          stream.on('end', () => fs.unlink(tmpPdf, () => {}));
+          return stream.pipe(res);
+        } catch (e) {
+          this.logger.error(`[CONVERSIÓN ERROR] ${e.message}`);
+        }
+      }
+
+      const mimeType = mime.lookup(ext) || 'application/octet-stream';
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Disposition', download === 'true' ? `attachment; filename="${nombreArchivo}"` : 'inline');
+      return fs.createReadStream(rutaAbsoluta).pipe(res);
+    } catch (error: any) {
+      this.logger.error(`[PUBLIC-PREVIEW ERROR] ${error.message}`);
+      res.status(500).json({ message: error.message || 'Error al procesar archivo' });
+    }
+  }
+
+  // RUTA PÚBLICA - SIN AUTENTICACIÓN
+  @Get('documentos/:documentoId/descargar-auditor/:tipo')
+  @Public()
+  async descargarForzadoAuditor(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @Param('tipo') tipo: string,
+    @Res() res: Response,
+  ) {
+    this.logger.log(`[PUBLIC-DOWNLOAD] Descarga pública → ${documentoId}/${tipo}`);
+
+    try {
+      const { rutaAbsoluta, nombreArchivo } = await this.auditorService.obtenerRutaArchivoAuditorFull(
+        documentoId,
+        tipo,
+        undefined
+      );
+
+      if (!fs.existsSync(rutaAbsoluta)) {
+        this.logger.error(`[PUBLIC-DOWNLOAD 404] No existe: ${rutaAbsoluta}`);
+        return res.status(404).json({ message: 'Archivo no encontrado' });
+      }
+
+      res.download(rutaAbsoluta, nombreArchivo, (err) => {
+        if (err) this.logger.error(`[PUBLIC-DOWNLOAD ERROR] ${err.message}`);
+      });
+    } catch (error: any) {
+      this.logger.error(`[PUBLIC-DOWNLOAD ERROR] ${error.message}`);
+      res.status(500).json({ message: error.message || 'Error al descargar archivo' });
+    }
   }
 
   @Delete('documentos/:documentoId/liberar')
@@ -220,68 +289,33 @@ export class AuditorController {
   async getHistorial(@GetUser() user: any) {
     return this.auditorService.obtenerHistorialAuditor(user.id);
   }
+
   @Get('documentos/:documentoId/vista')
   async getDocumentoParaVista(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
-    @GetUser() user: any,
-    @Req() req: Request // Ahora Request viene de 'express'
+    @GetUser() userFromDecorator: any,
+    @Req() req: Request
   ) {
     console.log('[AUDITOR-CONTROLLER] ===== VISTA DOCUMENTO =====');
     console.log('[AUDITOR-CONTROLLER] Documento ID:', documentoId);
-    console.log('[AUDITOR-CONTROLLER] User del decorador:', user ? user.id : 'undefined');
-    console.log('[AUDITOR-CONTROLLER] User completo:', user);
 
-    // 🔴 EXTRAER AUDITOR ID DE MÚLTIPLES FUENTES
-    let auditorId = user?.id;
+    let auditorId = userFromDecorator?.id;
 
-    // 1. Primero del decorador @GetUser()
-    if (!auditorId && user) {
-      console.log('[AUDITOR-CONTROLLER] Intentando extraer id de user object...');
-      auditorId = user.id || user._id || user.userId;
+    if (!auditorId && userFromDecorator) {
+      auditorId = userFromDecorator.id || userFromDecorator.userId || userFromDecorator.sub;
     }
 
-    // 2. Si no, del header X-Auditor-Id
+    if (!auditorId && (req as any).user) {
+      auditorId = (req as any).user.id || (req as any).user.userId || (req as any).user.sub;
+      console.log('[FALLBACK VISTA] Usuario encontrado en req.user');
+    }
+
     if (!auditorId) {
-      // Acceso por corchetes al objeto headers
-      const headers = req.headers as Record<string, string | string[] | undefined>;
-      const headerAuditorId = headers['x-auditor-id'] || headers['X-Auditor-Id'];
-      if (headerAuditorId) {
-        auditorId = Array.isArray(headerAuditorId) ? headerAuditorId[0] : headerAuditorId;
-        console.log('[AUDITOR-CONTROLLER] AuditorId de headers:', auditorId);
-      }
+      const authHeader = req.headers.authorization;
+      console.log('[DEBUG VISTA] Authorization header:', authHeader || 'ausente');
     }
 
-    // 3. Si no, del token (último recurso)
-    if (!auditorId) {
-      const headers = req.headers as Record<string, string | string[] | undefined>;
-      const authHeader = headers['authorization'];
-      if (authHeader) {
-        console.log('[AUDITOR-CONTROLLER] Authorization header presente');
-        // Aquí podrías decodificar el token JWT si fuera necesario
-        // Por ahora, intentamos usar el username si está disponible
-        if (user?.username) {
-          console.log('[AUDITOR-CONTROLLER] Usando username como fallback:', user.username);
-          // Buscar usuario por username para obtener id
-          try {
-            // Accede al repositorio si existe
-            if (this.auditorService['userRepository']) {
-              const usuarioRepo = this.auditorService['userRepository'];
-              const usuario = await usuarioRepo.findOne({
-                where: { username: user.username }
-              });
-              if (usuario) {
-                auditorId = usuario.id;
-                console.log('[AUDITOR-CONTROLLER] ID encontrado por username:', auditorId);
-              }
-            }
-          } catch (error) {
-            console.error('[AUDITOR-CONTROLLER] Error buscando usuario:', error);
-          }
-        }
-      }
-    }
-
-    console.log('[AUDITOR-CONTROLLER] AuditorId final:', auditorId);
+    console.log('[AUDITOR-CONTROLLER] AuditorId final:', auditorId || 'NO ENCONTRADO');
     console.log('[AUDITOR-CONTROLLER] ===========================');
 
     return this.auditorService.obtenerDocumentoParaVista(documentoId, auditorId);
@@ -309,42 +343,6 @@ export class AuditorController {
     return this.auditorService.obtenerDocumentoDebug(documentoId, user.id);
   }
 
-  async revisarDocumentoConArchivos(
-    documentoId: string,
-    auditorId: string,
-    revisarDto: RevisarAuditorDocumentoDto,
-    files: { [fieldname: string]: Express.Multer.File[] }
-  ): Promise<{ success: boolean; message: string; auditor: AuditorDocumento; documento: Documento }> {
-
-    this.logger.log(`[BACKEND] Revisar con archivos: ${documentoId}, Estado: ${revisarDto.estado}`);
-
-    // 1. Primero subir archivos si existen
-    if (Object.keys(files).length > 0) {
-      this.logger.log(`[BACKEND] Subiendo archivos...`);
-
-      const subirDto: SubirDocumentosAuditorDto = {
-        observaciones: revisarDto.observaciones || ''
-      };
-
-      await this.subirDocumentosAuditor(
-        documentoId,
-        auditorId,
-        subirDto,
-        files
-      );
-
-      this.logger.log(`[BACKEND] Archivos subidos`);
-    }
-
-    // 2. Luego realizar la revisión
-    this.logger.log(`[BACKEND] Realizando revisión...`);
-    return this.revisarDocumento(
-      documentoId,
-      auditorId,
-      revisarDto
-    );
-  }
-
   @Post('documentos/:documentoId/revision-completa')
   @UseInterceptors(
     FileFieldsInterceptor(
@@ -355,99 +353,130 @@ export class AuditorController {
         { name: 'certificadoBancario', maxCount: 1 },
         { name: 'minuta', maxCount: 1 },
         { name: 'actaInicio', maxCount: 1 },
+        { name: 'estado', maxCount: 1 },
+        { name: 'observaciones', maxCount: 1 },
+        { name: 'data', maxCount: 1 },
       ],
       multerAuditorConfig,
     ),
   )
   async revisionCompleta(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
-    @GetUser() user: any,
-    @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
+    @GetUser() userFromDecorator: any,
+    @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] } | undefined,
     @Body() body: any,
+    @Req() req: Request,
+    @Res() res: Response,
   ) {
-    this.logger.log(`[REVISION-COMPLETA] Iniciando para documento ${documentoId}`);
+    console.log('');
+    console.log('╔════════════════════════════════════════════════════════════╗');
+    console.log('║           [REVISION-COMPLETA] PETICIÓN RECIBIDA            ║');
+    console.log('╚════════════════════════════════════════════════════════════╝');
+    console.log(`📅 ${new Date().toISOString()}`);
+    console.log('Documento ID:', documentoId);
 
-    // 🔴 IMPORTANTE: Loggear todo para depuración
-    console.log('====================================');
-    console.log('[BACKEND REVISION-COMPLETA] LLEGÓ LA PETICIÓN');
-    console.log(`Documento ID: ${documentoId}`);
-    console.log(`Usuario ID: ${user?.id}`);
-    console.log(`Body keys: ${Object.keys(body || {})}`);
-    console.log(`Archivos recibidos: ${Object.keys(files || {}).length}`);
-    console.log('====================================');
+    let user = userFromDecorator;
 
-    // Si no hay body, intentar parsear desde FormData
-    let estado = body.estado;
-    let observaciones = body.observaciones;
-
-    // Si viene de FormData y no está en body, puede venir como string
-    if (!estado && body.data) {
-      try {
-        const parsedData = JSON.parse(body.data);
-        estado = parsedData.estado;
-        observaciones = parsedData.observaciones;
-      } catch (e) {
-        console.error('[BACKEND] Error parseando body.data:', e);
-      }
+    if (!user?.id && userFromDecorator) {
+      user = {
+        id: userFromDecorator.id || userFromDecorator.userId || userFromDecorator.sub,
+        username: userFromDecorator.username,
+        role: userFromDecorator.role,
+      };
     }
 
-    // Validar estado
-    if (!estado) {
-      console.error('[BACKEND] Estado no encontrado en body:', body);
-      throw new BadRequestException('Estado es requerido');
+    if (!user?.id && (req as any).user) {
+      user = (req as any).user;
+      console.log('[FALLBACK] Usuario encontrado en req.user');
+    }
+
+    console.log('Usuario final:', user ? user.id : 'NO USER');
+    console.log('Rol detectado:', user?.role || 'desconocido');
+
+    if (!user?.id) {
+      return res.status(HttpStatus.UNAUTHORIZED).json({
+        success: false,
+        message: 'Usuario no autenticado',
+        debug: { authHeader: !!req.headers.authorization }
+      });
+    }
+
+    if (![UserRole.ADMIN, UserRole.AUDITOR_CUENTAS].includes(user.role)) {
+      return res.status(HttpStatus.FORBIDDEN).json({
+        success: false,
+        message: 'No tienes permisos para registrar revisiones completas'
+      });
     }
 
     try {
-      // Crear DTO
-      const revisarDto = AuditorValidationHelper.crearDto({
-        estado: estado,
-        observaciones: observaciones || '',
-        correcciones: body.correcciones
-      });
+      let estado = '';
+      let observaciones = '';
 
-      // Validar
-      const validationErrors = AuditorValidationHelper.validateRevisarDto(revisarDto);
-      if (validationErrors.length > 0) {
-        throw new BadRequestException(validationErrors.join('; '));
+      if (body.estado) {
+        estado = (body.estado || '').trim().toUpperCase();
+        observaciones = (body.observaciones || '').trim();
+      } else if (body.data) {
+        try {
+          const parsed = JSON.parse(body.data);
+          estado = (parsed.estado || '').trim().toUpperCase();
+          observaciones = (parsed.observaciones || '').trim();
+        } catch (e) {
+          return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Formato inválido en "data"' });
+        }
       }
 
-      this.logger.log(`[REVISION-COMPLETA] Procesando: ${revisarDto.estado}`);
+      if (!estado) {
+        return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Falta el campo "estado"' });
+      }
 
-      // ✅ 1. Subir archivos si existen
+      const estadosValidos = ['APROBADO', 'OBSERVADO', 'RECHAZADO', 'COMPLETADO'];
+      if (!estadosValidos.includes(estado)) {
+        return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: `Estado inválido: ${estado}` });
+      }
+
+      console.log(`[OK] Decisión procesada: ${estado}`);
+
+      let archivosGuardados: Record<string, string> = {};
+
       if (files && Object.keys(files).length > 0) {
-        console.log(`[BACKEND] Subiendo ${Object.keys(files).length} archivos...`);
+        console.log(`[SUBIENDO] ${Object.keys(files).length} archivos...`);
 
-        const subirDto: SubirDocumentosAuditorDto = {
-          observaciones: observaciones || ''
-        };
-
-        await this.auditorService.subirDocumentosAuditor(
+        const subirResultado = await this.auditorService.subirDocumentosAuditor(
           documentoId,
           user.id,
-          subirDto,
+          { observaciones },
           files
         );
 
-        console.log('[BACKEND] Archivos subidos exitosamente');
+        archivosGuardados = subirResultado.archivosGuardados || {};
+        console.log('[OK] Archivos procesados y guardados:', archivosGuardados);
+      } else {
+        console.log('[INFO] No se recibieron archivos nuevos');
       }
 
-      // ✅ 2. Realizar revisión
-      console.log(`[BACKEND] Realizando revisión con estado: ${revisarDto.estado}`);
+      const revisarDto = AuditorValidationHelper.crearDto({ estado, observaciones });
+      const resultado = await this.auditorService.revisarDocumento(documentoId, user.id, revisarDto);
 
-      return await this.auditorService.revisarDocumento(
-        documentoId,
-        user.id,
-        revisarDto
-      );
-
-    } catch (error) {
-      console.error('[BACKEND REVISION-COMPLETA ERROR] Detalles:', {
-        message: error.message,
-        stack: error.stack,
-        body: body,
-        files: Object.keys(files || {})
+      return res.status(HttpStatus.OK).json({
+        success: true,
+        message: 'Decisión registrada correctamente',
+        estadoFinal: resultado.documento.estado,
+        archivosGuardados,
+        auditor: resultado.auditor,
+        documento: resultado.documento,
       });
-      throw error;
+    } catch (error: any) {
+      console.error('╔════════════════════════════════════════════════════════════╗');
+      console.error('║ ERROR CRÍTICO EN REVISION-COMPLETA                         ║');
+      console.error('╚════════════════════════════════════════════════════════════╝');
+      console.error('Mensaje:', error.message);
+      console.error('Stack (primeras líneas):', error.stack?.split('\n').slice(0, 6).join('\n') || 'sin stack');
+
+      return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+        success: false,
+        message: error.message || 'Error interno al procesar revisión completa',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      });
     }
   }
 
@@ -474,7 +503,6 @@ export class AuditorController {
 
       this.logger.log(`[TOMAR] Éxito: ${resultado.message}`);
       return resultado;
-
     } catch (error) {
       this.logger.error(`[TOMAR ERROR] ${error.message}`, error.stack);
       throw error;
