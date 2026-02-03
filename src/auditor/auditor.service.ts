@@ -2201,141 +2201,141 @@ export class AuditorService {
 
 
 
-async obtenerRutaArchivoAuditorFull(
-  documentoId: string,
-  tipo: string,
-  userId?: string,
-): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
-  const logPrefix = `[obtenerRutaArchivoAuditorFull] doc=${documentoId} tipo=${tipo} user=${userId || 'anon'}`;
-  this.logger.log(`${logPrefix} → Iniciando`);
+  async obtenerRutaArchivoAuditorFull(
+    documentoId: string,
+    tipo: string,
+    userId?: string,
+  ): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
+    const logPrefix = `[obtenerRutaArchivoAuditorFull] doc=${documentoId} tipo=${tipo} user=${userId || 'anon'}`;
+    this.logger.log(`${logPrefix} → Iniciando`);
 
-  const documentoSolicitado = await this.documentoRepository.findOne({
-    where: { id: documentoId },
-  });
-
-  if (!documentoSolicitado) {
-    this.logger.error(`${logPrefix} → Documento no encontrado`);
-    throw new NotFoundException(`Documento ${documentoId} no encontrado`);
-  }
-
-  this.logger.debug(`${logPrefix} → Documento: ${documentoSolicitado.numeroRadicado} | primerRadicado: ${documentoSolicitado.primerRadicadoDelAno}`);
-
-  let auditorDoc: AuditorDocumento | null = null;
-  let documentoParaArchivos = documentoSolicitado;
-
-  if (!documentoSolicitado.primerRadicadoDelAno) {
-    this.logger.log(`${logPrefix} → No es primer → buscando AuditorDocumento con archivos para contrato ${documentoSolicitado.numeroContrato}`);
-
-    const auditorConArchivos = await this.auditorDocumentoRepository
-      .createQueryBuilder('aud')
-      .innerJoinAndSelect('aud.documento', 'doc')
-      .where('doc.numeroContrato = :contrato', { contrato: documentoSolicitado.numeroContrato })
-      .andWhere(
-        'aud.rpPath IS NOT NULL OR aud.cdpPath IS NOT NULL OR aud.polizaPath IS NOT NULL OR ' +
-        'aud.certificadoBancarioPath IS NOT NULL OR aud.minutaPath IS NOT NULL OR aud.actaInicioPath IS NOT NULL'
-      )
-      .orderBy('doc.fechaRadicacion', 'ASC')
-      .limit(1)
-      .getOne();
-
-    if (!auditorConArchivos) {
-      this.logger.warn(`${logPrefix} → No se encontró AuditorDocumento con archivos`);
-      throw new NotFoundException(
-        `No se encontraron documentos de auditoría subidos para el contrato ${documentoSolicitado.numeroContrato}.`
-      );
-    }
-
-    documentoParaArchivos = auditorConArchivos.documento;
-    auditorDoc = auditorConArchivos;
-    this.logger.log(`${logPrefix} → Usando radicado con archivos: ${documentoParaArchivos.numeroRadicado} (id: ${documentoParaArchivos.id})`);
-  } else {
-    auditorDoc = await this.auditorDocumentoRepository.findOne({
-      where: { documento: { id: documentoParaArchivos.id } },
+    const documentoSolicitado = await this.documentoRepository.findOne({
+      where: { id: documentoId },
     });
 
-    if (!auditorDoc) {
-      this.logger.error(`${logPrefix} → Registro auditor no encontrado para doc ${documentoParaArchivos.id}`);
-      throw new NotFoundException(`Registro de auditoría no encontrado`);
+    if (!documentoSolicitado) {
+      this.logger.error(`${logPrefix} → Documento no encontrado`);
+      throw new NotFoundException(`Documento ${documentoId} no encontrado`);
     }
-  }
 
-  // Aquí auditorDoc ya está garantizado no-null
-  let nombreArchivoBd: string | undefined | null;
-  switch (tipo.toLowerCase()) {
-    case 'rp':
-      nombreArchivoBd = auditorDoc.rpPath;
-      break;
-    case 'cdp':
-      nombreArchivoBd = auditorDoc.cdpPath;
-      break;
-    case 'poliza':
-      nombreArchivoBd = auditorDoc.polizaPath;
-      break;
-    case 'certificadobancario':
-      nombreArchivoBd = auditorDoc.certificadoBancarioPath;
-      break;
-    case 'minuta':
-      nombreArchivoBd = auditorDoc.minutaPath;
-      break;
-    case 'actainicio':
-      nombreArchivoBd = auditorDoc.actaInicioPath;
-      break;
-    default:
-      this.logger.error(`${logPrefix} → Tipo inválido: ${tipo}`);
-      throw new BadRequestException(`Tipo de archivo no soportado: ${tipo}`);
-  }
+    this.logger.debug(`${logPrefix} → Documento: ${documentoSolicitado.numeroRadicado} | primerRadicado: ${documentoSolicitado.primerRadicadoDelAno}`);
 
-  if (!nombreArchivoBd || nombreArchivoBd.trim() === '') {
-    this.logger.warn(`${logPrefix} → No hay archivo para tipo ${tipo} en auditor_documentos (id: ${auditorDoc.id})`);
-    throw new NotFoundException(`No existe archivo registrado para tipo ${tipo}`);
-  }
+    let auditorDoc: AuditorDocumento | null = null;
+    let documentoParaArchivos = documentoSolicitado;
 
-  let nombreArchivoLimpio = nombreArchivoBd
-    .replace(/^auditor[\/\\]?/i, '')
-    .replace(/^[\/\\]+/, '')
-    .replace(/[\/\\]+$/, '')
-    .trim();
+    if (!documentoSolicitado.primerRadicadoDelAno) {
+      this.logger.log(`${logPrefix} → No es primer → buscando AuditorDocumento con archivos para contrato ${documentoSolicitado.numeroContrato}`);
 
-  this.logger.log(`${logPrefix} → Nombre BD: ${nombreArchivoBd}`);
-  this.logger.log(`${logPrefix} → Nombre limpio: ${nombreArchivoLimpio}`);
+      const auditorConArchivos = await this.auditorDocumentoRepository
+        .createQueryBuilder('aud')
+        .innerJoinAndSelect('aud.documento', 'doc')
+        .where('doc.numeroContrato = :contrato', { contrato: documentoSolicitado.numeroContrato })
+        .andWhere(
+          'aud.rpPath IS NOT NULL OR aud.cdpPath IS NOT NULL OR aud.polizaPath IS NOT NULL OR ' +
+          'aud.certificadoBancarioPath IS NOT NULL OR aud.minutaPath IS NOT NULL OR aud.actaInicioPath IS NOT NULL'
+        )
+        .orderBy('doc.fechaRadicacion', 'ASC')
+        .limit(1)
+        .getOne();
 
-  let rutaBase = this.configService.get<string>('RUTA_BASE_ARCHIVOS') || '\\\\R2-D2\\api-contract';
-  rutaBase = '\\\\' + rutaBase.replace(/^\\\\?/, '').replace(/^[\/\\]+/, '');
-
-  let rutaCarpeta = documentoParaArchivos.rutaCarpetaRadicado || '';
-  rutaCarpeta = rutaCarpeta
-    .replace(/^\\\\R2-D2\\api-contract/i, '')
-    .replace(/^[\/\\]+/, '')
-    .replace(/[\/\\]+$/, '')
-    .trim();
-
-  const rutaAuditor = path.join(rutaCarpeta, 'auditor');
-
-  let rutaAbsoluta = path.join(rutaBase, rutaAuditor, nombreArchivoLimpio);
-  rutaAbsoluta = rutaAbsoluta.replace(/\//g, '\\').replace(/^\\+/, '\\\\');
-
-  this.logger.log(`${logPrefix} → Ruta base: ${rutaBase}`);
-  this.logger.log(`${logPrefix} → Carpeta limpia: ${rutaCarpeta}`);
-  this.logger.log(`${logPrefix} → Ruta final: ${rutaAbsoluta}`);
-
-  if (!fs.existsSync(rutaAbsoluta)) {
-    this.logger.error(`${logPrefix} → NO existe: ${rutaAbsoluta}`);
-    try {
-      const carpeta = path.dirname(rutaAbsoluta);
-      this.logger.log(`[DEBUG] ¿Existe carpeta? ${fs.existsSync(carpeta)}`);
-      if (fs.existsSync(carpeta)) {
-        this.logger.log(`[DEBUG] Archivos: ${fs.readdirSync(carpeta).join(', ') || 'ninguno'}`);
+      if (!auditorConArchivos) {
+        this.logger.warn(`${logPrefix} → No se encontró AuditorDocumento con archivos`);
+        throw new NotFoundException(
+          `No se encontraron documentos de auditoría subidos para el contrato ${documentoSolicitado.numeroContrato}.`
+        );
       }
-    } catch (e) {
-      this.logger.error(`[DEBUG] Error: ${e.message}`);
+
+      documentoParaArchivos = auditorConArchivos.documento;
+      auditorDoc = auditorConArchivos;
+      this.logger.log(`${logPrefix} → Usando radicado con archivos: ${documentoParaArchivos.numeroRadicado} (id: ${documentoParaArchivos.id})`);
+    } else {
+      auditorDoc = await this.auditorDocumentoRepository.findOne({
+        where: { documento: { id: documentoParaArchivos.id } },
+      });
+
+      if (!auditorDoc) {
+        this.logger.error(`${logPrefix} → Registro auditor no encontrado para doc ${documentoParaArchivos.id}`);
+        throw new NotFoundException(`Registro de auditoría no encontrado`);
+      }
     }
-    throw new NotFoundException(`Archivo ${tipo} no encontrado en disco`);
+
+    // Aquí auditorDoc ya está garantizado no-null
+    let nombreArchivoBd: string | undefined | null;
+    switch (tipo.toLowerCase()) {
+      case 'rp':
+        nombreArchivoBd = auditorDoc.rpPath;
+        break;
+      case 'cdp':
+        nombreArchivoBd = auditorDoc.cdpPath;
+        break;
+      case 'poliza':
+        nombreArchivoBd = auditorDoc.polizaPath;
+        break;
+      case 'certificadobancario':
+        nombreArchivoBd = auditorDoc.certificadoBancarioPath;
+        break;
+      case 'minuta':
+        nombreArchivoBd = auditorDoc.minutaPath;
+        break;
+      case 'actainicio':
+        nombreArchivoBd = auditorDoc.actaInicioPath;
+        break;
+      default:
+        this.logger.error(`${logPrefix} → Tipo inválido: ${tipo}`);
+        throw new BadRequestException(`Tipo de archivo no soportado: ${tipo}`);
+    }
+
+    if (!nombreArchivoBd || nombreArchivoBd.trim() === '') {
+      this.logger.warn(`${logPrefix} → No hay archivo para tipo ${tipo} en auditor_documentos (id: ${auditorDoc.id})`);
+      throw new NotFoundException(`No existe archivo registrado para tipo ${tipo}`);
+    }
+
+    let nombreArchivoLimpio = nombreArchivoBd
+      .replace(/^auditor[\/\\]?/i, '')
+      .replace(/^[\/\\]+/, '')
+      .replace(/[\/\\]+$/, '')
+      .trim();
+
+    this.logger.log(`${logPrefix} → Nombre BD: ${nombreArchivoBd}`);
+    this.logger.log(`${logPrefix} → Nombre limpio: ${nombreArchivoLimpio}`);
+
+    let rutaBase = this.configService.get<string>('RUTA_BASE_ARCHIVOS') || '\\\\R2-D2\\api-contract';
+    rutaBase = '\\\\' + rutaBase.replace(/^\\\\?/, '').replace(/^[\/\\]+/, '');
+
+    let rutaCarpeta = documentoParaArchivos.rutaCarpetaRadicado || '';
+    rutaCarpeta = rutaCarpeta
+      .replace(/^\\\\R2-D2\\api-contract/i, '')
+      .replace(/^[\/\\]+/, '')
+      .replace(/[\/\\]+$/, '')
+      .trim();
+
+    const rutaAuditor = path.join(rutaCarpeta, 'auditor');
+
+    let rutaAbsoluta = path.join(rutaBase, rutaAuditor, nombreArchivoLimpio);
+    rutaAbsoluta = rutaAbsoluta.replace(/\//g, '\\').replace(/^\\+/, '\\\\');
+
+    this.logger.log(`${logPrefix} → Ruta base: ${rutaBase}`);
+    this.logger.log(`${logPrefix} → Carpeta limpia: ${rutaCarpeta}`);
+    this.logger.log(`${logPrefix} → Ruta final: ${rutaAbsoluta}`);
+
+    if (!fs.existsSync(rutaAbsoluta)) {
+      this.logger.error(`${logPrefix} → NO existe: ${rutaAbsoluta}`);
+      try {
+        const carpeta = path.dirname(rutaAbsoluta);
+        this.logger.log(`[DEBUG] ¿Existe carpeta? ${fs.existsSync(carpeta)}`);
+        if (fs.existsSync(carpeta)) {
+          this.logger.log(`[DEBUG] Archivos: ${fs.readdirSync(carpeta).join(', ') || 'ninguno'}`);
+        }
+      } catch (e) {
+        this.logger.error(`[DEBUG] Error: ${e.message}`);
+      }
+      throw new NotFoundException(`Archivo ${tipo} no encontrado en disco`);
+    }
+
+    this.logger.log(`${logPrefix} → ÉXITO: ${rutaAbsoluta}`);
+
+    return { rutaAbsoluta, nombreArchivo: nombreArchivoLimpio };
   }
-
-  this.logger.log(`${logPrefix} → ÉXITO: ${rutaAbsoluta}`);
-
-  return { rutaAbsoluta, nombreArchivo: nombreArchivoLimpio };
-}
 
   // ============================================================================
   // CONVERSIÓN WORD → PDF (usando LibreOffice)
