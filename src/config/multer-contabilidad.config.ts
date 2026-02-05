@@ -1,36 +1,13 @@
-// src/config/multer-contabilidad.config.ts
-import { BadRequestException } from '@nestjs/common';
-import { diskStorage } from 'multer';
-import * as path from 'path';
-import * as fs from 'fs';
-import * as crypto from 'crypto';
+import { MulterOptions } from '@nestjs/platform-express/multer/interfaces/multer-options.interface';
+import { memoryStorage } from 'multer';
 
-export const multerContabilidadConfig = {
-  storage: diskStorage({
-    destination: (req: any, file: Express.Multer.File, cb: Function) => {
-      // Aquí deberías obtener la ruta del documento desde la base de datos
-      const documentoId = req.params.documentoId;
-      
-      // Ruta base temporal - deberás ajustar esto según tu estructura
-      const uploadPath = './uploads/contabilidad';
-      
-      if (!fs.existsSync(uploadPath)) {
-        fs.mkdirSync(uploadPath, { recursive: true });
-      }
-      
-      cb(null, uploadPath);
-    },
-    filename: (req: any, file: Express.Multer.File, cb: Function) => {
-      const documentoId = req.params.documentoId;
-      const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-      const extension = path.extname(file.originalname);
-      
-      // Nombre del archivo: tipo_documentoId_timestamp_hash.ext
-      const filename = `${file.fieldname}_${documentoId}_${uniqueSuffix}${extension}`;
-      cb(null, filename);
-    },
-  }),
-  fileFilter: (req: any, file: Express.Multer.File, cb: Function) => {
+export const multerContabilidadConfig: MulterOptions = {
+  storage: memoryStorage(), // ← USAR memoryStorage para procesar en memoria
+  limits: {
+    fileSize: 15 * 1024 * 1024, // 15MB por archivo
+    files: 4, // Máximo 4 archivos (glosa, causacion, extracto, comprobanteEgreso)
+  },
+  fileFilter: (req, file, cb) => {
     const allowedMimes = [
       'application/pdf',
       'application/msword',
@@ -38,22 +15,12 @@ export const multerContabilidadConfig = {
       'image/jpeg',
       'image/png',
       'image/jpg',
-      'application/vnd.ms-excel',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     ];
-
+    
     if (allowedMimes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(
-        new BadRequestException(
-          `Tipo de archivo no permitido: ${file.mimetype}. Solo se permiten PDF, Word, Excel e imágenes.`,
-        ),
-        false,
-      );
+      cb(new Error(`Tipo de archivo no permitido: ${file.mimetype}`), false);
     }
-  },
-  limits: {
-    fileSize: 15 * 1024 * 1024, // 15MB máximo
   },
 };

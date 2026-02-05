@@ -18,6 +18,7 @@ import {
     HttpException,   // ← ESTE ES EL QUE FALTABA
     InternalServerErrorException // ← opcional pero recomendado
 } from '@nestjs/common';
+import * as multer from 'multer';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import * as fs from 'fs';
@@ -25,6 +26,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as mime from 'mime-types';
 import * as crypto from 'crypto';
+
 
 import { JwtAuthGuard } from './../common/guards/jwt-auth.guard';
 import { RolesGuard } from './../common/guards/roles.guard';
@@ -101,7 +103,7 @@ export class ContabilidadController {
                 { name: 'extracto', maxCount: 1 },
                 { name: 'comprobanteEgreso', maxCount: 1 },
             ],
-            multerContabilidadConfig,
+            multerContabilidadConfig // ← Usar la configuración con memoryStorage
         ),
     )
     async subirDocumentosContabilidad(
@@ -110,12 +112,27 @@ export class ContabilidadController {
         @Body() body: any,
         @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
     ) {
-        this.logger.log(`[SUBIR] Contador ${user.id} (${user.username}) subiendo documentos para ${documentoId}`);
+        this.logger.log(`[SUBIR] Contador ${user.id} subiendo para ${documentoId}`);
+
+        // DEBUG: Verificar archivos recibidos
+        if (files) {
+            this.logger.debug(`📁 Archivos recibidos en controller (${Object.keys(files).length}):`);
+            Object.keys(files).forEach(key => {
+                const fileArray = files[key];
+                if (fileArray && fileArray.length > 0) {
+                    const file = fileArray[0];
+                    this.logger.debug(`  ${key}: ${file.originalname} - ${file.size} bytes - Buffer: ${file.buffer ? 'YES' : 'NO'}`);
+                }
+            });
+        } else {
+            this.logger.warn('⚠️ No se recibieron archivos');
+        }
 
         const datos = {
-            tipoCausacion: body.tipoCausacion as TipoCausacion,
             observaciones: body.observaciones,
-            tieneGlosa: body.tieneGlosa ? JSON.parse(body.tieneGlosa) : undefined
+            tieneGlosa: body.tieneGlosa ? JSON.parse(body.tieneGlosa) : undefined,
+            estadoFinal: body.estadoFinal,
+            tipoCausacion: body.tipoCausacion as TipoCausacion,
         };
 
         return this.contabilidadService.subirDocumentosContabilidad(
@@ -252,4 +269,34 @@ export class ContabilidadController {
         }
     }
 
+
+    @Post('diagnostico-subida')
+@UseInterceptors(
+  FileFieldsInterceptor([
+    { name: 'testFile', maxCount: 1 }
+  ], multerContabilidadConfig)
+)
+async diagnosticoSubida(
+  @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
+  @Res() res: Response
+) {
+  const file = files['testFile']?.[0];
+  
+  if (!file) {
+    return res.status(400).json({ 
+      error: 'No se recibió archivo',
+      filesReceived: Object.keys(files)
+    });
+  }
+
+  return res.json({
+    success: true,
+    fileName: file.originalname,
+    fileSize: file.size,
+    hasBuffer: !!file.buffer,
+    bufferLength: file.buffer?.length || 0,
+    mimetype: file.mimetype,
+    fieldname: file.fieldname
+  });
+}
 }

@@ -14,12 +14,17 @@ export enum ContabilidadEstado {
   EN_REVISION = 'EN_REVISION',
   DISPONIBLE = 'DISPONIBLE',
 
-  // Estados finales / procesados (con sufijo para claridad)
+  // Estados finales / procesados (ya los tenías)
   PROCESADO_CONTABILIDAD = 'PROCESADO_CONTABILIDAD',
   COMPLETADO_CONTABILIDAD = 'COMPLETADO_CONTABILIDAD',
   GLOSADO_CONTABILIDAD = 'GLOSADO_CONTABILIDAD',
   OBSERVADO_CONTABILIDAD = 'OBSERVADO_CONTABILIDAD',
   RECHAZADO_CONTABILIDAD = 'RECHAZADO_CONTABILIDAD',
+
+  // NUEVOS: estados que vienen del frontend en "estadoFinal"
+  APROBADO = 'APROBADO',
+  OBSERVADO = 'OBSERVADO',          // ← duplicado con OBSERVADO_CONTABILIDAD, pero lo dejamos por compatibilidad
+  RECHAZADO = 'RECHAZADO',          // ← duplicado con RECHAZADO_CONTABILIDAD
 }
 
 export enum TipoCausacion {
