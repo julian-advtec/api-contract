@@ -9,7 +9,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const secret = configService.get<string>('JWT_SECRET');
     if (!secret) throw new Error('JWT_SECRET no definido en .env');
 
-    // ✅ Usamos StrategyOptions sin casteos extra
     const options: StrategyOptions = {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -19,12 +18,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super(options);
   }
 
-  async validate(payload: any) {
-    return {
-      userId: payload.userId,
-      username: payload.username,
-      role: payload.role?.toLowerCase(),
-      email: payload.email,
-    };
-  }
+async validate(payload: any) {
+  console.log('[JWT STRATEGY] Payload recibido:', JSON.stringify(payload, null, 2));
+
+  const user = {
+    id: payload.userId || payload.id,           // ← Cambia userId → id
+    username: payload.username,
+    role: payload.role?.toLowerCase(),
+    email: payload.email,
+  };
+
+  console.log('[JWT STRATEGY] Usuario devuelto al request:', JSON.stringify(user, null, 2));
+
+  return user;
+}
 }

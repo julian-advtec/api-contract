@@ -281,217 +281,273 @@ export class AuditorService {
       throw error;
     }
   }
-  async obtenerDocumentoParaVista(documentoId: string, auditorId?: string): Promise<any> {
-    this.logger.log(`🔍 Solicitando documento ${documentoId} para vista de auditoría (auditorId: ${auditorId || 'no proporcionado'})`);
 
-    let auditorIdSanitizado = auditorId?.trim();
-    if (!auditorIdSanitizado || auditorIdSanitizado === 'undefined') {
-      auditorIdSanitizado = undefined;
+async obtenerDocumentoParaVista(
+  documentoId: string,
+  auditorId?: string,
+  req?: Request  // opcional, si lo pasas desde controlador para futuro uso
+): Promise<any> {
+  this.logger.log(`🔍 Solicitando documento ${documentoId} para vista de auditoría (auditorId: ${auditorId || 'no proporcionado'})`);
+
+  let auditorIdSanitizado = auditorId?.trim();
+  if (!auditorIdSanitizado || auditorIdSanitizado === 'undefined') {
+    auditorIdSanitizado = undefined;
+  }
+
+  try {
+    // 1. Buscar el documento principal
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId },
+      relations: ['radicador', 'usuarioAsignado'],
+    });
+
+    if (!documento) {
+      throw new NotFoundException(`Documento ${documentoId} no encontrado`);
     }
 
-    try {
-      const documento = await this.documentoRepository.findOne({
-        where: { id: documentoId },
-        relations: ['radicador', 'usuarioAsignado'],
+    // Estados permitidos directamente desde el documento principal (auditor en tiempo real)
+    const estadosPermitidosPrincipal = [
+      'APROBADO_SUPERVISOR',
+      'EN_REVISION_AUDITOR',
+      'APROBADO_AUDITOR',
+      'OBSERVADO_AUDITOR',
+      'RECHAZADO_AUDITOR',
+      'COMPLETADO_AUDITOR',
+    ];
+
+    // 2. Buscar el registro en auditor_documentos
+    let auditorDoc: AuditorDocumento | null = null;
+
+    if (auditorIdSanitizado) {
+      auditorDoc = await this.auditorDocumentoRepository.findOne({
+        where: {
+          documento: { id: documentoId },
+          auditor: { id: auditorIdSanitizado },
+        },
+        relations: ['auditor'],
+      });
+    } else {
+      // Si no hay auditor específico, buscamos cualquier auditor asociado al documento
+      auditorDoc = await this.auditorDocumentoRepository.findOne({
+        where: { documento: { id: documentoId } },
+        relations: ['auditor'],
+      });
+    }
+
+    // 3. Determinar si se permite la vista
+    let permitido = false;
+    let razonPermiso = '';
+
+    // Caso 1: Estado principal permite acceso directo
+    if (estadosPermitidosPrincipal.includes(documento.estado)) {
+      permitido = true;
+      razonPermiso = `Acceso directo por estado principal: ${documento.estado}`;
+    }
+    // Caso 2: Vista retrospectiva → chequear estado en auditor_documentos
+    else if (auditorDoc && auditorDoc.estado) {
+      const estadosPermitidosAuditoria = [
+        'APROBADO',              // ← clave: el que aparece en tu BD
+        'APROBADO_AUDITOR',
+        'COMPLETADO_AUDITOR',
+        'COMPLETADO',
+        // Opcional: si quieres permitir vista aunque sea negativo:
+        // 'OBSERVADO_AUDITOR',
+        // 'RECHAZADO_AUDITOR',
+      ];
+
+      if (estadosPermitidosAuditoria.includes(auditorDoc.estado)) {
+        permitido = true;
+        razonPermiso = `Vista retrospectiva permitida por auditor_documentos.estado = ${auditorDoc.estado} (documento principal: ${documento.estado})`;
+      }
+    }
+
+    if (!permitido) {
+      this.logger.warn(
+        `[VISTA DENEGADA] Documento ${documentoId} - estado principal: ${documento.estado}, ` +
+        `estado en auditor_documentos: ${auditorDoc?.estado || 'sin registro'}, ` +
+        `auditorId: ${auditorIdSanitizado || 'no especificado'}`
+      );
+      throw new ForbiddenException(
+        `Vista no permitida en estado actual (${documento.estado}) ni en auditor_documentos (${auditorDoc?.estado || 'sin registro'})`
+      );
+    }
+
+    this.logger.log(
+      `[VISTA PERMITIDA] ${razonPermiso} - documentoId: ${documentoId}, auditorId: ${auditorIdSanitizado || 'no especificado'}`
+    );
+
+    // 4. Lógica de paths y primer radicado (sin cambios)
+    let primerRadicado: Documento | null = null;
+
+    let paths = {
+      rpPath: null as string | null,
+      cdpPath: null as string | null,
+      polizaPath: null as string | null,
+      certificadoBancarioPath: null as string | null,
+      minutaPath: null as string | null,
+      actaInicioPath: null as string | null,
+    };
+
+    if (documento.primerRadicadoDelAno) {
+      if (auditorDoc) {
+        paths = {
+          rpPath: auditorDoc.rpPath,
+          cdpPath: auditorDoc.cdpPath,
+          polizaPath: auditorDoc.polizaPath,
+          certificadoBancarioPath: auditorDoc.certificadoBancarioPath,
+          minutaPath: auditorDoc.minutaPath,
+          actaInicioPath: auditorDoc.actaInicioPath,
+        };
+      }
+    } else {
+      console.log('[VISTA-AUDITORIA] Buscando primer radicado válido con auditoría para contrato:', documento.numeroContrato);
+
+      const posiblesPrimeros = await this.documentoRepository.find({
+        where: {
+          numeroContrato: documento.numeroContrato,
+          primerRadicadoDelAno: true,
+        },
+        order: { fechaRadicacion: 'ASC' },
       });
 
-      if (!documento) {
-        throw new NotFoundException(`Documento ${documentoId} no encontrado`);
-      }
-
-      let primerRadicado: Documento | null = null;
-
-      const estadosPermitidos = [
-        'APROBADO_SUPERVISOR',
-        'EN_REVISION_AUDITOR',
-        'APROBADO_AUDITOR',
-        'OBSERVADO_AUDITOR',
-        'RECHAZADO_AUDITOR',
-        'COMPLETADO_AUDITOR',
-      ];
-
-      if (!estadosPermitidos.includes(documento.estado)) {
-        throw new ForbiddenException(`Estado no permitido: ${documento.estado}`);
-      }
-
-      let auditorDoc: AuditorDocumento | null = null;
-
-      if (auditorIdSanitizado) {
-        auditorDoc = await this.auditorDocumentoRepository.findOne({
-          where: {
-            documento: { id: documentoId },
-            auditor: { id: auditorIdSanitizado },
-          },
-          relations: ['auditor'],
+      let encontrado = false;
+      for (const primer of posiblesPrimeros) {
+        const ad = await this.auditorDocumentoRepository.findOne({
+          where: { documento: { id: primer.id } },
         });
-      }
 
-      let paths = {
-        rpPath: null as string | null,
-        cdpPath: null as string | null,
-        polizaPath: null as string | null,
-        certificadoBancarioPath: null as string | null,
-        minutaPath: null as string | null,
-        actaInicioPath: null as string | null,
-      };
-
-      if (documento.primerRadicadoDelAno) {
-        if (auditorDoc) {
+        if (ad && (ad.rpPath || ad.cdpPath || ad.polizaPath || ad.certificadoBancarioPath || ad.minutaPath || ad.actaInicioPath)) {
+          primerRadicado = primer;
           paths = {
-            rpPath: auditorDoc.rpPath,
-            cdpPath: auditorDoc.cdpPath,
-            polizaPath: auditorDoc.polizaPath,
-            certificadoBancarioPath: auditorDoc.certificadoBancarioPath,
-            minutaPath: auditorDoc.minutaPath,
-            actaInicioPath: auditorDoc.actaInicioPath,
+            rpPath: ad.rpPath,
+            cdpPath: ad.cdpPath,
+            polizaPath: ad.polizaPath,
+            certificadoBancarioPath: ad.certificadoBancarioPath,
+            minutaPath: ad.minutaPath,
+            actaInicioPath: ad.actaInicioPath,
           };
+          console.log('[VISTA-AUDITORIA] Usando primer radicado con auditoría:', primer.numeroRadicado);
+          encontrado = true;
+          break;
         }
+      }
+
+      if (!encontrado) {
+        console.log('[VISTA-AUDITORIA] No se encontró primer radicado con documentos de auditoría guardados');
+      }
+    }
+
+    // 5. Construir archivosAuditor (completa los que faltaban)
+    const archivosAuditor = [
+      {
+        tipo: 'rp',
+        descripcion: 'Resolución de Pago',
+        subido: !!paths.rpPath,
+        nombreArchivo: paths.rpPath || 'No disponible',
+        rutaServidor: paths.rpPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.rpPath) : null,
+      },
+      {
+        tipo: 'cdp',
+        descripcion: 'Certificado de Disponibilidad Presupuestal',
+        subido: !!paths.cdpPath,
+        nombreArchivo: paths.cdpPath || 'No disponible',
+        rutaServidor: paths.cdpPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.cdpPath) : null,
+      },
+      {
+        tipo: 'poliza',
+        descripcion: 'Póliza de Cumplimiento',
+        subido: !!paths.polizaPath,
+        nombreArchivo: paths.polizaPath || 'No disponible',
+        rutaServidor: paths.polizaPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.polizaPath) : null,
+      },
+      {
+        tipo: 'certificadoBancario',
+        descripcion: 'Certificado Bancario',
+        subido: !!paths.certificadoBancarioPath,
+        nombreArchivo: paths.certificadoBancarioPath || 'No disponible',
+        rutaServidor: paths.certificadoBancarioPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.certificadoBancarioPath) : null,
+      },
+      {
+        tipo: 'minuta',
+        descripcion: 'Minuta de Contrato',
+        subido: !!paths.minutaPath,
+        nombreArchivo: paths.minutaPath || 'No disponible',
+        rutaServidor: paths.minutaPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.minutaPath) : null,
+      },
+      {
+        tipo: 'actaInicio',
+        descripcion: 'Acta de Inicio',
+        subido: !!paths.actaInicioPath,
+        nombreArchivo: paths.actaInicioPath || 'No disponible',
+        rutaServidor: paths.actaInicioPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.actaInicioPath) : null,
+      },
+    ];
+
+    // 6. Nota de auditoría si no es primer radicado
+    let notaAuditoria: string | null = null;
+    if (!documento.primerRadicadoDelAno) {
+      if (primerRadicado) {
+        notaAuditoria = `Documentos de auditoría tomados del primer radicado del año: ${primerRadicado.numeroRadicado}`;
       } else {
-        console.log('[VISTA-AUDITORIA] Buscando primer radicado válido con auditoría para contrato:', documento.numeroContrato);
-
-        const posiblesPrimeros = await this.documentoRepository.find({
-          where: {
-            numeroContrato: documento.numeroContrato,
-            primerRadicadoDelAno: true,
-          },
-          order: { fechaRadicacion: 'ASC' },
-        });
-
-        let encontrado = false;
-        for (const primer of posiblesPrimeros) {
-          const ad = await this.auditorDocumentoRepository.findOne({
-            where: { documento: { id: primer.id } },
-          });
-
-          if (ad && (ad.rpPath || ad.cdpPath || ad.polizaPath || ad.certificadoBancarioPath || ad.minutaPath || ad.actaInicioPath)) {
-            primerRadicado = primer;
-            paths = {
-              rpPath: ad.rpPath,
-              cdpPath: ad.cdpPath,
-              polizaPath: ad.polizaPath,
-              certificadoBancarioPath: ad.certificadoBancarioPath,
-              minutaPath: ad.minutaPath,
-              actaInicioPath: ad.actaInicioPath,
-            };
-            console.log('[VISTA-AUDITORIA] Usando primer radicado con auditoría:', primer.numeroRadicado);
-            encontrado = true;
-            break;
-          }
-        }
-
-        if (!encontrado) {
-          console.log('[VISTA-AUDITORIA] No se encontró primer radicado con documentos de auditoría guardados');
-        }
+        notaAuditoria = 'No se encontraron documentos de auditoría para este contrato';
       }
+    }
 
-      const archivosAuditor = [
-        {
-          tipo: 'rp',
-          descripcion: 'Resolución de Pago',
-          subido: !!paths.rpPath,
-          nombreArchivo: paths.rpPath || 'No disponible',
-          rutaServidor: paths.rpPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.rpPath) : null,
+    // 7. Respuesta final
+    const respuesta = {
+      data: {
+        documento: {
+          id: documento.id,
+          numeroRadicado: documento.numeroRadicado,
+          numeroContrato: documento.numeroContrato,
+          nombreContratista: documento.nombreContratista,
+          documentoContratista: documento.documentoContratista,
+          fechaInicio: documento.fechaInicio,
+          fechaFin: documento.fechaFin,
+          fechaRadicacion: documento.fechaRadicacion,
+          radicador: documento.nombreRadicador,
+          supervisor: documento.usuarioAsignadoNombre,
+          observacion: documento.observacion,
+          estado: documento.estado,
+          estadoDocumento: documento.estado,
+          primerRadicadoDelAno: documento.primerRadicadoDelAno,
+          usuarioAsignadoNombre: documento.usuarioAsignadoNombre,
+          historialEstados: documento.historialEstados || [],
+          rutaCarpetaRadicado: documento.rutaCarpetaRadicado,
+          cuentaCobro: documento.cuentaCobro,
+          seguridadSocial: documento.seguridadSocial,
+          informeActividades: documento.informeActividades,
+          descripcionCuentaCobro: documento.descripcionCuentaCobro,
+          descripcionSeguridadSocial: documento.descripcionSeguridadSocial,
+          descripcionInformeActividades: documento.descripcionInformeActividades,
         },
-        {
-          tipo: 'cdp',
-          descripcion: 'Certificado de Disponibilidad Presupuestal',
-          subido: !!paths.cdpPath,
-          nombreArchivo: paths.cdpPath || 'No disponible',
-          rutaServidor: paths.cdpPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.cdpPath) : null,
-        },
-        {
-          tipo: 'poliza',
-          descripcion: 'Póliza',
-          subido: !!paths.polizaPath,
-          nombreArchivo: paths.polizaPath || 'No disponible',
-          rutaServidor: paths.polizaPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.polizaPath) : null,
-        },
-        {
-          tipo: 'certificadoBancario',
-          descripcion: 'Certificado Bancario',
-          subido: !!paths.certificadoBancarioPath,
-          nombreArchivo: paths.certificadoBancarioPath || 'No disponible',
-          rutaServidor: paths.certificadoBancarioPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.certificadoBancarioPath) : null,
-        },
-        {
-          tipo: 'minuta',
-          descripcion: 'Minuta',
-          subido: !!paths.minutaPath,
-          nombreArchivo: paths.minutaPath || 'No disponible',
-          rutaServidor: paths.minutaPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.minutaPath) : null,
-        },
-        {
-          tipo: 'actaInicio',
-          descripcion: 'Acta de Inicio',
-          subido: !!paths.actaInicioPath,
-          nombreArchivo: paths.actaInicioPath || 'No disponible',
-          rutaServidor: paths.actaInicioPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.actaInicioPath) : null,
-        },
-      ];
-
-      let notaAuditoria: string | null = null;
-      if (!documento.primerRadicadoDelAno) {
-        if (primerRadicado) {
-          notaAuditoria = `Documentos de auditoría tomados del primer radicado del año: ${primerRadicado.numeroRadicado}`;
-        } else {
-          notaAuditoria = 'No se encontraron documentos de auditoría para este contrato';
-        }
-      }
-
-      const respuesta = {
-        data: {
-          documento: {
-            id: documento.id,
-            numeroRadicado: documento.numeroRadicado,
-            numeroContrato: documento.numeroContrato,
-            nombreContratista: documento.nombreContratista,
-            documentoContratista: documento.documentoContratista,
-            fechaInicio: documento.fechaInicio,
-            fechaFin: documento.fechaFin,
-            fechaRadicacion: documento.fechaRadicacion,
-            radicador: documento.nombreRadicador,
-            supervisor: documento.usuarioAsignadoNombre,
-            observacion: documento.observacion,
-            estado: documento.estado,
-            estadoDocumento: documento.estado,
-            primerRadicadoDelAno: documento.primerRadicadoDelAno,
-            usuarioAsignadoNombre: documento.usuarioAsignadoNombre,
-            historialEstados: documento.historialEstados || [],
-            rutaCarpetaRadicado: documento.rutaCarpetaRadicado,
-            cuentaCobro: documento.cuentaCobro,
-            seguridadSocial: documento.seguridadSocial,
-            informeActividades: documento.informeActividades,
-            descripcionCuentaCobro: documento.descripcionCuentaCobro,
-            descripcionSeguridadSocial: documento.descripcionSeguridadSocial,
-            descripcionInformeActividades: documento.descripcionInformeActividades,
+        archivosRadicados: [
+          {
+            numero: 1,
+            nombre: documento.cuentaCobro,
+            descripcion: documento.descripcionCuentaCobro,
+            tipo: 'cuenta_cobro',
+            existe: !!documento.cuentaCobro,
           },
-          archivosRadicados: [
-            {
-              numero: 1,
-              nombre: documento.cuentaCobro,
-              descripcion: documento.descripcionCuentaCobro,
-              tipo: 'cuenta_cobro',
-              existe: !!documento.cuentaCobro,
-            },
-            {
-              numero: 2,
-              nombre: documento.seguridadSocial,
-              descripcion: documento.descripcionSeguridadSocial,
-              tipo: 'seguridad_social',
-              existe: !!documento.seguridadSocial,
-            },
-            {
-              numero: 3,
-              nombre: documento.informeActividades,
-              descripcion: documento.descripcionInformeActividades,
-              tipo: 'informe_actividades',
-              existe: !!documento.informeActividades,
-            },
-          ],
-          archivosAuditor,
-          notaAuditoria,
-          auditor: auditorDoc
-            ? {
+          {
+            numero: 2,
+            nombre: documento.seguridadSocial,
+            descripcion: documento.descripcionSeguridadSocial,
+            tipo: 'seguridad_social',
+            existe: !!documento.seguridadSocial,
+          },
+          {
+            numero: 3,
+            nombre: documento.informeActividades,
+            descripcion: documento.descripcionInformeActividades,
+            tipo: 'informe_actividades',
+            existe: !!documento.informeActividades,
+          },
+        ],
+        archivosAuditor,
+        notaAuditoria,
+        auditor: auditorDoc
+          ? {
               id: auditorDoc.id,
               estado: auditorDoc.estado,
               observaciones: auditorDoc.observaciones,
@@ -500,16 +556,17 @@ export class AuditorService {
               documentosSubidos: archivosAuditor.filter(a => a.subido).map(a => a.tipo),
               documentosFaltantes: this.obtenerDocumentosFaltantes(auditorDoc),
             }
-            : null,
-        }
-      };
+          : null,
+      }
+    };
+    
 
-      return respuesta;
-    } catch (error) {
-      this.logger.error(`❌ Error grave en obtenerDocumentoParaVista: ${error.message}`, error.stack);
-      throw error;
-    }
+    return respuesta;
+  } catch (error) {
+    this.logger.error(`❌ Error grave en obtenerDocumentoParaVista: ${error.message}`, error.stack);
+    throw error;
   }
+}
 
   private obtenerDocumentosFaltantes(auditorDoc: AuditorDocumento): string[] {
     const faltantes = [];

@@ -1,3 +1,4 @@
+// src/radicacion/entities/documento.entity.ts (VERSIÓN SIMPLIFICADA)
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -10,6 +11,8 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { SupervisorDocumento } from '../../supervision/entities/supervisor.entity';
+// import { AuditorDocumento } from '../../auditor/entities/auditor-documento.entity'; // COMENTA TEMPORAL
+// import { ContabilidadDocumento } from '../../contabilidad/entities/contabilidad-documento.entity'; // COMENTA TEMPORAL
 
 @Entity('documentos')
 export class Documento {
@@ -26,7 +29,6 @@ export class Documento {
   })
   primerRadicadoDelAno: boolean;
 
-  // ✅ AÑADIR ESTA NUEVA PROPIEDAD
   @Column({ 
     name: 'es_ultimo_radicado', 
     type: 'boolean', 
@@ -96,8 +98,16 @@ export class Documento {
   @Column({ name: 'usuario_asignado_nombre', length: 100, nullable: true })
   usuarioAsignadoNombre: string;
 
+  // ✅ Solo deja las relaciones que SÍ funcionan
   @OneToMany(() => SupervisorDocumento, supervisorDocumento => supervisorDocumento.documento)
   supervisorDocumentos: SupervisorDocumento[];
+
+  // ❌ COMENTA TEMPORALMENTE hasta que soluciones el problema
+  // @OneToMany(() => AuditorDocumento, auditorDocumento => auditorDocumento.documento)
+  // auditorDocumentos: AuditorDocumento[];
+
+  // @OneToMany(() => ContabilidadDocumento, contabilidadDocumento => contabilidadDocumento.documento)
+  // contabilidadDocumentos: ContabilidadDocumento[];
 
   @CreateDateColumn({ name: 'fecha_radicacion' })
   fechaRadicacion: Date;

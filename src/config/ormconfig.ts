@@ -5,6 +5,7 @@ import { Documento } from '../radicacion/entities/documento.entity';
 import { Contratista } from '../contratista/entities/contratista.entity';
 import { SupervisorDocumento } from '../supervision/entities/supervisor.entity';
 import { AuditorDocumento } from '../auditor/entities/auditor-documento.entity';
+import { ContabilidadDocumento } from '../contabilidad/entities/contabilidad-documento.entity';
 import 'dotenv/config';
 
 // Opciones de configuración
@@ -23,6 +24,7 @@ export const ormconfig: DataSourceOptions = {
     Contratista,
     SupervisorDocumento,
     AuditorDocumento,
+    ContabilidadDocumento
   ],
   
   synchronize: process.env.NODE_ENV !== 'production',

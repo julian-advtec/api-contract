@@ -12,6 +12,7 @@ import { EstadosModule } from './estados/estados.module';
 import { AppDataSource } from './config/ormconfig'; // ✅ Cambiado a AppDataSource
 import { ContratistaModule } from './contratista/contratista.module';
 import { AuditorModule } from './auditor/auditor.module';
+import { ContabilidadModule } from './contabilidad/contabilidad.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { AuditorModule } from './auditor/auditor.module';
     EstadosModule,
     ContratistaModule,
     AuditorModule,
+    ContabilidadModule,
     
   ],
   controllers: [AppController],
