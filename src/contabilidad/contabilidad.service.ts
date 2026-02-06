@@ -277,7 +277,7 @@ export class ContabilidadService {
         // 1. Buscar el usuario que hace la petición
         const user = await this.userRepository.findOne({
             where: { id: userId },
-            select: ['id', 'username', 'role', 'fullName'] // solo lo necesario
+            select: ['id', 'username', 'role', 'fullName']
         });
 
         if (!user) {
@@ -287,16 +287,7 @@ export class ContabilidadService {
 
         this.logger.debug(`Usuario encontrado: ${user.username} (${user.role})`);
 
-        // 2. Buscar el registro de contabilidad (solo si el usuario actual lo tiene asignado)
-        const contabilidadDoc = await this.contabilidadRepository.findOne({
-            where: {
-                documento: { id: documentoId },
-                contador: { id: userId }
-            },
-            relations: ['documento', 'contador'],
-        });
-
-        // 3. Buscar el documento principal
+        // 2. Buscar el documento principal
         const documento = await this.documentoRepository.findOne({
             where: { id: documentoId },
             relations: ['radicador', 'usuarioAsignado'],
@@ -307,53 +298,91 @@ export class ContabilidadService {
             throw new NotFoundException('Documento no encontrado');
         }
 
-        // 4. Estados permitidos para contabilidad
-        const estadosPermitidos = [
-            'APROBADO_AUDITOR',
-            'COMPLETADO_AUDITOR',
-            'EN_REVISION_CONTABILIDAD',
-            'EN_PROCESO_CONTABILIDAD',
-            'PROCESADO_CONTABILIDAD',
-            'COMPLETADO_CONTABILIDAD'
-        ];
+        // 3. Estados permitidos por rol (lógica central aquí)
+        const rol = user.role?.toLowerCase() || '';
+        const estado = documento.estado?.toUpperCase() || '';
 
-        if (!estadosPermitidos.includes(documento.estado)) {
-            this.logger.warn(`Estado no permitido para contabilidad: ${documento.estado}`);
-            throw new ForbiddenException('Documento no disponible para contabilidad');
+        let tieneAcceso = false;
+
+        if (rol === 'contabilidad' || rol === 'admin') {
+            tieneAcceso =
+                estado.includes('CONTABILIDAD') ||
+                estado === 'APROBADO' ||
+                estado.includes('RECHAZADO_CONTABILIDAD') ||
+                estado.includes('OBSERVADO_CONTABILIDAD') ||
+                estado.includes('GLOSADO_CONTABILIDAD') ||
+                estado.includes('COMPLETADO_CONTABILIDAD') ||
+                estado.includes('PROCESADO_CONTABILIDAD') ||
+                estado === 'APROBADO_AUDITOR' ||           // permite ver justo después de auditoría
+                estado === 'COMPLETADO_AUDITOR';
+        } else if (rol === 'supervisor') {
+            tieneAcceso = ['RADICADO', 'EN_REVISION_SUPERVISOR'].includes(estado);
+        } else if (rol === 'auditor') {
+            tieneAcceso = estado.includes('AUDITOR') || estado === 'APROBADO';
         }
 
-        // 5. Regla de acceso según rol
-        if (documento.estado === 'EN_REVISION_CONTABILIDAD') {
-            // Caso especial: ADMIN puede ver TODO
-            if (user.role === UserRole.ADMIN) {
-                this.logger.log(`Admin ${user.username} accediendo a documento en revisión de otro usuario`);
-                // Continúa sin validar asignación
-            }
-            // Caso normal: solo el contador asignado puede verlo
-            else {
-                if (!contabilidadDoc || contabilidadDoc.contador.id !== userId) {
-                    this.logger.warn(
-                        `Acceso denegado - Documento en revisión por otro usuario. ` +
-                        `Solicitante: ${user.username} (${userId}), Asignado: ${contabilidadDoc?.contador?.username || 'nadie'}`
-                    );
-                    throw new ForbiddenException('Este documento está siendo revisado por otro contador');
-                }
-            }
+        if (!tieneAcceso) {
+            this.logger.warn(`Acceso denegado - Estado: ${estado} - Rol: ${rol}`);
+            throw new ForbiddenException(
+                `Solo puedes acceder a documentos en estado RADICADO, EN_REVISION_SUPERVISOR o estados de contabilidad (actual: ${estado})`
+            );
         }
 
-        // 6. Buscar info de auditoría (la última)
+        // 4. Buscar registro de contabilidad (solo si el usuario es contador)
+        let contabilidadDoc: ContabilidadDocumento | null = null;
+        if (rol === 'contabilidad' || rol === 'admin') {
+            contabilidadDoc = await this.contabilidadRepository.findOne({
+                where: {
+                    documento: { id: documentoId },
+                    contador: { id: userId }
+                },
+                relations: ['contador'],
+            });
+        }
+
+        // 5. Buscar la última auditoría (si existe)
         const auditorDoc = await this.auditorDocumentoRepository.findOne({
             where: { documento: { id: documentoId } },
             relations: ['auditor'],
             order: { fechaActualizacion: 'DESC' }
         });
 
-        // 7. Construir y devolver la respuesta
+        // 6. Construir respuesta completa
         const respuesta = this.construirRespuestaDetalle(documento, contabilidadDoc, auditorDoc, user);
 
-        this.logger.log(`Detalle entregado exitosamente para documento ${documentoId} a ${user.username}`);
+        // 7. Registrar acceso (con manejo seguro de radicador_id NULL)
+        await this.registrarUltimoAcceso(documento, user);
 
+        this.logger.log(`Detalle entregado exitosamente para documento ${documentoId} a ${user.username}`);
         return respuesta;
+    }
+
+    private async registrarUltimoAcceso(documento: Documento, user: User): Promise<void> {
+        try {
+            // Verificamos si existe el objeto relacionado 'radicador' (ya existe en tu entidad)
+            if (!documento.radicador) {
+                this.logger.warn(
+                    `No se actualiza ultimoAcceso en documento ${documento.id}: no tiene radicador asociado`
+                );
+                return; // Salimos sin error, no bloqueamos la consulta principal
+            }
+
+            // Si sí existe radicador, procedemos normalmente
+            documento.ultimoAcceso = new Date();
+            documento.ultimoUsuario = user.username || user.email || 'Sistema';
+
+            await this.documentoRepository.save(documento);
+
+            this.logger.debug(
+                `Ultimo acceso actualizado en documento ${documento.id} por ${user.username}`
+            );
+        } catch (error: any) {
+            this.logger.error(
+                `Error actualizando ultimo acceso en documento ${documento.id}: ${error.message}`,
+                error.stack
+            );
+            // No lanzamos excepción → no queremos que rompa la carga del detalle
+        }
     }
 
     // Definir si hay glosa
@@ -396,335 +425,335 @@ export class ContabilidadService {
 
     // Subir documentos de contabilidad
     // En ContabilidadService.ts
-async subirDocumentosContabilidad(
-  documentoId: string,
-  contadorId: string,
-  datos: {
-    tipoCausacion?: TipoCausacion;
-    observaciones?: string;
-    tieneGlosa?: boolean;
-    estadoFinal?: string;
-  },
-  files: { [key: string]: Express.Multer.File[] },
-): Promise<{ success: boolean; message: string; contabilidad: ContabilidadDocumento }> {
-  const logPrefix = `[SUBIR-DOCS] doc=${documentoId} contador=${contadorId}`;
-  this.logger.log(`${logPrefix} Iniciando subida...`);
-  
-  // Log de los archivos recibidos
-  this.logger.log(`${logPrefix} Archivos recibidos: ${files ? Object.keys(files).join(', ') : 'NINGUNO'}`);
-  if (files) {
-    Object.keys(files).forEach(key => {
-      if (files[key] && files[key][0]) {
-        const file = files[key][0];
-        this.logger.log(`${logPrefix}   → ${key}: ${file.originalname} (${file.size} bytes, ${file.mimetype})`);
-      }
-    });
-  }
+    async subirDocumentosContabilidad(
+        documentoId: string,
+        contadorId: string,
+        datos: {
+            tipoCausacion?: TipoCausacion;
+            observaciones?: string;
+            tieneGlosa?: boolean;
+            estadoFinal?: string;
+        },
+        files: { [key: string]: Express.Multer.File[] },
+    ): Promise<{ success: boolean; message: string; contabilidad: ContabilidadDocumento }> {
+        const logPrefix = `[SUBIR-DOCS] doc=${documentoId} contador=${contadorId}`;
+        this.logger.log(`${logPrefix} Iniciando subida...`);
 
-  // 1. Buscar registro de contabilidad
-  const contabilidadDoc = await this.contabilidadRepository.findOne({
-    where: {
-      documento: { id: documentoId },
-      contador: { id: contadorId },
-      estado: ContabilidadEstado.EN_REVISION
-    },
-    relations: ['documento', 'contador']
-  });
+        // Log de los archivos recibidos
+        this.logger.log(`${logPrefix} Archivos recibidos: ${files ? Object.keys(files).join(', ') : 'NINGUNO'}`);
+        if (files) {
+            Object.keys(files).forEach(key => {
+                if (files[key] && files[key][0]) {
+                    const file = files[key][0];
+                    this.logger.log(`${logPrefix}   → ${key}: ${file.originalname} (${file.size} bytes, ${file.mimetype})`);
+                }
+            });
+        }
 
-  if (!contabilidadDoc) {
-    this.logger.error(`${logPrefix} No tiene el documento en revisión`);
-    throw new ForbiddenException('No tienes este documento asignado en revisión');
-  }
+        // 1. Buscar registro de contabilidad
+        const contabilidadDoc = await this.contabilidadRepository.findOne({
+            where: {
+                documento: { id: documentoId },
+                contador: { id: contadorId },
+                estado: ContabilidadEstado.EN_REVISION
+            },
+            relations: ['documento', 'contador']
+        });
 
-  const documento = contabilidadDoc.documento;
-  const contador = contabilidadDoc.contador;
+        if (!contabilidadDoc) {
+            this.logger.error(`${logPrefix} No tiene el documento en revisión`);
+            throw new ForbiddenException('No tienes este documento asignado en revisión');
+        }
 
-  this.logger.log(`${logPrefix} Documento: ${documento.numeroRadicado}, Contador: ${contador.username}`);
+        const documento = contabilidadDoc.documento;
+        const contador = contabilidadDoc.contador;
 
-  // 2. Validar que existe la carpeta del radicado
-  if (!documento.rutaCarpetaRadicado) {
-    this.logger.error(`${logPrefix} No tiene rutaCarpetaRadicado`);
-    throw new BadRequestException('El documento no tiene ruta de carpeta asignada');
-  }
+        this.logger.log(`${logPrefix} Documento: ${documento.numeroRadicado}, Contador: ${contador.username}`);
 
-  if (!fs.existsSync(documento.rutaCarpetaRadicado)) {
-    this.logger.error(`${logPrefix} Carpeta no existe: ${documento.rutaCarpetaRadicado}`);
-    throw new BadRequestException(`La carpeta del documento no existe: ${documento.rutaCarpetaRadicado}`);
-  }
+        // 2. Validar que existe la carpeta del radicado
+        if (!documento.rutaCarpetaRadicado) {
+            this.logger.error(`${logPrefix} No tiene rutaCarpetaRadicado`);
+            throw new BadRequestException('El documento no tiene ruta de carpeta asignada');
+        }
 
-  // 3. Crear carpeta contabilidad si no existe
-  const carpetaContabilidad = path.join(documento.rutaCarpetaRadicado, 'contabilidad');
-  if (!fs.existsSync(carpetaContabilidad)) {
-    fs.mkdirSync(carpetaContabilidad, { recursive: true });
-    this.logger.log(`${logPrefix} 📁 Creada carpeta contabilidad: ${carpetaContabilidad}`);
-  }
+        if (!fs.existsSync(documento.rutaCarpetaRadicado)) {
+            this.logger.error(`${logPrefix} Carpeta no existe: ${documento.rutaCarpetaRadicado}`);
+            throw new BadRequestException(`La carpeta del documento no existe: ${documento.rutaCarpetaRadicado}`);
+        }
 
-  // 4. Actualizar datos básicos
-  if (datos.observaciones) {
-    contabilidadDoc.observaciones = datos.observaciones;
-  }
+        // 3. Crear carpeta contabilidad si no existe
+        const carpetaContabilidad = path.join(documento.rutaCarpetaRadicado, 'contabilidad');
+        if (!fs.existsSync(carpetaContabilidad)) {
+            fs.mkdirSync(carpetaContabilidad, { recursive: true });
+            this.logger.log(`${logPrefix} 📁 Creada carpeta contabilidad: ${carpetaContabilidad}`);
+        }
 
-  if (datos.tieneGlosa !== undefined) {
-    contabilidadDoc.tieneGlosa = datos.tieneGlosa;
-    this.logger.log(`${logPrefix} Glosa definida: ${datos.tieneGlosa}`);
-  }
+        // 4. Actualizar datos básicos
+        if (datos.observaciones) {
+            contabilidadDoc.observaciones = datos.observaciones;
+        }
 
-  if (datos.tipoCausacion) {
-    contabilidadDoc.tipoCausacion = datos.tipoCausacion;
-    this.logger.log(`${logPrefix} Tipo causación: ${datos.tipoCausacion}`);
-  }
+        if (datos.tieneGlosa !== undefined) {
+            contabilidadDoc.tieneGlosa = datos.tieneGlosa;
+            this.logger.log(`${logPrefix} Glosa definida: ${datos.tieneGlosa}`);
+        }
 
-  contabilidadDoc.fechaActualizacion = new Date();
+        if (datos.tipoCausacion) {
+            contabilidadDoc.tipoCausacion = datos.tipoCausacion;
+            this.logger.log(`${logPrefix} Tipo causación: ${datos.tipoCausacion}`);
+        }
 
-  const archivosGuardados: Record<string, string> = {};
+        contabilidadDoc.fechaActualizacion = new Date();
 
-  // 5. Función mejorada para guardar archivos
-  const guardarArchivo = async (tipo: string, file?: Express.Multer.File): Promise<boolean> => {
-    if (!file) {
-      this.logger.log(`${logPrefix} ⚠️ No se recibió archivo para ${tipo}`);
-      return false;
+        const archivosGuardados: Record<string, string> = {};
+
+        // 5. Función mejorada para guardar archivos
+        const guardarArchivo = async (tipo: string, file?: Express.Multer.File): Promise<boolean> => {
+            if (!file) {
+                this.logger.log(`${logPrefix} ⚠️ No se recibió archivo para ${tipo}`);
+                return false;
+            }
+
+            // Validar que el archivo tiene buffer
+            if (!file.buffer || file.buffer.length === 0) {
+                this.logger.error(`${logPrefix} ❌ Archivo ${tipo} no tiene buffer o está vacío`);
+                throw new BadRequestException(`El archivo ${tipo} no tiene datos. Verifica la configuración.`);
+            }
+
+            const maxSize = 15 * 1024 * 1024;
+            if (file.size > maxSize) {
+                throw new BadRequestException(`El archivo ${tipo} (${file.originalname}) excede 15MB`);
+            }
+
+            // Validar tipo de archivo
+            const allowedMimes = [
+                'application/pdf',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'image/jpeg',
+                'image/png',
+                'image/jpg',
+            ];
+
+            if (!allowedMimes.includes(file.mimetype)) {
+                throw new BadRequestException(`Tipo de archivo no permitido para ${tipo}: ${file.mimetype}`);
+            }
+
+            try {
+                // Generar nombre único
+                const extension = path.extname(file.originalname).toLowerCase() || this.obtenerExtensionPorMime(file.mimetype);
+                const timestamp = Date.now();
+                const hash = crypto.randomBytes(4).toString('hex');
+                const nombreArchivo = `${tipo}_${documento.numeroRadicado}_${timestamp}_${hash}${extension}`;
+                const rutaCompleta = path.join(carpetaContabilidad, nombreArchivo);
+
+                this.logger.log(`${logPrefix} 💾 Guardando ${tipo} (${file.originalname}) en: ${rutaCompleta}`);
+
+                // Guardar el archivo
+                fs.writeFileSync(rutaCompleta, file.buffer);
+
+                // Verificar que se guardó correctamente
+                if (!fs.existsSync(rutaCompleta)) {
+                    this.logger.error(`${logPrefix} ❌ Archivo no se creó: ${rutaCompleta}`);
+                    throw new InternalServerErrorException(`No se pudo guardar el archivo ${tipo}`);
+                }
+
+                // Verificar tamaño del archivo guardado
+                const stats = fs.statSync(rutaCompleta);
+                if (stats.size === 0) {
+                    this.logger.error(`${logPrefix} ❌ Archivo se guardó vacío: ${rutaCompleta}`);
+                    fs.unlinkSync(rutaCompleta); // Eliminar archivo vacío
+                    throw new InternalServerErrorException(`El archivo ${tipo} se guardó vacío`);
+                }
+
+                archivosGuardados[tipo] = nombreArchivo;
+
+                // Actualizar ruta en la entidad según el tipo
+                const rutaRelativa = path.join('contabilidad', nombreArchivo).replace(/\\/g, '/');
+                const fechaActual = new Date();
+
+                switch (tipo) {
+                    case 'glosa':
+                        contabilidadDoc.glosaPath = rutaRelativa;
+                        contabilidadDoc.fechaGlosa = fechaActual;
+                        this.logger.log(`${logPrefix} ✅ Glosa guardada: ${rutaRelativa}`);
+                        break;
+                    case 'causacion':
+                        contabilidadDoc.causacionPath = rutaRelativa;
+                        contabilidadDoc.fechaCausacion = fechaActual;
+                        this.logger.log(`${logPrefix} ✅ Causación guardada: ${rutaRelativa}`);
+                        break;
+                    case 'extracto':
+                        contabilidadDoc.extractoPath = rutaRelativa;
+                        contabilidadDoc.fechaExtracto = fechaActual;
+                        this.logger.log(`${logPrefix} ✅ Extracto guardado: ${rutaRelativa}`);
+                        break;
+                    case 'comprobante_egreso':
+                        contabilidadDoc.comprobanteEgresoPath = rutaRelativa;
+                        contabilidadDoc.fechaComprobanteEgreso = fechaActual;
+                        this.logger.log(`${logPrefix} ✅ Comprobante egreso guardado: ${rutaRelativa}`);
+                        break;
+                    default:
+                        this.logger.warn(`${logPrefix} ⚠️ Tipo desconocido: ${tipo}`);
+                }
+
+                this.logger.log(`${logPrefix} ✅ ${tipo} guardado correctamente: ${nombreArchivo} (${stats.size} bytes)`);
+                return true;
+
+            } catch (error) {
+                this.logger.error(`${logPrefix} ❌ Error guardando ${tipo}: ${error.message}`, error.stack);
+                throw new InternalServerErrorException(`Error al guardar ${tipo}: ${error.message}`);
+            }
+        };
+
+        // Método auxiliar para obtener extensión
+        const obtenerExtensionPorMime = (mimeType: string): string => {
+            const mimeToExt: Record<string, string> = {
+                'application/pdf': '.pdf',
+                'application/msword': '.doc',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+                'image/jpeg': '.jpg',
+                'image/png': '.png',
+                'image/jpg': '.jpg',
+            };
+            return mimeToExt[mimeType] || '.bin';
+        };
+
+        // 6. Guardar cada archivo individualmente con manejo de errores
+        try {
+            // Glosa
+            if (files['glosa'] && files['glosa'][0]) {
+                await guardarArchivo('glosa', files['glosa'][0]);
+            }
+
+            // Causación
+            if (files['causacion'] && files['causacion'][0]) {
+                await guardarArchivo('causacion', files['causacion'][0]);
+            }
+
+            // Extracto
+            if (files['extracto'] && files['extracto'][0]) {
+                await guardarArchivo('extracto', files['extracto'][0]);
+            }
+
+            // Comprobante de Egreso
+            if (files['comprobanteEgreso'] && files['comprobanteEgreso'][0]) {
+                await guardarArchivo('comprobante_egreso', files['comprobanteEgreso'][0]);
+            }
+
+        } catch (error) {
+            this.logger.error(`${logPrefix} ❌ Error durante la subida de archivos: ${error.message}`, error.stack);
+            throw error;
+        }
+
+        // 7. Validación para estado APROBADO
+        if (datos.estadoFinal?.toUpperCase() === 'APROBADO') {
+            if (!contabilidadDoc.comprobanteEgresoPath) {
+                this.logger.error(`${logPrefix} ❌ Para APROBAR debe subir comprobante de egreso`);
+                throw new BadRequestException('Para APROBAR es obligatorio subir el Comprobante de Egreso');
+            }
+        }
+
+        // 8. Mapear estado final
+        let estadoFinalMapeado: ContabilidadEstado | undefined;
+        if (datos.estadoFinal) {
+            const estadoUpper = datos.estadoFinal.toUpperCase();
+            switch (estadoUpper) {
+                case 'APROBADO':
+                    estadoFinalMapeado = ContabilidadEstado.COMPLETADO_CONTABILIDAD;
+                    break;
+                case 'OBSERVADO':
+                    estadoFinalMapeado = ContabilidadEstado.OBSERVADO_CONTABILIDAD;
+                    break;
+                case 'RECHAZADO':
+                    estadoFinalMapeado = ContabilidadEstado.RECHAZADO_CONTABILIDAD;
+                    break;
+                default:
+                    this.logger.warn(`${logPrefix} ⚠️ Estado final no reconocido: ${datos.estadoFinal}`);
+            }
+        }
+
+        // 9. Aplicar estado si se definió
+        if (estadoFinalMapeado) {
+            contabilidadDoc.estado = estadoFinalMapeado;
+            contabilidadDoc.fechaFinRevision = new Date();
+
+            // Actualizar estado del documento principal
+            let nuevoEstadoDocumento = documento.estado;
+            switch (estadoFinalMapeado) {
+                case ContabilidadEstado.COMPLETADO_CONTABILIDAD:
+                    nuevoEstadoDocumento = 'COMPLETADO_CONTABILIDAD';
+                    break;
+                case ContabilidadEstado.OBSERVADO_CONTABILIDAD:
+                    nuevoEstadoDocumento = 'OBSERVADO_CONTABILIDAD';
+                    break;
+                case ContabilidadEstado.RECHAZADO_CONTABILIDAD:
+                    nuevoEstadoDocumento = 'RECHAZADO_CONTABILIDAD';
+                    break;
+            }
+
+            if (documento.estado !== nuevoEstadoDocumento) {
+                documento.estado = nuevoEstadoDocumento;
+                documento.fechaActualizacion = new Date();
+
+                // Agregar al historial
+                const historial = documento.historialEstados || [];
+                historial.push({
+                    fecha: new Date(),
+                    estado: nuevoEstadoDocumento,
+                    usuarioId: contadorId,
+                    usuarioNombre: contador.fullName || contador.username,
+                    rolUsuario: contador.role,
+                    observacion: `Procesado por contabilidad: ${estadoFinalMapeado} - ${datos.observaciones?.substring(0, 100) || 'Sin observación'}`
+                });
+                documento.historialEstados = historial;
+
+                await this.documentoRepository.save(documento);
+                this.logger.log(`${logPrefix} ✅ Estado documento actualizado: ${documento.estado}`);
+            }
+        }
+
+        // 10. Guardar cambios en la base de datos
+        const saved = await this.contabilidadRepository.save(contabilidadDoc);
+
+        // 11. Registrar acceso
+        if (documento.rutaCarpetaRadicado) {
+            await this.registrarAccesoContabilidad(
+                documento.rutaCarpetaRadicado,
+                contadorId,
+                `SUBIÓ documentos contables`,
+                `Archivos: ${Object.keys(archivosGuardados).join(', ') || 'ninguno'} | Estado: ${datos.estadoFinal || 'sin cambio'}`
+            );
+        }
+
+        // 12. Log del resultado
+        this.logger.log(`${logPrefix} 🎉 Subida completada exitosamente`);
+        this.logger.log(`${logPrefix}   Archivos guardados: ${JSON.stringify(archivosGuardados)}`);
+        this.logger.log(`${logPrefix}   Estado contabilidad: ${saved.estado}`);
+        this.logger.log(`${logPrefix}   Ruta glosa: ${saved.glosaPath || 'NO'}`);
+        this.logger.log(`${logPrefix}   Ruta causación: ${saved.causacionPath || 'NO'}`);
+        this.logger.log(`${logPrefix}   Ruta extracto: ${saved.extractoPath || 'NO'}`);
+        this.logger.log(`${logPrefix}   Ruta comprobante: ${saved.comprobanteEgresoPath || 'NO'}`);
+
+        return {
+            success: true,
+            message: 'Documentos guardados correctamente en el servidor',
+            contabilidad: saved
+        };
     }
 
-    // Validar que el archivo tiene buffer
-    if (!file.buffer || file.buffer.length === 0) {
-      this.logger.error(`${logPrefix} ❌ Archivo ${tipo} no tiene buffer o está vacío`);
-      throw new BadRequestException(`El archivo ${tipo} no tiene datos. Verifica la configuración.`);
+    // Agrega este método auxiliar si no existe
+    private obtenerExtensionPorMime(mimeType: string): string {
+        const mimeToExt: Record<string, string> = {
+            'application/pdf': '.pdf',
+            'application/msword': '.doc',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+            'image/jpeg': '.jpg',
+            'image/png': '.png',
+            'image/jpg': '.jpg',
+        };
+        return mimeToExt[mimeType] || '.bin';
     }
-
-    const maxSize = 15 * 1024 * 1024;
-    if (file.size > maxSize) {
-      throw new BadRequestException(`El archivo ${tipo} (${file.originalname}) excede 15MB`);
-    }
-
-    // Validar tipo de archivo
-    const allowedMimes = [
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'image/jpeg',
-      'image/png',
-      'image/jpg',
-    ];
-
-    if (!allowedMimes.includes(file.mimetype)) {
-      throw new BadRequestException(`Tipo de archivo no permitido para ${tipo}: ${file.mimetype}`);
-    }
-
-    try {
-      // Generar nombre único
-      const extension = path.extname(file.originalname).toLowerCase() || this.obtenerExtensionPorMime(file.mimetype);
-      const timestamp = Date.now();
-      const hash = crypto.randomBytes(4).toString('hex');
-      const nombreArchivo = `${tipo}_${documento.numeroRadicado}_${timestamp}_${hash}${extension}`;
-      const rutaCompleta = path.join(carpetaContabilidad, nombreArchivo);
-
-      this.logger.log(`${logPrefix} 💾 Guardando ${tipo} (${file.originalname}) en: ${rutaCompleta}`);
-
-      // Guardar el archivo
-      fs.writeFileSync(rutaCompleta, file.buffer);
-      
-      // Verificar que se guardó correctamente
-      if (!fs.existsSync(rutaCompleta)) {
-        this.logger.error(`${logPrefix} ❌ Archivo no se creó: ${rutaCompleta}`);
-        throw new InternalServerErrorException(`No se pudo guardar el archivo ${tipo}`);
-      }
-
-      // Verificar tamaño del archivo guardado
-      const stats = fs.statSync(rutaCompleta);
-      if (stats.size === 0) {
-        this.logger.error(`${logPrefix} ❌ Archivo se guardó vacío: ${rutaCompleta}`);
-        fs.unlinkSync(rutaCompleta); // Eliminar archivo vacío
-        throw new InternalServerErrorException(`El archivo ${tipo} se guardó vacío`);
-      }
-
-      archivosGuardados[tipo] = nombreArchivo;
-
-      // Actualizar ruta en la entidad según el tipo
-      const rutaRelativa = path.join('contabilidad', nombreArchivo).replace(/\\/g, '/');
-      const fechaActual = new Date();
-
-      switch (tipo) {
-        case 'glosa':
-          contabilidadDoc.glosaPath = rutaRelativa;
-          contabilidadDoc.fechaGlosa = fechaActual;
-          this.logger.log(`${logPrefix} ✅ Glosa guardada: ${rutaRelativa}`);
-          break;
-        case 'causacion':
-          contabilidadDoc.causacionPath = rutaRelativa;
-          contabilidadDoc.fechaCausacion = fechaActual;
-          this.logger.log(`${logPrefix} ✅ Causación guardada: ${rutaRelativa}`);
-          break;
-        case 'extracto':
-          contabilidadDoc.extractoPath = rutaRelativa;
-          contabilidadDoc.fechaExtracto = fechaActual;
-          this.logger.log(`${logPrefix} ✅ Extracto guardado: ${rutaRelativa}`);
-          break;
-        case 'comprobante_egreso':
-          contabilidadDoc.comprobanteEgresoPath = rutaRelativa;
-          contabilidadDoc.fechaComprobanteEgreso = fechaActual;
-          this.logger.log(`${logPrefix} ✅ Comprobante egreso guardado: ${rutaRelativa}`);
-          break;
-        default:
-          this.logger.warn(`${logPrefix} ⚠️ Tipo desconocido: ${tipo}`);
-      }
-
-      this.logger.log(`${logPrefix} ✅ ${tipo} guardado correctamente: ${nombreArchivo} (${stats.size} bytes)`);
-      return true;
-      
-    } catch (error) {
-      this.logger.error(`${logPrefix} ❌ Error guardando ${tipo}: ${error.message}`, error.stack);
-      throw new InternalServerErrorException(`Error al guardar ${tipo}: ${error.message}`);
-    }
-  };
-
-  // Método auxiliar para obtener extensión
-  const obtenerExtensionPorMime = (mimeType: string): string => {
-    const mimeToExt: Record<string, string> = {
-      'application/pdf': '.pdf',
-      'application/msword': '.doc',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
-      'image/jpeg': '.jpg',
-      'image/png': '.png',
-      'image/jpg': '.jpg',
-    };
-    return mimeToExt[mimeType] || '.bin';
-  };
-
-  // 6. Guardar cada archivo individualmente con manejo de errores
-  try {
-    // Glosa
-    if (files['glosa'] && files['glosa'][0]) {
-      await guardarArchivo('glosa', files['glosa'][0]);
-    }
-
-    // Causación
-    if (files['causacion'] && files['causacion'][0]) {
-      await guardarArchivo('causacion', files['causacion'][0]);
-    }
-
-    // Extracto
-    if (files['extracto'] && files['extracto'][0]) {
-      await guardarArchivo('extracto', files['extracto'][0]);
-    }
-
-    // Comprobante de Egreso
-    if (files['comprobanteEgreso'] && files['comprobanteEgreso'][0]) {
-      await guardarArchivo('comprobante_egreso', files['comprobanteEgreso'][0]);
-    }
-
-  } catch (error) {
-    this.logger.error(`${logPrefix} ❌ Error durante la subida de archivos: ${error.message}`, error.stack);
-    throw error;
-  }
-
-  // 7. Validación para estado APROBADO
-  if (datos.estadoFinal?.toUpperCase() === 'APROBADO') {
-    if (!contabilidadDoc.comprobanteEgresoPath) {
-      this.logger.error(`${logPrefix} ❌ Para APROBAR debe subir comprobante de egreso`);
-      throw new BadRequestException('Para APROBAR es obligatorio subir el Comprobante de Egreso');
-    }
-  }
-
-  // 8. Mapear estado final
-  let estadoFinalMapeado: ContabilidadEstado | undefined;
-  if (datos.estadoFinal) {
-    const estadoUpper = datos.estadoFinal.toUpperCase();
-    switch (estadoUpper) {
-      case 'APROBADO':
-        estadoFinalMapeado = ContabilidadEstado.COMPLETADO_CONTABILIDAD;
-        break;
-      case 'OBSERVADO':
-        estadoFinalMapeado = ContabilidadEstado.OBSERVADO_CONTABILIDAD;
-        break;
-      case 'RECHAZADO':
-        estadoFinalMapeado = ContabilidadEstado.RECHAZADO_CONTABILIDAD;
-        break;
-      default:
-        this.logger.warn(`${logPrefix} ⚠️ Estado final no reconocido: ${datos.estadoFinal}`);
-    }
-  }
-
-  // 9. Aplicar estado si se definió
-  if (estadoFinalMapeado) {
-    contabilidadDoc.estado = estadoFinalMapeado;
-    contabilidadDoc.fechaFinRevision = new Date();
-
-    // Actualizar estado del documento principal
-    let nuevoEstadoDocumento = documento.estado;
-    switch (estadoFinalMapeado) {
-      case ContabilidadEstado.COMPLETADO_CONTABILIDAD:
-        nuevoEstadoDocumento = 'COMPLETADO_CONTABILIDAD';
-        break;
-      case ContabilidadEstado.OBSERVADO_CONTABILIDAD:
-        nuevoEstadoDocumento = 'OBSERVADO_CONTABILIDAD';
-        break;
-      case ContabilidadEstado.RECHAZADO_CONTABILIDAD:
-        nuevoEstadoDocumento = 'RECHAZADO_CONTABILIDAD';
-        break;
-    }
-
-    if (documento.estado !== nuevoEstadoDocumento) {
-      documento.estado = nuevoEstadoDocumento;
-      documento.fechaActualizacion = new Date();
-      
-      // Agregar al historial
-      const historial = documento.historialEstados || [];
-      historial.push({
-        fecha: new Date(),
-        estado: nuevoEstadoDocumento,
-        usuarioId: contadorId,
-        usuarioNombre: contador.fullName || contador.username,
-        rolUsuario: contador.role,
-        observacion: `Procesado por contabilidad: ${estadoFinalMapeado} - ${datos.observaciones?.substring(0, 100) || 'Sin observación'}`
-      });
-      documento.historialEstados = historial;
-      
-      await this.documentoRepository.save(documento);
-      this.logger.log(`${logPrefix} ✅ Estado documento actualizado: ${documento.estado}`);
-    }
-  }
-
-  // 10. Guardar cambios en la base de datos
-  const saved = await this.contabilidadRepository.save(contabilidadDoc);
-
-  // 11. Registrar acceso
-  if (documento.rutaCarpetaRadicado) {
-    await this.registrarAccesoContabilidad(
-      documento.rutaCarpetaRadicado,
-      contadorId,
-      `SUBIÓ documentos contables`,
-      `Archivos: ${Object.keys(archivosGuardados).join(', ') || 'ninguno'} | Estado: ${datos.estadoFinal || 'sin cambio'}`
-    );
-  }
-
-  // 12. Log del resultado
-  this.logger.log(`${logPrefix} 🎉 Subida completada exitosamente`);
-  this.logger.log(`${logPrefix}   Archivos guardados: ${JSON.stringify(archivosGuardados)}`);
-  this.logger.log(`${logPrefix}   Estado contabilidad: ${saved.estado}`);
-  this.logger.log(`${logPrefix}   Ruta glosa: ${saved.glosaPath || 'NO'}`);
-  this.logger.log(`${logPrefix}   Ruta causación: ${saved.causacionPath || 'NO'}`);
-  this.logger.log(`${logPrefix}   Ruta extracto: ${saved.extractoPath || 'NO'}`);
-  this.logger.log(`${logPrefix}   Ruta comprobante: ${saved.comprobanteEgresoPath || 'NO'}`);
-
-  return {
-    success: true,
-    message: 'Documentos guardados correctamente en el servidor',
-    contabilidad: saved
-  };
-}
-
-// Agrega este método auxiliar si no existe
-private obtenerExtensionPorMime(mimeType: string): string {
-  const mimeToExt: Record<string, string> = {
-    'application/pdf': '.pdf',
-    'application/msword': '.doc',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
-    'image/jpeg': '.jpg',
-    'image/png': '.png',
-    'image/jpg': '.jpg',
-  };
-  return mimeToExt[mimeType] || '.bin';
-}
 
     // Finalizar revisión de contabilidad
     async finalizarRevision(
@@ -1453,189 +1482,201 @@ private obtenerExtensionPorMime(mimeType: string): string {
             relations: ['documento', 'contador'],
         });
     }
-    private construirRespuestaDetalle(
-        documento: Documento,
-        contabilidadDoc: ContabilidadDocumento | null,
-        auditorDoc: AuditorDocumento | null,
-        contador: User,
-    ): any {
-        // Archivos radicados (ya lo tenías)
-        const archivosRadicados = [
-            {
-                numero: 1,
-                nombre: documento.cuentaCobro,
-                descripcion: documento.descripcionCuentaCobro,
-                tipo: 'cuenta_cobro',
-                existe: documento.cuentaCobro ? fs.existsSync(path.join(documento.rutaCarpetaRadicado || '', documento.cuentaCobro)) : false,
-            },
-            {
-                numero: 2,
-                nombre: documento.seguridadSocial,
-                descripcion: documento.descripcionSeguridadSocial,
-                tipo: 'seguridad_social',
-                existe: documento.seguridadSocial ? fs.existsSync(path.join(documento.rutaCarpetaRadicado || '', documento.seguridadSocial)) : false,
-            },
-            {
-                numero: 3,
-                nombre: documento.informeActividades,
-                descripcion: documento.descripcionInformeActividades,
-                tipo: 'informe_actividades',
-                existe: documento.informeActividades ? fs.existsSync(path.join(documento.rutaCarpetaRadicado || '', documento.informeActividades)) : false,
-            }
-        ];
+private construirRespuestaDetalle(
+  documento: Documento,
+  contabilidadDoc: ContabilidadDocumento | null,
+  auditorDoc: AuditorDocumento | null,
+  user: User,
+): any {
+  // 1. Archivos radicados (los que sube el radicador)
+  const archivosRadicados = [
+    {
+      numero: 1,
+      nombre: documento.cuentaCobro,
+      descripcion: documento.descripcionCuentaCobro,
+      tipo: 'cuenta_cobro',
+      existe: !!documento.cuentaCobro,
+    },
+    {
+      numero: 2,
+      nombre: documento.seguridadSocial,
+      descripcion: documento.descripcionSeguridadSocial,
+      tipo: 'seguridad_social',
+      existe: !!documento.seguridadSocial,
+    },
+    {
+      numero: 3,
+      nombre: documento.informeActividades,
+      descripcion: documento.descripcionInformeActividades,
+      tipo: 'informe_actividades',
+      existe: !!documento.informeActividades,
+    },
+  ];
 
-        // ────────────────────────────────────────────────────────────────
-        //  IMPORTANTE: AGREGAMOS archivosAuditor aquí
-        // ────────────────────────────────────────────────────────────────
-        const archivosAuditor = auditorDoc ? [
-            {
-                tipo: 'rp',
-                descripcion: 'Resolución de Pago (RP)',
-                subido: !!auditorDoc.rpPath,
-                nombreArchivo: auditorDoc.rpPath || 'No subido'
-            },
-            {
-                tipo: 'cdp',
-                descripcion: 'Certificado de Disponibilidad Presupuestal (CDP)',
-                subido: !!auditorDoc.cdpPath,
-                nombreArchivo: auditorDoc.cdpPath || 'No subido'
-            },
-            {
-                tipo: 'poliza',
-                descripcion: 'Póliza de Cumplimiento',
-                subido: !!auditorDoc.polizaPath,
-                nombreArchivo: auditorDoc.polizaPath || 'No subido'
-            },
-            {
-                tipo: 'certificadoBancario',
-                descripcion: 'Certificado Bancario',
-                subido: !!auditorDoc.certificadoBancarioPath,
-                nombreArchivo: auditorDoc.certificadoBancarioPath || 'No subido'
-            },
-            {
-                tipo: 'minuta',
-                descripcion: 'Minuta de Contrato',
-                subido: !!auditorDoc.minutaPath,
-                nombreArchivo: auditorDoc.minutaPath || 'No subido'
-            },
-            {
-                tipo: 'actaInicio',
-                descripcion: 'Acta de Inicio',
-                subido: !!auditorDoc.actaInicioPath,
-                nombreArchivo: auditorDoc.actaInicioPath || 'No subido'
-            }
-        ] : [];
+  // 2. Archivos de auditoría
+  const archivosAuditor = auditorDoc
+    ? [
+        { 
+          tipo: 'rp', 
+          descripcion: 'Resolución de Pago', 
+          subido: !!auditorDoc.rpPath, 
+          nombreArchivo: auditorDoc.rpPath 
+        },
+        { 
+          tipo: 'cdp', 
+          descripcion: 'Certificado de Disponibilidad Presupuestal', 
+          subido: !!auditorDoc.cdpPath, 
+          nombreArchivo: auditorDoc.cdpPath 
+        },
+        { 
+          tipo: 'poliza', 
+          descripcion: 'Póliza', 
+          subido: !!auditorDoc.polizaPath, 
+          nombreArchivo: auditorDoc.polizaPath 
+        },
+        { 
+          tipo: 'certificadoBancario', 
+          descripcion: 'Certificado Bancario', 
+          subido: !!auditorDoc.certificadoBancarioPath, 
+          nombreArchivo: auditorDoc.certificadoBancarioPath 
+        },
+        { 
+          tipo: 'minuta', 
+          descripcion: 'Minuta', 
+          subido: !!auditorDoc.minutaPath, 
+          nombreArchivo: auditorDoc.minutaPath 
+        },
+        { 
+          tipo: 'actaInicio', 
+          descripcion: 'Acta de Inicio', 
+          subido: !!auditorDoc.actaInicioPath, 
+          nombreArchivo: auditorDoc.actaInicioPath 
+        },
+      ]
+    : [];
 
-        // Archivos de contabilidad (ya lo tenías)
-        const archivosContabilidad = contabilidadDoc ? [
-            {
-                tipo: 'glosa',
-                descripcion: 'Documento de Glosa',
-                subido: !!contabilidadDoc.glosaPath,
-                nombreArchivo: contabilidadDoc.glosaPath,
-                requerido: contabilidadDoc.tieneGlosa === true
-            },
-            {
-                tipo: 'causacion',
-                descripcion: contabilidadDoc.tipoCausacion === TipoCausacion.NOTA_DEBITO ? 'Nota Débito' :
-                    contabilidadDoc.tipoCausacion === TipoCausacion.NOTA_CREDITO ? 'Nota Crédito' :
-                        'Comprobante de Egreso',
-                subido: !!contabilidadDoc.causacionPath,
-                nombreArchivo: contabilidadDoc.causacionPath,
-                requerido: true
-            },
-            {
-                tipo: 'extracto',
-                descripcion: 'Extracto Bancario',
-                subido: !!contabilidadDoc.extractoPath,
-                nombreArchivo: contabilidadDoc.extractoPath,
-                requerido: contabilidadDoc.tieneGlosa === true
-            },
-            {
-                tipo: 'comprobanteEgreso',
-                descripcion: 'Comprobante de Egreso',
-                subido: !!contabilidadDoc.comprobanteEgresoPath,
-                nombreArchivo: contabilidadDoc.comprobanteEgresoPath,
-                requerido: contabilidadDoc.tieneGlosa === false
-            }
-        ] : [];
+  // 3. Archivos de contabilidad (para mostrar en la sección de archivos contables)
+  const archivosContabilidad = contabilidadDoc
+    ? [
+        { 
+          tipo: 'glosa', 
+          descripcion: 'Documento de Glosa', 
+          subido: !!contabilidadDoc.glosaPath, 
+          nombreArchivo: contabilidadDoc.glosaPath, 
+          requerido: contabilidadDoc.tieneGlosa === true 
+        },
+        { 
+          tipo: 'causacion', 
+          descripcion: contabilidadDoc.tipoCausacion === TipoCausacion.NOTA_DEBITO 
+            ? 'Nota Débito' 
+            : contabilidadDoc.tipoCausacion === TipoCausacion.NOTA_CREDITO 
+              ? 'Nota Crédito' 
+              : 'Comprobante de Egreso / Causación',
+          subido: !!contabilidadDoc.causacionPath, 
+          nombreArchivo: contabilidadDoc.causacionPath, 
+          requerido: true 
+        },
+        { 
+          tipo: 'extracto', 
+          descripcion: 'Extracto Bancario', 
+          subido: !!contabilidadDoc.extractoPath, 
+          nombreArchivo: contabilidadDoc.extractoPath, 
+          requerido: contabilidadDoc.tieneGlosa === true 
+        },
+        { 
+          tipo: 'comprobanteEgreso', 
+          descripcion: 'Comprobante de Egreso', 
+          subido: !!contabilidadDoc.comprobanteEgresoPath, 
+          nombreArchivo: contabilidadDoc.comprobanteEgresoPath, 
+          requerido: contabilidadDoc.tieneGlosa === false 
+        },
+      ]
+    : [];
 
-        // Actualizar último acceso
-        documento.ultimoAcceso = new Date();
-        documento.ultimoUsuario = `Contabilidad: ${contador.username}`;
-        this.documentoRepository.save(documento).catch(err => {
-            this.logger.warn(`Error actualizando ultimo acceso: ${err.message}`);
-        });
+  // 4. Respuesta completa
+  return {
+    // ───────────────────────────────────────────────────────────────
+    // OBJETO PRINCIPAL: documento (aquí agregamos TODOS los campos de contabilidad)
+    // ───────────────────────────────────────────────────────────────
+    documento: {
+      id: documento.id,
+      numeroRadicado: documento.numeroRadicado,
+      numeroContrato: documento.numeroContrato,
+      nombreContratista: documento.nombreContratista,
+      documentoContratista: documento.documentoContratista,
+      fechaInicio: documento.fechaInicio,
+      fechaFin: documento.fechaFin,
+      fechaRadicacion: documento.fechaRadicacion,
+      radicador: documento.nombreRadicador,
+      supervisor: documento.usuarioAsignadoNombre,
+      observacion: documento.observacion || '',  // observación general (del radicador/auditor)
+      estado: documento.estado,
+      primerRadicadoDelAno: documento.primerRadicadoDelAno,
+      usuarioAsignadoNombre: documento.usuarioAsignadoNombre,
+      historialEstados: documento.historialEstados || [],
+      rutaCarpetaRadicado: documento.rutaCarpetaRadicado,
+      cuentaCobro: documento.cuentaCobro,
+      seguridadSocial: documento.seguridadSocial,
+      informeActividades: documento.informeActividades,
+      descripcionCuentaCobro: documento.descripcionCuentaCobro,
+      descripcionSeguridadSocial: documento.descripcionSeguridadSocial,
+      descripcionInformeActividades: documento.descripcionInformeActividades,
 
-        // Respuesta completa
-        return {
-            documento: {
-                id: documento.id,
-                numeroRadicado: documento.numeroRadicado,
-                numeroContrato: documento.numeroContrato,
-                nombreContratista: documento.nombreContratista,
-                documentoContratista: documento.documentoContratista,
-                fechaInicio: documento.fechaInicio,
-                fechaFin: documento.fechaFin,
-                fechaRadicacion: documento.fechaRadicacion,
-                radicador: documento.nombreRadicador,
-                supervisor: documento.usuarioAsignadoNombre,
-                observacion: documento.observacion,
-                estadoActual: contabilidadDoc?.estado || 'DISPONIBLE',
-                estadoDocumento: documento.estado,
-                primerRadicadoDelAno: documento.primerRadicadoDelAno,
-                usuarioAsignado: documento.usuarioAsignadoNombre,
-                historialEstados: documento.historialEstados || [],
-                rutaCarpeta: documento.rutaCarpetaRadicado,
-                cuentaCobro: documento.cuentaCobro,
-                seguridadSocial: documento.seguridadSocial,
-                informeActividades: documento.informeActividades,
-                descripcionCuentaCobro: documento.descripcionCuentaCobro,
-                descripcionSeguridadSocial: documento.descripcionSeguridadSocial,
-                descripcionInformeActividades: documento.descripcionInformeActividades,
-            },
-            archivosRadicados,
-            archivosAuditor,           // ← Esto es lo nuevo y crítico
-            archivosContabilidad,
-            auditor: auditorDoc ? {
-                id: auditorDoc.id,
-                auditor: auditorDoc.auditor?.fullName || auditorDoc.auditor?.username,
-                estado: auditorDoc.estado,
-                observaciones: auditorDoc.observaciones,
-                fechaAprobacion: auditorDoc.fechaAprobacion
-            } : null,
-            contabilidad: contabilidadDoc ? {
-                id: contabilidadDoc.id,
-                estado: contabilidadDoc.estado,
-                tieneGlosa: contabilidadDoc.tieneGlosa,
-                tipoCausacion: contabilidadDoc.tipoCausacion,
-                observaciones: contabilidadDoc.observaciones,
-                fechaCreacion: contabilidadDoc.fechaCreacion,
-                fechaInicioRevision: contabilidadDoc.fechaInicioRevision,
-                fechaFinRevision: contabilidadDoc.fechaFinRevision,
-                puedeFinalizar: contabilidadDoc.puedeFinalizar().puede,
-                documentosSubidos: archivosContabilidad.filter(a => a.subido).map(a => a.tipo),
-            } : null
-        };
-    }
+      // CAMPOS DE CONTABILIDAD – ESTO ES LO QUE FALTABA EN TU VERSIÓN ANTERIOR
+      observacionesContabilidad: contabilidadDoc?.observaciones || '',  // ← observaciones del contador
+      tieneGlosa: contabilidadDoc?.tieneGlosa ?? null,
+      tipoCausacion: contabilidadDoc?.tipoCausacion || null,
+      glosaPath: contabilidadDoc?.glosaPath || null,
+      causacionPath: contabilidadDoc?.causacionPath || null,
+      extractoPath: contabilidadDoc?.extractoPath || null,
+      comprobanteEgresoPath: contabilidadDoc?.comprobanteEgresoPath || null,
+      fechaGlosa: contabilidadDoc?.fechaGlosa || null,
+      fechaCausacion: contabilidadDoc?.fechaCausacion || null,
+      fechaExtracto: contabilidadDoc?.fechaExtracto || null,
+      fechaComprobanteEgreso: contabilidadDoc?.fechaComprobanteEgreso || null,
+    },
 
+    // Secciones adicionales que ya tenías
+    archivosRadicados,
+    archivosAuditor,
+    archivosContabilidad,
 
+    auditor: auditorDoc
+      ? {
+          id: auditorDoc.id,
+          estado: auditorDoc.estado,
+          observaciones: auditorDoc.observaciones,
+          auditor: auditorDoc.auditor?.fullName || auditorDoc.auditor?.username,
+        }
+      : null,
 
-    // En getHistorial (el In ahora usa los valores correctos del enum)
+    contabilidad: contabilidadDoc
+      ? {
+          id: contabilidadDoc.id,
+          estado: contabilidadDoc.estado,
+          tieneGlosa: contabilidadDoc.tieneGlosa,
+          tipoCausacion: contabilidadDoc.tipoCausacion,
+          observaciones: contabilidadDoc.observaciones,
+          fechaCreacion: contabilidadDoc.fechaCreacion,
+          fechaInicioRevision: contabilidadDoc.fechaInicioRevision,
+          fechaFinRevision: contabilidadDoc.fechaFinRevision,
+          puedeFinalizar: contabilidadDoc.puedeFinalizar().puede,
+          documentosSubidos: archivosContabilidad.filter(a => a.subido).map(a => a.tipo),
+          contador: contabilidadDoc.contador?.fullName || contabilidadDoc.contador?.username,
+        }
+      : null,
+  };
+}
+
 
     async getHistorial(contadorId: string): Promise<any[]> {
-        this.logger.log(`Obteniendo historial para contador ${contadorId}`);
+        this.logger.log(`Obteniendo historial COMPLETO para contador ${contadorId}`);
 
         const contabilidadDocs = await this.contabilidadRepository.find({
             where: {
                 contador: { id: contadorId },
-                estado: In([
-                    ContabilidadEstado.PROCESADO_CONTABILIDAD,
-                    ContabilidadEstado.COMPLETADO_CONTABILIDAD,
-                    ContabilidadEstado.GLOSADO_CONTABILIDAD,
-                    ContabilidadEstado.OBSERVADO_CONTABILIDAD,
-                    ContabilidadEstado.RECHAZADO_CONTABILIDAD
-                ])
+                // → Quitamos el filtro de estados finales ←
+                // estado: In([...])  ← eliminar esta línea
             },
             relations: ['documento', 'contador'],
             order: { fechaActualizacion: 'DESC' }
@@ -1654,14 +1695,121 @@ private obtenerExtensionPorMime(mimeType: string): string {
                 fechaRadicacion: cd.documento.fechaRadicacion,
                 fechaActualizacion: cd.documento.fechaActualizacion
             },
-            estado: cd.estado,
+            estado: cd.estado,                     // ← muy importante devolver el estado real
             observaciones: cd.observaciones || '',
             tieneGlosa: cd.tieneGlosa,
             tipoCausacion: cd.tipoCausacion,
             fechaActualizacion: cd.fechaActualizacion,
             fechaFinRevision: cd.fechaFinRevision,
+            fechaInicioRevision: cd.fechaInicioRevision,
             contadorRevisor: cd.contador?.fullName || cd.contador?.username || 'Contador'
         }));
     }
+
+    async obtenerRechazadosVisibles(user: any): Promise<any[]> {
+        const rolUsuario = user.role?.toLowerCase() || '';
+
+        this.logger.log(`[RECHAZADOS-VISIBLES] Rol: ${rolUsuario} | Username: ${user.username}`);
+
+        // Estados de rechazo posibles
+        const estadosRechazo = [
+            'RECHAZADO_SUPERVISOR',
+            'RECHAZADO_AUDITOR_CUENTAS',
+            'RECHAZADO_CONTABILIDAD',
+            'RECHAZADO_TESORERIA',
+            'RECHAZADO_ASESOR_GERENCIA',
+            'RECHAZADO_RENDICION_CUENTAS',
+            'OBSERVADO_CONTABILIDAD',
+            'GLOSADO_CONTABILIDAD'
+        ];
+
+        const query = this.documentoRepository
+            .createQueryBuilder('doc')
+            .leftJoinAndSelect('doc.radicador', 'radicador')
+            .where('doc.estado IN (:...estados)', { estados: estadosRechazo })
+            .orderBy('doc.fechaActualizacion', 'DESC');
+
+        let estadosPermitidos: string[] = [];
+
+        switch (rolUsuario) {
+            case 'admin':
+                // Admin ve todo
+                estadosPermitidos = estadosRechazo;
+                break;
+
+            case 'contabilidad':
+                // Solo sus propios rechazos + superiores (TESORERIA, ASESOR, RENDICION)
+                estadosPermitidos = [
+                    'RECHAZADO_CONTABILIDAD',           // sus propios rechazos
+                    'RECHAZADO_TESORERIA',
+                    'RECHAZADO_ASESOR_GERENCIA',
+                    'RECHAZADO_RENDICION_CUENTAS'
+                ];
+                break;
+
+            case 'tesoreria':
+                estadosPermitidos = [
+                    'RECHAZADO_TESORERIA',
+                    'RECHAZADO_ASESOR_GERENCIA',
+                    'RECHAZADO_RENDICION_CUENTAS'
+                ];
+                break;
+
+            case 'asesor_gerencia':
+                estadosPermitidos = ['RECHAZADO_ASESOR_GERENCIA', 'RECHAZADO_RENDICION_CUENTAS'];
+                break;
+
+            case 'rendicion_cuentas':
+                estadosPermitidos = ['RECHAZADO_RENDICION_CUENTAS'];
+                break;
+
+            default:
+                // Otros roles → no ven nada
+                estadosPermitidos = [];
+        }
+
+        // Aplicar filtro
+        if (estadosPermitidos.length > 0) {
+            query.andWhere('doc.estado IN (:...permitidos)', { permitidos: estadosPermitidos });
+        } else {
+            // Vacío para roles sin permiso
+            query.andWhere('1 = 0');
+        }
+
+        const docs = await query.getMany();
+
+        this.logger.log(`[RECHAZADOS-VISIBLES] Encontrados ${docs.length} documentos para ${rolUsuario}`);
+
+        return docs.map(doc => ({
+            id: doc.id,
+            numeroRadicado: doc.numeroRadicado,
+            numeroContrato: doc.numeroContrato,
+            nombreContratista: doc.nombreContratista,
+            documentoContratista: doc.documentoContratista,
+            fechaInicio: doc.fechaInicio,
+            fechaFin: doc.fechaFin,
+            fechaRadicacion: doc.fechaRadicacion,
+            estado: doc.estado,
+            observacion: doc.observacion || '',
+            motivoRechazo: doc.observacion || 'Sin motivo detallado',
+            ultimoUsuario: doc.ultimoUsuario || 'Sistema',
+            rechazadoPor: this.inferirRechazadoPor(doc.estado)
+        }));
+    }
+
+    // MÉTODO ÚNICO - elimina cualquier duplicado que tengas en el archivo
+    private inferirRechazadoPor(estado: string): string {
+        const e = (estado || '').toUpperCase();
+
+        if (e.includes('RENDICION')) return 'Rendición Cuentas';
+        if (e.includes('ASESOR')) return 'Asesor Gerencia';
+        if (e.includes('TESORERIA')) return 'Tesorería';
+        if (e.includes('CONTABILIDAD')) return 'Contabilidad';
+        if (e.includes('AUDITOR')) return 'Auditoría Cuentas';
+        if (e.includes('SUPERVISOR')) return 'Supervisor';
+
+        return 'Sistema / No especificado';
+    }
+
 
 }

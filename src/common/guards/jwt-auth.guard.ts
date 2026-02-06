@@ -25,6 +25,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     console.log('[JWT GUARD] Validando JWT...');
     return super.canActivate(context);
   }
+  
 
   // Corregido: tipos explícitos + import de UnauthorizedException
   handleRequest(err: any, user: any, info: any): any {

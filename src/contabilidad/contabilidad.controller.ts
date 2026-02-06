@@ -271,32 +271,43 @@ export class ContabilidadController {
 
 
     @Post('diagnostico-subida')
-@UseInterceptors(
-  FileFieldsInterceptor([
-    { name: 'testFile', maxCount: 1 }
-  ], multerContabilidadConfig)
-)
-async diagnosticoSubida(
-  @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
-  @Res() res: Response
-) {
-  const file = files['testFile']?.[0];
-  
-  if (!file) {
-    return res.status(400).json({ 
-      error: 'No se recibió archivo',
-      filesReceived: Object.keys(files)
-    });
-  }
+    @UseInterceptors(
+        FileFieldsInterceptor([
+            { name: 'testFile', maxCount: 1 }
+        ], multerContabilidadConfig)
+    )
+    async diagnosticoSubida(
+        @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
+        @Res() res: Response
+    ) {
+        const file = files['testFile']?.[0];
 
-  return res.json({
+        if (!file) {
+            return res.status(400).json({
+                error: 'No se recibió archivo',
+                filesReceived: Object.keys(files)
+            });
+        }
+
+        return res.json({
+            success: true,
+            fileName: file.originalname,
+            fileSize: file.size,
+            hasBuffer: !!file.buffer,
+            bufferLength: file.buffer?.length || 0,
+            mimetype: file.mimetype,
+            fieldname: file.fieldname
+        });
+    }
+
+@Get('rechazados-visibles')
+async obtenerRechazadosVisibles(@GetUser() user: JwtUser) {
+  const docs = await this.contabilidadService.obtenerRechazadosVisibles(user);
+  return {
     success: true,
-    fileName: file.originalname,
-    fileSize: file.size,
-    hasBuffer: !!file.buffer,
-    bufferLength: file.buffer?.length || 0,
-    mimetype: file.mimetype,
-    fieldname: file.fieldname
-  });
+    count: docs.length,
+    data: docs
+  };
 }
+
 }

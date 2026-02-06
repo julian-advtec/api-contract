@@ -1,8 +1,13 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
+
 import { ContabilidadController } from './contabilidad.controller';
 import { ContabilidadService } from './contabilidad.service';
+
+import { ContabilidadStatsController } from './contabilidad-stats.controller';
+import { ContabilidadStatsService } from './contabilidad-stats.service';
+
 import { ContabilidadDocumento } from './entities/contabilidad-documento.entity';
 import { Documento } from '../radicacion/entities/documento.entity';
 import { User } from '../users/entities/user.entity';
@@ -14,12 +19,21 @@ import { AuditorDocumento } from '../auditor/entities/auditor-documento.entity';
       ContabilidadDocumento,
       Documento,
       User,
-      AuditorDocumento
+      AuditorDocumento,
     ]),
     ConfigModule,
   ],
-  controllers: [ContabilidadController],
-  providers: [ContabilidadService],
-  exports: [ContabilidadService],
+  controllers: [
+    ContabilidadController,
+    ContabilidadStatsController,
+  ],
+  providers: [
+    ContabilidadService,
+    ContabilidadStatsService, // 👈 ESTE ERA EL FALTANTE
+  ],
+  exports: [
+    ContabilidadService,
+    ContabilidadStatsService, // 👈 buena práctica
+  ],
 })
 export class ContabilidadModule {}
