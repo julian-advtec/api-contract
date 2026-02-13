@@ -94,10 +94,12 @@ export class AuditorController {
     );
   }
 
+  
   @Get('mis-documentos')
   async getMisDocumentos(@GetUser() user: any) {
     return this.auditorService.obtenerDocumentosEnRevision(user.id);
   }
+
 
   @Get('documentos/:documentoId')
   async getDetalleDocumento(

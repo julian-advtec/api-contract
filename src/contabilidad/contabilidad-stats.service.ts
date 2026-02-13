@@ -67,17 +67,17 @@ export interface EstadisticasContabilidad {
     }>;
 
     // Documentos recientes
-    documentosRecientes: Array<{
-        id: string;
-        numeroRadicado: string;
-        nombreContratista: string;
-        estado: ContabilidadEstado;
-        fechaInicioRevision: Date;
-        fechaFinRevision: Date;
-        tieneGlosa: boolean;
-        tipoCausacion: TipoCausacion;
-        tiempoRevision: number; // en horas
-    }>;
+documentosRecientes: Array<{
+    id: string;
+    numeroRadicado: string;
+    nombreContratista: string;
+    estado: ContabilidadEstado;
+    fechaInicioRevision?: Date;          // ← Cambia a opcional
+    fechaFinRevision?: Date;             // ← Cambia a opcional
+    tieneGlosa: boolean;
+    tipoCausacion: TipoCausacion;
+    tiempoRevision: number;
+  }>;
 }
 
 export interface FiltrosEstadisticas {
@@ -150,10 +150,10 @@ export class ContabilidadStatsService {
         const resumen = {
             totalDocumentos: documentos.length,
             documentosEnRevision: documentos.filter(d => d.estado === ContabilidadEstado.EN_REVISION).length,
-            documentosCompletados: documentos.filter(d => d.estado === ContabilidadEstado.COMPLETADO_CONTABILIDAD).length,
-            documentosObservados: documentos.filter(d => d.estado === ContabilidadEstado.OBSERVADO_CONTABILIDAD).length,
-            documentosRechazados: documentos.filter(d => d.estado === ContabilidadEstado.RECHAZADO_CONTABILIDAD).length,
-            documentosGlosados: documentos.filter(d => d.estado === ContabilidadEstado.GLOSADO_CONTABILIDAD).length,
+            documentosCompletados: documentos.filter(d => d.estado === ContabilidadEstado.COMPLETADO).length,
+            documentosObservados: documentos.filter(d => d.estado === ContabilidadEstado.OBSERVADO).length,
+            documentosRechazados: documentos.filter(d => d.estado === ContabilidadEstado.RECHAZADO).length,
+            documentosGlosados: documentos.filter(d => d.estado === ContabilidadEstado.GLOSADO).length,
         };
 
         // 📌 Distribución por estado
@@ -187,12 +187,12 @@ export class ContabilidadStatsService {
             conGlosa,
             sinGlosa: documentos.length - conGlosa,
             porcentajeConGlosa: documentos.length ? (conGlosa / documentos.length) * 100 : 0,
-            totalGlosado: documentos.filter(d => d.estado === ContabilidadEstado.GLOSADO_CONTABILIDAD).length
+            totalGlosado: documentos.filter(d => d.estado === ContabilidadEstado.GLOSADO).length
         };
 
         // ⏱️ Tiempos
         const documentosCompletados = documentos.filter(d =>
-            d.estado === ContabilidadEstado.COMPLETADO_CONTABILIDAD &&
+            d.estado === ContabilidadEstado.COMPLETADO &&
             d.fechaInicioRevision &&
             d.fechaFinRevision
         );
@@ -277,7 +277,7 @@ export class ContabilidadStatsService {
 
         // Documentos completados con tiempos válidos
         const documentosCompletados = documentos.filter(d =>
-            d.estado === ContabilidadEstado.COMPLETADO_CONTABILIDAD &&
+            d.estado === ContabilidadEstado.COMPLETADO &&
             d.fechaInicioRevision &&
             d.fechaFinRevision
         );
@@ -300,10 +300,10 @@ export class ContabilidadStatsService {
             },
             resumen: {
                 totalDocumentos: documentos.length,
-                completados: documentos.filter(d => d.estado === ContabilidadEstado.COMPLETADO_CONTABILIDAD).length,
-                observados: documentos.filter(d => d.estado === ContabilidadEstado.OBSERVADO_CONTABILIDAD).length,
-                rechazados: documentos.filter(d => d.estado === ContabilidadEstado.RECHAZADO_CONTABILIDAD).length,
-                glosados: documentos.filter(d => d.estado === ContabilidadEstado.GLOSADO_CONTABILIDAD).length,
+                completados: documentos.filter(d => d.estado === ContabilidadEstado.COMPLETADO).length,
+                observados: documentos.filter(d => d.estado === ContabilidadEstado.OBSERVADO).length,
+                rechazados: documentos.filter(d => d.estado === ContabilidadEstado.RECHAZADO).length,
+                glosados: documentos.filter(d => d.estado === ContabilidadEstado.GLOSADO).length,
                 enRevision: documentos.filter(d => d.estado === ContabilidadEstado.EN_REVISION).length,
             },
             tiempos,
@@ -361,7 +361,7 @@ export class ContabilidadStatsService {
      */
     async getMetricasTiempo(userId: string, userRole: string) {
         const whereClause: any = {
-            estado: ContabilidadEstado.COMPLETADO_CONTABILIDAD,
+            estado: ContabilidadEstado.COMPLETADO,
             fechaInicioRevision: MoreThan(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)) // últimos 30 días
         };
 
@@ -470,10 +470,10 @@ export class ContabilidadStatsService {
             meses.push({
                 mes: `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`,
                 nombreMes: fecha.toLocaleString('es-ES', { month: 'long', year: 'numeric' }),
-                completados: docsMes.filter(d => d.estado === ContabilidadEstado.COMPLETADO_CONTABILIDAD).length,
-                observados: docsMes.filter(d => d.estado === ContabilidadEstado.OBSERVADO_CONTABILIDAD).length,
-                rechazados: docsMes.filter(d => d.estado === ContabilidadEstado.RECHAZADO_CONTABILIDAD).length,
-                glosados: docsMes.filter(d => d.estado === ContabilidadEstado.GLOSADO_CONTABILIDAD).length,
+                completados: docsMes.filter(d => d.estado === ContabilidadEstado.COMPLETADO).length,
+                observados: docsMes.filter(d => d.estado === ContabilidadEstado.OBSERVADO).length,
+                rechazados: docsMes.filter(d => d.estado === ContabilidadEstado.RECHAZADO).length,
+                glosados: docsMes.filter(d => d.estado === ContabilidadEstado.GLOSADO).length,
                 total: docsMes.length
             });
         }
@@ -486,7 +486,7 @@ export class ContabilidadStatsService {
         fechaFin?: Date
     ) {
         const where: any = {
-            estado: ContabilidadEstado.COMPLETADO_CONTABILIDAD
+            estado: ContabilidadEstado.COMPLETADO
         };
 
         if (fechaInicio && fechaFin) {

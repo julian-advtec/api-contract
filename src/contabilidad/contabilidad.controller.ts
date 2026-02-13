@@ -1,32 +1,32 @@
 import {
-    Controller,
-    Get,
-    Post,
-    Put,
-    Param,
-    UseGuards,
-    UseInterceptors,
-    UploadedFiles,
-    Body,
-    ParseUUIDPipe,
-    Res,
-    Delete,
-    BadRequestException,
-    Logger,
-    HttpStatus,
-    Query,
-    HttpException,   // ← ESTE ES EL QUE FALTABA
-    InternalServerErrorException // ← opcional pero recomendado
+  Controller,
+  Get,
+  Post,
+  Put,
+  Param,
+  UseGuards,
+  UseInterceptors,
+  UploadedFiles,
+  Body,
+  ParseUUIDPipe,
+  Res,
+  Delete,
+  BadRequestException,
+  Logger,
+  HttpStatus,
+  Query,
+  HttpException,
+  Req,
+  NotFoundException,
 } from '@nestjs/common';
-import * as multer from 'multer';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import type { Request } from 'express';
 import type { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as mime from 'mime-types';
 import * as crypto from 'crypto';
-
 
 import { JwtAuthGuard } from './../common/guards/jwt-auth.guard';
 import { RolesGuard } from './../common/guards/roles.guard';
@@ -52,13 +52,19 @@ type JwtUser = {
 export class ContabilidadController {
     private readonly logger = new Logger(ContabilidadController.name);
 
-    constructor(private readonly contabilidadService: ContabilidadService) { }
+    constructor(private readonly contabilidadService: ContabilidadService) {}
 
+    // ───────────────────────────────────────────────────────────────
+    // DOCUMENTOS DISPONIBLES
+    // ───────────────────────────────────────────────────────────────
     @Get('documentos/disponibles')
     async getDocumentosDisponibles(@GetUser() user: JwtUser) {
         return this.contabilidadService.obtenerDocumentosDisponibles(user.id);
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // TOMAR DOCUMENTO PARA REVISIÓN
+    // ───────────────────────────────────────────────────────────────
     @Post('documentos/:documentoId/tomar')
     async tomarDocumentoParaRevision(
         @Param('documentoId', ParseUUIDPipe) documentoId: string,
@@ -68,11 +74,17 @@ export class ContabilidadController {
         return this.contabilidadService.tomarDocumentoParaRevision(documentoId, user.id);
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // MIS DOCUMENTOS EN REVISIÓN
+    // ───────────────────────────────────────────────────────────────
     @Get('mis-documentos')
     async getMisDocumentos(@GetUser() user: JwtUser) {
         return this.contabilidadService.obtenerDocumentosEnRevision(user.id);
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // DETALLE DE DOCUMENTO
+    // ───────────────────────────────────────────────────────────────
     @Get('documentos/:documentoId')
     async getDetalleDocumento(
         @Param('documentoId', ParseUUIDPipe) documentoId: string,
@@ -82,6 +94,9 @@ export class ContabilidadController {
         return this.contabilidadService.obtenerDetalleDocumento(documentoId, user.id);
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // DEFINIR GLOSA
+    // ───────────────────────────────────────────────────────────────
     @Post('documentos/:documentoId/definir-glosa')
     async definirGlosa(
         @Param('documentoId', ParseUUIDPipe) documentoId: string,
@@ -94,26 +109,30 @@ export class ContabilidadController {
         return this.contabilidadService.definirGlosa(documentoId, user.id, body.tieneGlosa);
     }
 
-    @Post('documentos/:documentoId/subir-documentos')
-    @UseInterceptors(
-        FileFieldsInterceptor(
-            [
-                { name: 'glosa', maxCount: 1 },
-                { name: 'causacion', maxCount: 1 },
-                { name: 'extracto', maxCount: 1 },
-                { name: 'comprobanteEgreso', maxCount: 1 },
-            ],
-            multerContabilidadConfig // ← Usar la configuración con memoryStorage
-        ),
-    )
-    async subirDocumentosContabilidad(
-        @Param('documentoId', ParseUUIDPipe) documentoId: string,
-        @GetUser() user: JwtUser,
-        @Body() body: any,
-        @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
-    ) {
-        this.logger.log(`[SUBIR] Contador ${user.id} subiendo para ${documentoId}`);
-
+    // ───────────────────────────────────────────────────────────────
+    // SUBIR DOCUMENTOS DE CONTABILIDAD
+    // ───────────────────────────────────────────────────────────────
+@Post('documentos/:documentoId/subir-documentos')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.CONTABILIDAD, UserRole.ADMIN) // Ambos roles permitidos
+@UseInterceptors(
+    FileFieldsInterceptor(
+        [
+            { name: 'glosa', maxCount: 1 },
+            { name: 'causacion', maxCount: 1 },
+            { name: 'extracto', maxCount: 1 },
+            { name: 'comprobanteEgreso', maxCount: 1 },
+        ],
+        multerContabilidadConfig
+    ),
+)
+async subirDocumentosContabilidad(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @GetUser() user: JwtUser,
+    @Body() body: any,
+    @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
+) {
+    this.logger.log(`[SUBIR] Usuario ${user.id} (${user.username}) con rol ${user.role} subiendo para ${documentoId}`);
         // DEBUG: Verificar archivos recibidos
         if (files) {
             this.logger.debug(`📁 Archivos recibidos en controller (${Object.keys(files).length}):`);
@@ -132,6 +151,7 @@ export class ContabilidadController {
             observaciones: body.observaciones,
             tieneGlosa: body.tieneGlosa ? JSON.parse(body.tieneGlosa) : undefined,
             estadoFinal: body.estadoFinal,
+            tipoProceso: body.tipoProceso,
             tipoCausacion: body.tipoCausacion as TipoCausacion,
         };
 
@@ -143,6 +163,9 @@ export class ContabilidadController {
         );
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // FINALIZAR REVISIÓN
+    // ───────────────────────────────────────────────────────────────
     @Put('documentos/:documentoId/finalizar')
     async finalizarRevision(
         @Param('documentoId', ParseUUIDPipe) documentoId: string,
@@ -163,6 +186,9 @@ export class ContabilidadController {
         );
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // LIBERAR DOCUMENTO
+    // ───────────────────────────────────────────────────────────────
     @Delete('documentos/:documentoId/liberar')
     async liberarDocumento(
         @Param('documentoId', ParseUUIDPipe) documentoId: string,
@@ -171,6 +197,9 @@ export class ContabilidadController {
         return this.contabilidadService.liberarDocumento(documentoId, user.id);
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // DESCARGAR ARCHIVO
+    // ───────────────────────────────────────────────────────────────
     @Get('documentos/:documentoId/descargar/:tipo')
     async descargarArchivoContabilidad(
         @Param('documentoId', ParseUUIDPipe) documentoId: string,
@@ -186,6 +215,9 @@ export class ContabilidadController {
         res.download(ruta, nombre);
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // PREVISUALIZAR ARCHIVO (PÚBLICO)
+    // ───────────────────────────────────────────────────────────────
     @Get('documentos/:documentoId/archivo/:tipo')
     @Public()
     async previsualizarArchivoContabilidad(
@@ -217,7 +249,7 @@ export class ContabilidadController {
                     res.setHeader('Content-Type', 'application/pdf');
                     res.setHeader('Content-Disposition', 'inline; filename="vista.pdf"');
                     const stream = fs.createReadStream(tmpPdf);
-                    stream.on('end', () => fs.unlink(tmpPdf, () => { }));
+                    stream.on('end', () => fs.unlink(tmpPdf, () => {}));
                     return stream.pipe(res);
                 } catch (e) {
                     this.logger.error(`[CONVERSIÓN ERROR] ${e.message}`);
@@ -234,12 +266,18 @@ export class ContabilidadController {
         }
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // MIS AUDITORÍAS
+    // ───────────────────────────────────────────────────────────────
     @Get('mis-auditorias')
     async getMisAuditorias(@GetUser() user: JwtUser) {
         this.logger.log(`[MIS-AUDITORIAS] Usuario: ${user.id} (${user.username})`);
         return this.contabilidadService.obtenerMisAuditorias(user.id);
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // DOCUMENTO PARA VISTA
+    // ───────────────────────────────────────────────────────────────
     @Get('documentos/:documentoId/vista')
     async getDocumentoParaVista(
         @Param('documentoId', ParseUUIDPipe) documentoId: string,
@@ -248,6 +286,9 @@ export class ContabilidadController {
         return this.contabilidadService.obtenerDocumentoParaVista(documentoId, user.id);
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // HISTORIAL
+    // ───────────────────────────────────────────────────────────────
     @Get('historial')
     async getHistorial(@GetUser() user: JwtUser) {
         this.logger.log(`[HISTORIAL] Contador ${user.id} (${user.username}) solicitando historial`);
@@ -269,7 +310,9 @@ export class ContabilidadController {
         }
     }
 
-
+    // ───────────────────────────────────────────────────────────────
+    // DIAGNÓSTICO DE SUBIDA
+    // ───────────────────────────────────────────────────────────────
     @Post('diagnostico-subida')
     @UseInterceptors(
         FileFieldsInterceptor([
@@ -300,14 +343,54 @@ export class ContabilidadController {
         });
     }
 
-@Get('rechazados-visibles')
-async obtenerRechazadosVisibles(@GetUser() user: JwtUser) {
-  const docs = await this.contabilidadService.obtenerRechazadosVisibles(user);
-  return {
-    success: true,
-    count: docs.length,
-    data: docs
-  };
-}
+    // ───────────────────────────────────────────────────────────────
+    // RECHAZADOS VISIBLES
+    // ───────────────────────────────────────────────────────────────
+    @Get('rechazados-visibles')
+    async obtenerRechazadosVisibles(@GetUser() user: JwtUser) {
+        const docs = await this.contabilidadService.obtenerRechazadosVisibles(user);
+        return {
+            success: true,
+            count: docs.length,
+            data: docs
+        };
+    }
 
+    // ───────────────────────────────────────────────────────────────
+    // OBTENER SOLO CONTABILIDAD
+    // ───────────────────────────────────────────────────────────────
+    @Get('documentos/:id/contabilidad')
+    async obtenerSoloContabilidad(
+        @Param('id') id: string,
+        @Req() req: Request,
+    ) {
+        const user = req.user as { id: string; username: string; role: string; email: string };
+
+        if (!user?.id) {
+            throw new NotFoundException('Usuario no identificado en el token');
+        }
+
+        const contabilidad = await this.contabilidadService.obtenerContabilidadDocumento(id, user.id);
+
+        if (!contabilidad) {
+            throw new NotFoundException('No hay registro contable para este documento o no fuiste quien lo procesó');
+        }
+
+        return {
+            success: true,
+            data: {
+                estado: contabilidad.estado,
+                tipoProceso: contabilidad.tipoProceso,
+                observaciones: contabilidad.observaciones,
+                tieneGlosa: contabilidad.tieneGlosa,
+                tipoCausacion: contabilidad.tipoCausacion,
+                glosaPath: contabilidad.glosaPath,
+                causacionPath: contabilidad.causacionPath,
+                extractoPath: contabilidad.extractoPath,
+                comprobanteEgresoPath: contabilidad.comprobanteEgresoPath,
+                fechaFinRevision: contabilidad.fechaFinRevision,
+                contador: contabilidad.contador?.fullName || contabilidad.contador?.username || 'Contador',
+            },
+        };
+    }
 }

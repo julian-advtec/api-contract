@@ -13,6 +13,7 @@ import { AppDataSource } from './config/ormconfig'; // ✅ Cambiado a AppDataSou
 import { ContratistaModule } from './contratista/contratista.module';
 import { AuditorModule } from './auditor/auditor.module';
 import { ContabilidadModule } from './contabilidad/contabilidad.module';
+import { TesoreriaModule } from './tesoreria/tesoreria.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { ContabilidadModule } from './contabilidad/contabilidad.module';
     ContratistaModule,
     AuditorModule,
     ContabilidadModule,
+    TesoreriaModule
     
   ],
   controllers: [AppController],

@@ -281,6 +281,7 @@ export class AuditorService {
       throw error;
     }
   }
+  
 
 async obtenerDocumentoParaVista(
   documentoId: string,
@@ -293,6 +294,7 @@ async obtenerDocumentoParaVista(
   if (!auditorIdSanitizado || auditorIdSanitizado === 'undefined') {
     auditorIdSanitizado = undefined;
   }
+
 
   try {
     // 1. Buscar el documento principal
