@@ -11,7 +11,8 @@ import {
   Request,
   HttpStatus,
   HttpCode,
-  ParseUUIDPipe
+  ParseUUIDPipe,
+  NotFoundException // 👈 IMPORTAR
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -20,11 +21,14 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from './enums/user-role.enum';
+import { UserResponseDto } from './dto/user-response.dto';
 
 @Controller('users')
 // @UseGuards(JwtAuthGuard, RolesGuard) // COMENTADO
 export class UsersController {
-  constructor(private readonly usersService: UsersService) { }
+  constructor(
+    private readonly usersService: UsersService,
+  ) { }
 
   @Get()
   // @Roles(UserRole.ADMIN) // COMENTADO
@@ -60,12 +64,6 @@ export class UsersController {
   @Roles(UserRole.ADMIN)
   findByRole(@Param('role') role: UserRole) {
     return this.usersService.getUsersByRole(role);
-  }
-
-  @Get(':id')
-  @Roles(UserRole.ADMIN)
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.findById(id);
   }
 
   @Post()
@@ -116,5 +114,18 @@ export class UsersController {
     return this.usersService.softRemove(id, req.user?.userId);
   }
 
+  // 👇 MÉTODO CORREGIDO - MANEJA EL CASO NULL
+  @Get(':id')
+  @Roles(UserRole.ADMIN)
+  async findOne(@Param('id', ParseUUIDPipe) id: string) {
+    const user = await this.usersService.findById(id, ['signature']);
+    
+    // 👇 VERIFICAR SI EL USUARIO EXISTE
+    if (!user) {
+      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+    }
+    
+    return { data: new UserResponseDto(user) };
+  }
 
 }

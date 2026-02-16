@@ -8,6 +8,8 @@ import { AuditorDocumento } from '../auditor/entities/auditor-documento.entity';
 import { ContabilidadDocumento } from '../contabilidad/entities/contabilidad-documento.entity';
 import 'dotenv/config';
 import { TesoreriaDocumento } from 'src/tesoreria/entities/tesoreria-documento.entity';
+import { Signature } from 'src/signatures/entities/signature.entity';
+
 
 // Opciones de configuración
 export const ormconfig: DataSourceOptions = {
@@ -26,7 +28,8 @@ export const ormconfig: DataSourceOptions = {
     SupervisorDocumento,
     AuditorDocumento,
     ContabilidadDocumento,
-    TesoreriaDocumento
+    TesoreriaDocumento,
+    Signature
   ],
   
   synchronize: process.env.NODE_ENV !== 'production',

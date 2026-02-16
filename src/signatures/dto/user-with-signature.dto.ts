@@ -1,17 +1,16 @@
-// backend/users/dto/user-response.dto.ts
-import { User } from '../entities/user.entity';
-import { UserRole } from '../enums/user-role.enum';
+// users/dto/user-with-signature.dto.ts
+import { User } from '../../users/entities/user.entity';
+import { SignatureResponseDto } from '../../signatures/dto/signature-response.dto';
 
-export class UserResponseDto {
+export class UserWithSignatureDto {
   id: string;
   username: string;
   email: string;
   fullName: string;
-  role: UserRole;
+  role: string;
   isActive: boolean;
   createdAt: Date;
-  updatedAt: Date;
-  signature?: any; // Puedes tiparlo mejor si importas Signature
+  signature?: SignatureResponseDto | null;
 
   constructor(user: User) {
     this.id = user.id;
@@ -21,7 +20,6 @@ export class UserResponseDto {
     this.role = user.role;
     this.isActive = user.isActive;
     this.createdAt = user.createdAt;
-    this.updatedAt = user.updatedAt;
-    this.signature = user.signature; // Incluir firma
+    this.signature = user.signature ? new SignatureResponseDto(user.signature) : null;
   }
 }

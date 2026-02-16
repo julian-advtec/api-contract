@@ -1,23 +1,23 @@
 import {
-  Controller,
-  Get,
-  Post,
-  Put,
-  Param,
-  UseGuards,
-  UseInterceptors,
-  UploadedFiles,
-  Body,
-  ParseUUIDPipe,
-  Res,
-  Delete,
-  BadRequestException,
-  Logger,
-  HttpStatus,
-  Query,
-  HttpException,
-  Req,
-  NotFoundException,
+    Controller,
+    Get,
+    Post,
+    Put,
+    Param,
+    UseGuards,
+    UseInterceptors,
+    UploadedFiles,
+    Body,
+    ParseUUIDPipe,
+    Res,
+    Delete,
+    BadRequestException,
+    Logger,
+    HttpStatus,
+    Query,
+    HttpException,
+    Req,
+    NotFoundException,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
@@ -52,7 +52,7 @@ type JwtUser = {
 export class ContabilidadController {
     private readonly logger = new Logger(ContabilidadController.name);
 
-    constructor(private readonly contabilidadService: ContabilidadService) {}
+    constructor(private readonly contabilidadService: ContabilidadService) { }
 
     // ───────────────────────────────────────────────────────────────
     // DOCUMENTOS DISPONIBLES
@@ -112,27 +112,27 @@ export class ContabilidadController {
     // ───────────────────────────────────────────────────────────────
     // SUBIR DOCUMENTOS DE CONTABILIDAD
     // ───────────────────────────────────────────────────────────────
-@Post('documentos/:documentoId/subir-documentos')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.CONTABILIDAD, UserRole.ADMIN) // Ambos roles permitidos
-@UseInterceptors(
-    FileFieldsInterceptor(
-        [
-            { name: 'glosa', maxCount: 1 },
-            { name: 'causacion', maxCount: 1 },
-            { name: 'extracto', maxCount: 1 },
-            { name: 'comprobanteEgreso', maxCount: 1 },
-        ],
-        multerContabilidadConfig
-    ),
-)
-async subirDocumentosContabilidad(
-    @Param('documentoId', ParseUUIDPipe) documentoId: string,
-    @GetUser() user: JwtUser,
-    @Body() body: any,
-    @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
-) {
-    this.logger.log(`[SUBIR] Usuario ${user.id} (${user.username}) con rol ${user.role} subiendo para ${documentoId}`);
+    @Post('documentos/:documentoId/subir-documentos')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(UserRole.CONTABILIDAD, UserRole.ADMIN) // Ambos roles permitidos
+    @UseInterceptors(
+        FileFieldsInterceptor(
+            [
+                { name: 'glosa', maxCount: 1 },
+                { name: 'causacion', maxCount: 1 },
+                { name: 'extracto', maxCount: 1 },
+                { name: 'comprobanteEgreso', maxCount: 1 },
+            ],
+            multerContabilidadConfig
+        ),
+    )
+    async subirDocumentosContabilidad(
+        @Param('documentoId', ParseUUIDPipe) documentoId: string,
+        @GetUser() user: JwtUser,
+        @Body() body: any,
+        @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
+    ) {
+        this.logger.log(`[SUBIR] Usuario ${user.id} (${user.username}) con rol ${user.role} subiendo para ${documentoId}`);
         // DEBUG: Verificar archivos recibidos
         if (files) {
             this.logger.debug(`📁 Archivos recibidos en controller (${Object.keys(files).length}):`);
@@ -249,7 +249,7 @@ async subirDocumentosContabilidad(
                     res.setHeader('Content-Type', 'application/pdf');
                     res.setHeader('Content-Disposition', 'inline; filename="vista.pdf"');
                     const stream = fs.createReadStream(tmpPdf);
-                    stream.on('end', () => fs.unlink(tmpPdf, () => {}));
+                    stream.on('end', () => fs.unlink(tmpPdf, () => { }));
                     return stream.pipe(res);
                 } catch (e) {
                     this.logger.error(`[CONVERSIÓN ERROR] ${e.message}`);
@@ -393,4 +393,109 @@ async subirDocumentosContabilidad(
             },
         };
     }
+
+    // DESCARGAR ARCHIVO CONTABLE (extracto, glosa, causacion, comprobanteEgreso)
+   // DESCARGAR ARCHIVO CONTABLE (extracto, glosa, causacion, comprobanteEgreso)
+@Get('documentos/:documentoId/descargar-contable/:tipo')
+async descargarArchivoContable(
+  @Param('documentoId', ParseUUIDPipe) documentoId: string,
+  @Param('tipo') tipo: string,
+  @GetUser() user: JwtUser,
+  @Res() res: Response,
+) {
+  this.logger.log(`[DESCARGA-CONTABLE] Usuario ${user.id} (${user.username}) solicitando ${tipo} de ${documentoId}`);
+
+  try {
+    // Usar los nombres correctos que devuelve el servicio
+    const { rutaAbsoluta, nombreArchivo } = await this.contabilidadService.obtenerRutaArchivoContabilidadFull(
+      documentoId,
+      tipo,
+      user.id
+    );
+
+    if (!fs.existsSync(rutaAbsoluta)) {
+      throw new NotFoundException(`Archivo ${tipo} no encontrado en disco`);
+    }
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreArchivo)}"`);
+    fs.createReadStream(rutaAbsoluta).pipe(res);
+  } catch (error: any) {
+    this.logger.error(`[ERROR DESCARGA] ${tipo}: ${error.message}`);
+    const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
+    res.status(status).json({
+      success: false,
+      message: error.message || 'Error al descargar el archivo'
+    });
+  }
+}
+
+// PREVISUALIZAR ARCHIVO CONTABLE (inline)
+@Get('documentos/:documentoId/preview-contable/:tipo')
+@Public() // Opcional: si quieres que sea público para previsualización
+async previsualizarArchivoContable(
+  @Param('documentoId', ParseUUIDPipe) documentoId: string,
+  @Param('tipo') tipo: string,
+  @Query('download') download: string = 'false',
+  @Res() res: Response,
+) {
+  this.logger.log(`[PREVIEW-CONTABLE] Acceso a ${tipo} de ${documentoId} (download=${download})`);
+
+  let rutaAbsoluta: string;
+  let nombreArchivo: string;
+
+  try {
+    const result = await this.contabilidadService.obtenerRutaArchivoContabilidadFull(
+      documentoId,
+      tipo
+    );
+    rutaAbsoluta = result.rutaAbsoluta;
+    nombreArchivo = result.nombreArchivo;
+
+    if (!fs.existsSync(rutaAbsoluta)) {
+      throw new NotFoundException(`Archivo ${tipo} no encontrado`);
+    }
+
+    const ext = path.extname(nombreArchivo).toLowerCase();
+
+    // Si es Word y NO es descarga forzada → convertir a PDF temporalmente
+    if (['.doc', '.docx'].includes(ext) && download !== 'true') {
+      const tmpPdf = path.join(os.tmpdir(), `preview-${crypto.randomUUID()}.pdf`);
+      try {
+        await this.contabilidadService.convertirWordAPdf(rutaAbsoluta, tmpPdf);
+        rutaAbsoluta = tmpPdf;
+        nombreArchivo = nombreArchivo.replace(/\.(doc|docx)$/i, '.pdf');
+      } catch (conversionError) {
+        this.logger.warn(`[CONVERSIÓN FALLIDA] ${conversionError.message} - Sirviendo Word directamente`);
+        // Si falla conversión, servir el .docx tal cual
+      }
+    }
+
+    const mimeType = mime.lookup(path.extname(nombreArchivo)) || 'application/octet-stream';
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', download === 'true' ? 
+      `attachment; filename="${encodeURIComponent(nombreArchivo)}"` : 
+      `inline; filename="${encodeURIComponent(nombreArchivo)}"`
+    );
+
+    const stream = fs.createReadStream(rutaAbsoluta);
+    stream.pipe(res);
+
+    // Limpieza del temporal (solo si se creó PDF)
+    if (rutaAbsoluta.includes('preview-') && rutaAbsoluta.endsWith('.pdf')) {
+      stream.on('end', () => {
+        fs.unlink(rutaAbsoluta, (err) => {
+          if (err) this.logger.warn(`No se pudo eliminar temporal: ${err.message}`);
+        });
+      });
+    }
+  } catch (error: any) {
+    this.logger.error(`[ERROR PREVIEW] ${tipo}: ${error.message}`);
+    const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
+    if (!res.headersSent) {
+      res.status(status).json({ success: false, message: error.message || 'Error al previsualizar' });
+    }
+  }
+}
 }

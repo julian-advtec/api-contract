@@ -2,7 +2,7 @@ import {
   Injectable,
   ConflictException,
   InternalServerErrorException,
-  NotFoundException
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not } from 'typeorm';
@@ -37,13 +37,7 @@ export class UsersService {
     }
   }
 
-  async findById(id: string): Promise<User | null> {
-    try {
-      return await this.usersRepository.findOne({ where: { id } });
-    } catch (error) {
-      throw new InternalServerErrorException('Error buscando usuario por ID');
-    }
-  }
+
 
   async findAll(): Promise<UserResponseDto[]> {
     try {
@@ -511,6 +505,17 @@ export class UsersService {
       });
     } catch (error) {
       throw new InternalServerErrorException('Error limpiando token de reset');
+    }
+  }
+
+ async findById(id: string, relations: string[] = []): Promise<User | null> {
+    try {
+      return await this.usersRepository.findOne({
+        where: { id },
+        relations: relations // 👈 AGREGAR RELACIONES
+      });
+    } catch (error) {
+      throw new InternalServerErrorException('Error buscando usuario por ID');
     }
   }
 }

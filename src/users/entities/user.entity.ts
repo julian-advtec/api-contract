@@ -1,3 +1,4 @@
+// users/entities/user.entity.ts
 import { 
   Entity, 
   PrimaryGeneratedColumn, 
@@ -5,10 +6,12 @@ import {
   CreateDateColumn, 
   UpdateDateColumn, 
   BeforeInsert, 
-  BeforeUpdate 
+  BeforeUpdate,
+  OneToOne // 👈 IMPORTAR ESTO
 } from 'typeorm';
-import { UserRole } from '../enums/user-role.enum'; // Asegurar que este archivo existe
+import { UserRole } from '../enums/user-role.enum';
 import { Exclude } from 'class-transformer';
+import { Signature } from '../../signatures/entities/signature.entity'; // 👈 IMPORTAR
 
 @Entity('users')
 export class User {
@@ -67,6 +70,13 @@ export class User {
 
   @Column({ name: 'reset_token_expires', nullable: true })
   resetTokenExpires?: Date;
+
+  // 👇 RELACIÓN CON FIRMA (UNA SOLA POR USUARIO)
+  @OneToOne(() => Signature, signature => signature.user, {
+    nullable: true,
+    cascade: true
+  })
+  signature?: Signature;
 
   @BeforeInsert()
   @BeforeUpdate()

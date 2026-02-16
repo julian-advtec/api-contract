@@ -44,6 +44,8 @@ export class TesoreriaDocumento {
 
   @Column({ type: 'timestamp', nullable: true })
   fechaFinRevision: Date;
+  @Column({ name: 'firma_aplicada', default: false })
+firmaAplicada: boolean;
 
   puedeFinalizar(): { puede: boolean; razon?: string } {
     if (!this.pagoRealizadoPath) {

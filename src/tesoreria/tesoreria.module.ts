@@ -1,23 +1,32 @@
+// backend/tesoreria/tesoreria.module.ts
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { TesoreriaController } from './tesoreria.controller';
 import { TesoreriaService } from './tesoreria.service';
-import { TesoreriaDocumento } from './entities/tesoreria-documento.entity';   // ← debe estar aquí
+import { TesoreriaSignatureService } from './tesoreria-signature.service';
+import { TesoreriaDocumento } from './entities/tesoreria-documento.entity';
 import { Documento } from '../radicacion/entities/documento.entity';
 import { User } from '../users/entities/user.entity';
 import { ContabilidadDocumento } from '../contabilidad/entities/contabilidad-documento.entity';
+import { Signature } from '../signatures/entities/signature.entity';
+import { EncryptionService } from '../signatures/encryption.service';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
-      TesoreriaDocumento,           // ← muy importante que esté aquí
+      TesoreriaDocumento,
       Documento,
       User,
-      ContabilidadDocumento
-    ])
+      ContabilidadDocumento,
+      Signature, // 👈 IMPORTANTE: agregar Signature aquí
+    ]),
   ],
   controllers: [TesoreriaController],
-  providers: [TesoreriaService],
-  exports: [TesoreriaService]     // opcional, si lo usas en otros módulos
+  providers: [
+    TesoreriaService,
+    TesoreriaSignatureService,
+    EncryptionService,
+  ],
+  exports: [TesoreriaService],
 })
 export class TesoreriaModule {}

@@ -80,35 +80,39 @@ export class TesoreriaController {
         return this.tesoreriaService.obtenerDetalleDocumento(documentoId, user.id);
     }
 
-    @Post('documentos/:documentoId/subir-documento')
-    @UseInterceptors(
-        FileFieldsInterceptor(
-            [
-                { name: 'pagoRealizado', maxCount: 1 }
-            ],
-            multerTesoreriaConfig
-        ),
-    )
-    async subirDocumentoTesoreria(
-        @Param('documentoId', ParseUUIDPipe) documentoId: string,
-        @GetUser() user: JwtUser,
-        @Body() body: any,
-        @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
-    ) {
-        this.logger.log(`[SUBIR] Tesorero ${user.id} subiendo pago para ${documentoId}`);
+ @Post('documentos/:documentoId/subir-documento')
+@UseInterceptors(
+  FileFieldsInterceptor(
+    [
+      { name: 'pagoRealizado', maxCount: 1 }
+    ],
+    multerTesoreriaConfig
+  ),
+)
+async subirDocumentoTesoreria(
+  @Param('documentoId', ParseUUIDPipe) documentoId: string,
+  @GetUser() user: JwtUser,
+  @Body() body: any,
+  @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
+) {
+  this.logger.log(`[SUBIR] Tesorero ${user.id} subiendo pago para ${documentoId}`);
+  this.logger.log(`📥 signatureId: ${body.signatureId}`);
+  this.logger.log(`📥 signaturePosition: ${body.signaturePosition}`);
 
-        const datos = {
-            observaciones: body.observaciones,
-            estadoFinal: body.estadoFinal
-        };
+  const datos = {
+    observaciones: body.observaciones,
+    estadoFinal: body.estadoFinal,
+    signatureId: body.signatureId, // 👈 AGREGAR
+    signaturePosition: body.signaturePosition // 👈 AGREGAR
+  };
 
-        return this.tesoreriaService.subirDocumentoTesoreria(
-            documentoId,
-            user.id,
-            datos,
-            files,
-        );
-    }
+  return this.tesoreriaService.subirDocumentoTesoreria(
+    documentoId,
+    user.id,
+    datos,
+    files,
+  );
+}
 
     @Put('documentos/:documentoId/finalizar')
     async finalizarRevision(

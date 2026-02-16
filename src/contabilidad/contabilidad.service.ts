@@ -49,6 +49,8 @@ export class ContabilidadService {
         this.logger.log(`Ruta base configurada: ${this.basePath}`);
     }
 
+
+
     // ───────────────────────────────────────────────────────────────
     // 1. DOCUMENTOS DISPONIBLES
     // ───────────────────────────────────────────────────────────────
@@ -202,71 +204,68 @@ export class ContabilidadService {
             throw error;
         }
     }
+    
 
     // ───────────────────────────────────────────────────────────────
     // 4. OBTENER DETALLE DE DOCUMENTO
     // ───────────────────────────────────────────────────────────────
-// En contabilidad.service.ts - método obtenerDetalleDocumento
-// En contabilidad.service.ts - método obtenerDetalleDocumento
-// En contabilidad.service.ts - método obtenerDetalleDocumento
-async obtenerDetalleDocumento(documentoId: string, userId: string): Promise<any> {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user) throw new NotFoundException('Usuario no encontrado');
 
-    const documento = await this.documentoRepository.findOne({
-        where: { id: documentoId },
-        relations: ['radicador', 'usuarioAsignado'],
-    });
+    async obtenerDetalleDocumento(documentoId: string, userId: string): Promise<any> {
+        const user = await this.userRepository.findOne({ where: { id: userId } });
+        if (!user) throw new NotFoundException('Usuario no encontrado');
 
-    if (!documento) throw new NotFoundException('Documento no encontrado');
+        const documento = await this.documentoRepository.findOne({
+            where: { id: documentoId },
+            relations: ['radicador', 'usuarioAsignado'],
+        });
 
-    // TODOS LOS ESTADOS QUE CONTABILIDAD PUEDE VER
-    const estadosPermitidos = [
-        // Estados de entrada a contabilidad
-        'APROBADO_AUDITOR',
-        'COMPLETADO_AUDITOR',
-        
-        // Estados de contabilidad (edición)
-        'EN_REVISION_CONTABILIDAD',
-        'EN_REVISION',
-        
-        // Estados finales de contabilidad (consulta)
-        'COMPLETADO_CONTABILIDAD',
-        'PROCESADO_CONTABILIDAD',
-        'OBSERVADO_CONTABILIDAD',
-        'RECHAZADO_CONTABILIDAD',
-        'GLOSADO_CONTABILIDAD',
-        
-        // Estados de otras áreas (consulta)
-        'EN_REVISION_TESORERIA',
-        'OBSERVADO_TESORERIA',
-        'RECHAZADO_TESORERIA',
-        'PROCESADO_TESORERIA',
-        'EN_REVISION_SUPERVISOR',
-        'APROBADO_SUPERVISOR',
-        'EN_REVISION_AUDITOR',
-        'APROBADO_AUDITOR',
-        'RECHAZADO_AUDITOR',
-        'OBSERVADO_AUDITOR'
-    ];
+        if (!documento) throw new NotFoundException('Documento no encontrado');
 
-    if (!estadosPermitidos.includes(documento.estado)) {
-        throw new ForbiddenException(`No tienes acceso en estado: ${documento.estado}`);
+        const estadoUpper = documento.estado?.toUpperCase() || '';
+
+        // Lista mínima de estados donde contabilidad SI puede editar
+        const estadosEdicion = [
+            'EN_REVISION_CONTABILIDAD',
+            'EN_REVISION'
+        ];
+
+        // Si está en edición → OK
+        if (estadosEdicion.some(e => estadoUpper.includes(e))) {
+            // Procede normal (modo edición)
+        }
+        // Si NO está en edición, pero está en cualquier estado posterior → permitir SOLO LECTURA
+        else if (
+            estadoUpper.includes('CONTABILIDAD') ||     // Estados finales contables
+            estadoUpper.includes('TESORERIA') ||        // Después de tesorería
+            estadoUpper.includes('SUPERVISOR') ||       // Después de supervisor
+            estadoUpper.includes('AUDITOR') ||          // Después de auditor
+            estadoUpper.includes('COMPLETADO') ||       // Cualquier completado
+            estadoUpper.includes('PROCESADO') ||        // Cualquier procesado
+            estadoUpper.includes('GLOSADO') ||          // Glosado
+            estadoUpper.includes('RECHAZADO')           // Rechazado
+        ) {
+            // Permitido en modo solo lectura
+            this.logger.log(`[PERMITIDO SOLO LECTURA] Estado: ${documento.estado} para usuario ${user.username}`);
+        }
+        // Si NO está en ninguno de los casos anteriores → bloqueo
+        else {
+            throw new ForbiddenException(`No tienes acceso en estado: ${documento.estado}`);
+        }
+
+        // Resto del método sigue igual (buscar contabilidadDoc, auditorDoc, construir respuesta, etc.)
+        const contabilidadDoc = await this.contabilidadRepository.findOne({
+            where: { documento: { id: documentoId }, contador: { id: userId } },
+            relations: ['contador'],
+        });
+
+        const auditorDoc = await this.auditorDocumentoRepository.findOne({
+            where: { documento: { id: documentoId } },
+            relations: ['auditor'],
+            order: { fechaActualizacion: 'DESC' },
+        });
+
+        return this.construirRespuestaDetalle(documento, contabilidadDoc, auditorDoc, user);
     }
-
-    const contabilidadDoc = await this.contabilidadRepository.findOne({
-        where: { documento: { id: documentoId }, contador: { id: userId } },
-        relations: ['contador'],
-    });
-
-    const auditorDoc = await this.auditorDocumentoRepository.findOne({
-        where: { documento: { id: documentoId } },
-        relations: ['auditor'],
-        order: { fechaActualizacion: 'DESC' },
-    });
-
-    return this.construirRespuestaDetalle(documento, contabilidadDoc, auditorDoc, user);
-}
 
     // ───────────────────────────────────────────────────────────────
     // 5. DEFINIR GLOSA
@@ -972,68 +971,68 @@ async obtenerDetalleDocumento(documentoId: string, userId: string): Promise<any>
     // ───────────────────────────────────────────────────────────────
     // 13. OBTENER HISTORIAL
     // ───────────────────────────────────────────────────────────────
-// 12. Historial - VERSIÓN CORREGIDA
-async getHistorial(contadorId: string): Promise<any[]> {
-    this.logger.log(`Obteniendo historial COMPLETO para contador ${contadorId}`);
+    // 12. Historial - VERSIÓN CORREGIDA
+    async getHistorial(contadorId: string): Promise<any[]> {
+        this.logger.log(`Obteniendo historial COMPLETO para contador ${contadorId}`);
 
-    const contabilidadDocs = await this.contabilidadRepository.find({
-        where: {
-            contador: { id: contadorId },
-        },
-        relations: ['documento', 'contador'],
-        order: { fechaActualizacion: 'DESC' }
-    });
-
-    return contabilidadDocs.map(cd => {
-        // Determinar el estado real basado en los datos disponibles
-        let estadoReal = 'PROCESADO';
-        
-        // Si tiene fecha de finalización y observaciones, podría ser observado/rechazado
-        if (cd.fechaFinRevision) {
-            if (cd.observaciones) {
-                // Intentar inferir por el contenido de observaciones
-                const obsUpper = (cd.observaciones || '').toUpperCase();
-                if (obsUpper.includes('RECHAZ') || obsUpper.includes('RECHAZADO')) {
-                    estadoReal = 'RECHAZADO';
-                } else if (obsUpper.includes('OBSERV') || obsUpper.includes('OBSERVADO')) {
-                    estadoReal = 'OBSERVADO';
-                } else {
-                    estadoReal = 'COMPLETADO'; // Por defecto, si tiene fecha fin es completado
-                }
-            } else {
-                estadoReal = 'COMPLETADO';
-            }
-        }
-        // Si no tiene fecha fin pero tiene documentos subidos, está procesado
-        else if (cd.comprobanteEgresoPath || cd.causacionPath) {
-            estadoReal = 'PROCESADO';
-        }
-
-        return {
-            id: cd.id,
-            documento: {
-                id: cd.documento.id,
-                numeroRadicado: cd.documento.numeroRadicado,
-                numeroContrato: cd.documento.numeroContrato,
-                nombreContratista: cd.documento.nombreContratista,
-                documentoContratista: cd.documento.documentoContratista,
-                fechaInicio: cd.documento.fechaInicio,
-                fechaFin: cd.documento.fechaFin,
-                fechaRadicacion: cd.documento.fechaRadicacion,
-                fechaActualizacion: cd.documento.fechaActualizacion,
-                estado: cd.documento.estado
+        const contabilidadDocs = await this.contabilidadRepository.find({
+            where: {
+                contador: { id: contadorId },
             },
-            estado: estadoReal,
-            observaciones: cd.observaciones || '',
-            tieneGlosa: cd.tieneGlosa,
-            tipoCausacion: cd.tipoCausacion,
-            fechaActualizacion: cd.fechaActualizacion,
-            fechaFinRevision: cd.fechaFinRevision,
-            fechaInicioRevision: cd.fechaInicioRevision,
-            contadorRevisor: cd.contador?.fullName || cd.contador?.username || 'Contador'
-        };
-    });
-}
+            relations: ['documento', 'contador'],
+            order: { fechaActualizacion: 'DESC' }
+        });
+
+        return contabilidadDocs.map(cd => {
+            // Determinar el estado real basado en los datos disponibles
+            let estadoReal = 'PROCESADO';
+
+            // Si tiene fecha de finalización y observaciones, podría ser observado/rechazado
+            if (cd.fechaFinRevision) {
+                if (cd.observaciones) {
+                    // Intentar inferir por el contenido de observaciones
+                    const obsUpper = (cd.observaciones || '').toUpperCase();
+                    if (obsUpper.includes('RECHAZ') || obsUpper.includes('RECHAZADO')) {
+                        estadoReal = 'RECHAZADO';
+                    } else if (obsUpper.includes('OBSERV') || obsUpper.includes('OBSERVADO')) {
+                        estadoReal = 'OBSERVADO';
+                    } else {
+                        estadoReal = 'COMPLETADO'; // Por defecto, si tiene fecha fin es completado
+                    }
+                } else {
+                    estadoReal = 'COMPLETADO';
+                }
+            }
+            // Si no tiene fecha fin pero tiene documentos subidos, está procesado
+            else if (cd.comprobanteEgresoPath || cd.causacionPath) {
+                estadoReal = 'PROCESADO';
+            }
+
+            return {
+                id: cd.id,
+                documento: {
+                    id: cd.documento.id,
+                    numeroRadicado: cd.documento.numeroRadicado,
+                    numeroContrato: cd.documento.numeroContrato,
+                    nombreContratista: cd.documento.nombreContratista,
+                    documentoContratista: cd.documento.documentoContratista,
+                    fechaInicio: cd.documento.fechaInicio,
+                    fechaFin: cd.documento.fechaFin,
+                    fechaRadicacion: cd.documento.fechaRadicacion,
+                    fechaActualizacion: cd.documento.fechaActualizacion,
+                    estado: cd.documento.estado
+                },
+                estado: estadoReal,
+                observaciones: cd.observaciones || '',
+                tieneGlosa: cd.tieneGlosa,
+                tipoCausacion: cd.tipoCausacion,
+                fechaActualizacion: cd.fechaActualizacion,
+                fechaFinRevision: cd.fechaFinRevision,
+                fechaInicioRevision: cd.fechaInicioRevision,
+                contadorRevisor: cd.contador?.fullName || cd.contador?.username || 'Contador'
+            };
+        });
+    }
 
 
     // ───────────────────────────────────────────────────────────────
