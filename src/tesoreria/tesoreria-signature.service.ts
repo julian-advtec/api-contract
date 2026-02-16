@@ -1,6 +1,5 @@
-// backend/tesoreria/tesoreria-signature.service.ts
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument } from 'pdf-lib';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -16,136 +15,147 @@ export class TesoreriaSignatureService {
     @InjectRepository(Signature)
     private signaturesRepository: Repository<Signature>,
     private readonly encryptionService: EncryptionService,
-  ) {}
+  ) { }
 
-  /**
-   * Aplica una firma digital en un PDF en la posición especificada
-   */
   async aplicarFirmaEnPDF(
     pdfPath: string,
     signatureId: string,
     position: { page: number; x: number; y: number; width: number; height: number }
   ): Promise<string> {
     try {
-      this.logger.log(`📝 Aplicando firma en PDF: ${pdfPath}`);
-      this.logger.log(`📍 Posición: página ${position.page}, (${position.x}, ${position.y})`);
+      this.logger.log(`Aplicando firma en ${pdfPath} | firma ID: ${signatureId}`);
+      this.logger.log(`Posición recibida: página ${position.page}, (${position.x}, ${position.y}), tamaño ${position.width}×${position.height}`);
 
-      // 1. Obtener la firma del usuario
-      const signature = await this.signaturesRepository.findOne({
-        where: { id: signatureId }
-      });
+      // 1. Obtener la firma desencriptada
+      const signature = await this.signaturesRepository.findOneBy({ id: signatureId });
+      if (!signature) throw new NotFoundException('Firma no encontrada');
 
-      if (!signature) {
-        throw new NotFoundException('Firma no encontrada');
+      const signatureBuffer = this.encryptionService.decryptFromDb(signature.encryptedData);
+      if (!signatureBuffer || signatureBuffer.length < 100) {
+        throw new BadRequestException('Firma desencriptada inválida o vacía');
       }
 
-      // 2. Desencriptar la firma
-      const signatureBuffer = this.encryptionService.decryptFromDb(signature.encryptedData);
-      
-      // 3. Cargar el PDF original
+      // 2. Cargar el PDF del comprobante
       const pdfBytes = await fs.readFile(pdfPath);
       const pdfDoc = await PDFDocument.load(pdfBytes);
-      
-      // 4. Obtener la página específica (las páginas empiezan en índice 0)
+
+      // 3. Validar página objetivo
       const pageIndex = position.page - 1;
       if (pageIndex < 0 || pageIndex >= pdfDoc.getPageCount()) {
-        throw new BadRequestException(`La página ${position.page} no existe. El documento tiene ${pdfDoc.getPageCount()} páginas.`);
+        throw new BadRequestException(`Página ${position.page} no existe`);
       }
-      
+
       const page = pdfDoc.getPage(pageIndex);
-      const { height: pageHeight } = page.getSize();
-      
+      const { width: pageWidth, height: pageHeight } = page.getSize();
+
+      this.logger.log(`Tamaño de página PDF: ${pageWidth}×${pageHeight}`);
+
+      // 4. Validar que la posición esté dentro de la página
+      const finalX = Math.max(0, Math.min(position.x, pageWidth - position.width));
+      const finalY = Math.max(0, Math.min(position.y, pageHeight - position.height));
+
+      this.logger.log(`Posición final validada: (${finalX}, ${finalY})`);
+
       // 5. Aplicar la firma según el tipo
       if (signature.type === 'image') {
-        await this.aplicarFirmaImagen(page, signatureBuffer, position, pageHeight);
+        await this.drawImageSignature(page, signatureBuffer, {
+          x: finalX,
+          y: finalY,
+          width: position.width,
+          height: position.height
+        });
       } else if (signature.type === 'pdf') {
-        await this.aplicarFirmaPDF(pdfDoc, signatureBuffer, position, pageIndex);
+        await this.drawPdfSignature(pdfDoc, page, signatureBuffer, {
+          x: finalX,
+          y: finalY,
+          width: position.width,
+          height: position.height
+        });
       } else {
-        throw new BadRequestException('Tipo de firma no soportado');
+        throw new BadRequestException(`Tipo de firma no soportado: ${signature.type}`);
       }
-      
-      // 6. Agregar metadatos de la firma (opcional)
-      const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      page.drawText(`Firmado digitalmente por tesorería el ${new Date().toLocaleString('es-CO')}`, {
-        x: position.x,
-        y: position.y - 15,
-        size: 8,
-        font: helveticaFont,
-        color: rgb(0.5, 0.5, 0.5),
-      });
-      
-      // 7. Guardar el PDF firmado (reemplazar el original)
-      const signedPdfBytes = await pdfDoc.save();
-      await fs.writeFile(pdfPath, signedPdfBytes); // Sobrescribimos el original
-      
-      this.logger.log(`✅ Firma aplicada correctamente en: ${pdfPath}`);
-      
+
+      // 6. Guardar el PDF modificado
+      const signedBytes = await pdfDoc.save();
+      await fs.writeFile(pdfPath, signedBytes);
+
+      this.logger.log(`✅ Firma aplicada correctamente en (${finalX}, ${finalY})`);
       return pdfPath;
+
     } catch (error) {
-      this.logger.error(`❌ Error aplicando firma: ${error.message}`, error.stack);
+      this.logger.error(`Error al aplicar firma: ${error.message}`, error.stack);
       throw error;
     }
   }
 
-  /**
-   * Aplica una firma de imagen en el PDF
-   */
-  private async aplicarFirmaImagen(
+  private async drawImageSignature(
     page: any,
     imageBuffer: Buffer,
-    position: { x: number; y: number; width: number; height: number },
-    pageHeight: number
+    pos: { x: number; y: number; width: number; height: number }
+  ) {
+    let image;
+    try {
+      image = await page.doc.embedPng(imageBuffer);
+    } catch {
+      try {
+        image = await page.doc.embedJpg(imageBuffer);
+      } catch {
+        throw new BadRequestException('No se pudo interpretar la firma como imagen');
+      }
+    }
+
+    page.drawImage(image, {
+      x: pos.x,
+      y: pos.y,
+      width: pos.width,
+      height: pos.height,
+    });
+
+    this.logger.debug(`Imagen de firma dibujada en (${pos.x}, ${pos.y})`);
+  }
+
+  private async drawPdfSignature(
+    pdfDoc: PDFDocument,
+    targetPage: any,
+    pdfBuffer: Buffer,
+    pos: { x: number; y: number; width: number; height: number }
   ) {
     try {
-      // Intentar como PNG primero
-      let image;
-      try {
-        image = await page.doc.embedPng(imageBuffer);
-      } catch {
-        // Si falla, intentar como JPG
-        image = await page.doc.embedJpg(imageBuffer);
+      // 1. Cargar el PDF de la firma
+      const signaturePdf = await PDFDocument.load(pdfBuffer);
+      if (signaturePdf.getPageCount() === 0) {
+        throw new BadRequestException('PDF de firma vacío');
       }
+
+      // 2. Obtener la primera página de la firma
+      const [signaturePage] = signaturePdf.getPages();
       
-      // En PDF.js las coordenadas Y empiezan desde la parte inferior
-      const yFromBottom = pageHeight - position.y - position.height;
+      // 3. EMBED la página de la firma en el PDF destino (NO copyPages)
+      const embeddedPage = await pdfDoc.embedPage(signaturePage);
       
-      page.drawImage(image, {
-        x: position.x,
-        y: yFromBottom,
-        width: position.width,
-        height: position.height,
+      // 4. Obtener dimensiones originales de la página embebida
+      const { width: origWidth, height: origHeight } = embeddedPage;
+      
+      // 5. Calcular escala para ajustar al tamaño deseado
+      const scaleX = pos.width / origWidth;
+      const scaleY = pos.height / origHeight;
+      const scale = Math.min(scaleX, scaleY);
+
+      this.logger.log(`Dibujando firma PDF: original=${origWidth}×${origHeight}, target=${pos.width}×${pos.height}, scale=${scale}`);
+
+      // 6. Dibujar la firma usando la página embebida
+      targetPage.drawPage(embeddedPage, {
+        x: pos.x,
+        y: pos.y,
+        xScale: scale,
+        yScale: scale,
       });
-      
-      this.logger.log(`✅ Firma de imagen aplicada en posición (${position.x}, ${yFromBottom})`);
+
     } catch (error) {
-      this.logger.error(`❌ Error aplicando firma de imagen: ${error.message}`);
-      throw new BadRequestException('No se pudo aplicar la imagen de firma en el PDF');
+      this.logger.error(`Error dibujando firma PDF: ${error.message}`);
+      throw new BadRequestException(`Error al aplicar firma PDF: ${error.message}`);
     }
   }
 
-  /**
-   * Aplica una firma PDF (como sello) en el documento
-   */
-  private async aplicarFirmaPDF(
-    pdfDoc: any,
-    pdfBuffer: Buffer,
-    position: { x: number; y: number; width: number; height: number },
-    pageIndex: number
-  ) {
-    try {
-      // Cargar el PDF de la firma
-      const signaturePdf = await PDFDocument.load(pdfBuffer);
-      
-      // Copiar la primera página de la firma
-      const [signaturePage] = await pdfDoc.copyPages(signaturePdf, [0]);
-      
-      // Insertar la página de la firma después de la página actual
-      pdfDoc.insertPage(pageIndex + 1, signaturePage);
-      
-      this.logger.log(`✅ Firma PDF insertada como página ${pageIndex + 2}`);
-    } catch (error) {
-      this.logger.error(`❌ Error aplicando firma PDF: ${error.message}`);
-      throw new BadRequestException('No se pudo aplicar el sello PDF en el documento');
-    }
-  }
+  
 }

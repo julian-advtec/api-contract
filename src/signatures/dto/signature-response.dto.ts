@@ -3,6 +3,7 @@ import { Signature } from '../entities/signature.entity';
 
 export class SignatureResponseDto {
   id: string;
+  userId: string;
   name: string;
   type: 'image' | 'pdf';
   mimeType: string;
@@ -10,13 +11,15 @@ export class SignatureResponseDto {
   createdAt: Date;
   updatedAt: Date;
 
-  constructor(signature: Signature) {
-    this.id = signature.id;
-    this.name = signature.name;
-    this.type = signature.type;
-    this.mimeType = signature.mimeType;
-    this.fileSize = signature.fileSize;
-    this.createdAt = signature.createdAt;
-    this.updatedAt = signature.updatedAt;
+  constructor(entity: Signature) {
+    this.id = entity.id;
+    this.userId = entity.userId;
+    this.name = entity.name;
+    this.type = entity.type;
+    this.mimeType = entity.mimeType;
+    this.fileSize = entity.fileSize;
+    this.createdAt = entity.createdAt;
+    this.updatedAt = entity.updatedAt;
   }
+  
 }

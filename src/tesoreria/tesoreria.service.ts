@@ -33,24 +33,24 @@ const execAsync = promisify(exec);
 
 @Injectable()
 export class TesoreriaService {
-  private readonly logger = new Logger(TesoreriaService.name);
+    private readonly logger = new Logger(TesoreriaService.name);
 
-  constructor(
-    @InjectRepository(TesoreriaDocumento)
-    private tesoreriaRepository: Repository<TesoreriaDocumento>,
-    @InjectRepository(Documento)
-    private documentoRepository: Repository<Documento>,
-    @InjectRepository(User)
-    private userRepository: Repository<User>,
-    @InjectRepository(ContabilidadDocumento)
-    private contabilidadDocumentoRepository: Repository<ContabilidadDocumento>,
-    private readonly configService: ConfigService,
-    @InjectRepository(Signature) // 👈 AGREGAR ESTA LÍNEA
-    private signaturesRepository: Repository<Signature>,
-    private readonly tesoreriaSignatureService: TesoreriaSignatureService, // 👈 NUEVO SERVICIO
-  ) {
-    this.logger.log('💰 TesoreriaService inicializado');
-  }
+    constructor(
+        @InjectRepository(TesoreriaDocumento)
+        private tesoreriaRepository: Repository<TesoreriaDocumento>,
+        @InjectRepository(Documento)
+        private documentoRepository: Repository<Documento>,
+        @InjectRepository(User)
+        private userRepository: Repository<User>,
+        @InjectRepository(ContabilidadDocumento)
+        private contabilidadDocumentoRepository: Repository<ContabilidadDocumento>,
+        private readonly configService: ConfigService,
+        @InjectRepository(Signature) // 👈 AGREGAR ESTA LÍNEA
+        private signaturesRepository: Repository<Signature>,
+        private readonly tesoreriaSignatureService: TesoreriaSignatureService, // 👈 NUEVO SERVICIO
+    ) {
+        this.logger.log('💰 TesoreriaService inicializado');
+    }
 
     async obtenerDocumentosDisponibles(tesoreroId: string): Promise<any[]> {
         this.logger.log(`📋 Tesorero ${tesoreroId} solicitando documentos disponibles`);
@@ -356,277 +356,277 @@ export class TesoreriaService {
         }
     }
 
-async subirDocumentoTesoreria(
-  documentoId: string,
-  tesoreroId: string,
-  datos: {
-    observaciones?: string;
-    estadoFinal?: string;
-    signatureId?: string;
-    signaturePosition?: string;
-  },
-  files: { [key: string]: Express.Multer.File[] },
-): Promise<{ success: boolean; message: string; tesoreria: TesoreriaDocumento }> {
-  const logPrefix = `[SUBIR-DOCS] doc=${documentoId} tesorero=${tesoreroId}`;
-  this.logger.log(`${logPrefix} Iniciando subida...`);
+    async subirDocumentoTesoreria(
+        documentoId: string,
+        tesoreroId: string,
+        datos: {
+            observaciones?: string;
+            estadoFinal?: string;
+            signatureId?: string;
+            signaturePosition?: string;
+        },
+        files: { [key: string]: Express.Multer.File[] },
+    ): Promise<{ success: boolean; message: string; tesoreria: TesoreriaDocumento }> {
+        const logPrefix = `[SUBIR-DOCS] doc=${documentoId} tesorero=${tesoreroId}`;
+        this.logger.log(`${logPrefix} Iniciando subida...`);
 
-  this.logger.log(`${logPrefix} Archivos recibidos: ${files ? Object.keys(files).join(', ') : 'NINGUNO'}`);
-  if (files) {
-    Object.keys(files).forEach(key => {
-      if (files[key] && files[key][0]) {
-        const file = files[key][0];
-        this.logger.log(`${logPrefix}   → ${key}: ${file.originalname} (${file.size} bytes, ${file.mimetype})`);
-      }
-    });
-  }
+        this.logger.log(`${logPrefix} Archivos recibidos: ${files ? Object.keys(files).join(', ') : 'NINGUNO'}`);
+        if (files) {
+            Object.keys(files).forEach(key => {
+                if (files[key] && files[key][0]) {
+                    const file = files[key][0];
+                    this.logger.log(`${logPrefix}   → ${key}: ${file.originalname} (${file.size} bytes, ${file.mimetype})`);
+                }
+            });
+        }
 
-  const tesoreriaDoc = await this.tesoreriaRepository.findOne({
-    where: {
-      documento: { id: documentoId },
-      tesorero: { id: tesoreroId },
-      estado: TesoreriaEstado.EN_REVISION
-    },
-    relations: ['documento', 'tesorero']
-  });
+        const tesoreriaDoc = await this.tesoreriaRepository.findOne({
+            where: {
+                documento: { id: documentoId },
+                tesorero: { id: tesoreroId },
+                estado: TesoreriaEstado.EN_REVISION
+            },
+            relations: ['documento', 'tesorero']
+        });
 
-  if (!tesoreriaDoc) {
-    this.logger.error(`${logPrefix} No tiene el documento en revisión`);
-    throw new ForbiddenException('No tienes este documento asignado en revisión');
-  }
+        if (!tesoreriaDoc) {
+            this.logger.error(`${logPrefix} No tiene el documento en revisión`);
+            throw new ForbiddenException('No tienes este documento asignado en revisión');
+        }
 
-  const documento = tesoreriaDoc.documento;
-  const tesorero = tesoreriaDoc.tesorero;
+        const documento = tesoreriaDoc.documento;
+        const tesorero = tesoreriaDoc.tesorero;
 
-  this.logger.log(`${logPrefix} Documento: ${documento.numeroRadicado}, Tesorero: ${tesorero.username}`);
+        this.logger.log(`${logPrefix} Documento: ${documento.numeroRadicado}, Tesorero: ${tesorero.username}`);
 
-  if (!documento.rutaCarpetaRadicado) {
-    this.logger.error(`${logPrefix} No tiene rutaCarpetaRadicado`);
-    throw new BadRequestException('El documento no tiene ruta de carpeta asignada');
-  }
+        if (!documento.rutaCarpetaRadicado) {
+            this.logger.error(`${logPrefix} No tiene rutaCarpetaRadicado`);
+            throw new BadRequestException('El documento no tiene ruta de carpeta asignada');
+        }
 
-  if (!fs.existsSync(documento.rutaCarpetaRadicado)) {
-    this.logger.error(`${logPrefix} Carpeta no existe: ${documento.rutaCarpetaRadicado}`);
-    throw new BadRequestException(`La carpeta del documento no existe: ${documento.rutaCarpetaRadicado}`);
-  }
+        if (!fs.existsSync(documento.rutaCarpetaRadicado)) {
+            this.logger.error(`${logPrefix} Carpeta no existe: ${documento.rutaCarpetaRadicado}`);
+            throw new BadRequestException(`La carpeta del documento no existe: ${documento.rutaCarpetaRadicado}`);
+        }
 
-  const carpetaTesoreria = path.join(documento.rutaCarpetaRadicado, 'tesoreria');
-  if (!fs.existsSync(carpetaTesoreria)) {
-    fs.mkdirSync(carpetaTesoreria, { recursive: true });
-    this.logger.log(`${logPrefix} 📁 Creada carpeta tesorería: ${carpetaTesoreria}`);
-  }
+        const carpetaTesoreria = path.join(documento.rutaCarpetaRadicado, 'tesoreria');
+        if (!fs.existsSync(carpetaTesoreria)) {
+            fs.mkdirSync(carpetaTesoreria, { recursive: true });
+            this.logger.log(`${logPrefix} 📁 Creada carpeta tesorería: ${carpetaTesoreria}`);
+        }
 
-  if (datos.observaciones) {
-    tesoreriaDoc.observaciones = datos.observaciones;
-  }
+        if (datos.observaciones) {
+            tesoreriaDoc.observaciones = datos.observaciones;
+        }
 
-  tesoreriaDoc.fechaActualizacion = new Date();
+        tesoreriaDoc.fechaActualizacion = new Date();
 
-  const archivosGuardados: Record<string, string> = {};
+        const archivosGuardados: Record<string, string> = {};
 
-  const guardarArchivo = async (tipo: string, file?: Express.Multer.File): Promise<boolean> => {
-    if (!file) {
-      this.logger.log(`${logPrefix} ⚠️ No se recibió archivo para ${tipo}`);
-      return false;
+        const guardarArchivo = async (tipo: string, file?: Express.Multer.File): Promise<boolean> => {
+            if (!file) {
+                this.logger.log(`${logPrefix} ⚠️ No se recibió archivo para ${tipo}`);
+                return false;
+            }
+
+            if (!file.buffer || file.buffer.length === 0) {
+                this.logger.error(`${logPrefix} ❌ Archivo ${tipo} no tiene buffer o está vacío`);
+                throw new BadRequestException(`El archivo ${tipo} no tiene datos. Verifica la configuración.`);
+            }
+
+            const maxSize = 15 * 1024 * 1024;
+            if (file.size > maxSize) {
+                throw new BadRequestException(`El archivo ${tipo} (${file.originalname}) excede 15MB`);
+            }
+
+            const allowedMimes = [
+                'application/pdf',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'image/jpeg',
+                'image/png',
+                'image/jpg',
+            ];
+
+            if (!allowedMimes.includes(file.mimetype)) {
+                throw new BadRequestException(`Tipo de archivo no permitido para ${tipo}: ${file.mimetype}`);
+            }
+
+            try {
+                const extension = path.extname(file.originalname).toLowerCase() || this.obtenerExtensionPorMime(file.mimetype);
+                const timestamp = Date.now();
+                const hash = crypto.randomBytes(4).toString('hex');
+                const nombreArchivo = `${tipo}_${documento.numeroRadicado}_${timestamp}_${hash}${extension}`;
+                const rutaCompleta = path.join(carpetaTesoreria, nombreArchivo);
+
+                this.logger.log(`${logPrefix} 💾 Guardando ${tipo} (${file.originalname}) en: ${rutaCompleta}`);
+
+                fs.writeFileSync(rutaCompleta, file.buffer);
+
+                if (!fs.existsSync(rutaCompleta)) {
+                    this.logger.error(`${logPrefix} ❌ Archivo no se creó: ${rutaCompleta}`);
+                    throw new InternalServerErrorException(`No se pudo guardar el archivo ${tipo}`);
+                }
+
+                const stats = fs.statSync(rutaCompleta);
+                if (stats.size === 0) {
+                    this.logger.error(`${logPrefix} ❌ Archivo se guardó vacío: ${rutaCompleta}`);
+                    fs.unlinkSync(rutaCompleta);
+                    throw new InternalServerErrorException(`El archivo ${tipo} se guardó vacío`);
+                }
+
+                archivosGuardados[tipo] = nombreArchivo;
+
+                const rutaRelativa = path.join('tesoreria', nombreArchivo).replace(/\\/g, '/');
+                const fechaActual = new Date();
+
+                switch (tipo) {
+                    case 'pagoRealizado':
+                        tesoreriaDoc.pagoRealizadoPath = rutaRelativa;
+                        tesoreriaDoc.fechaPago = fechaActual;
+                        this.logger.log(`${logPrefix} ✅ Pago guardado: ${rutaRelativa}`);
+                        break;
+                    default:
+                        this.logger.warn(`${logPrefix} ⚠️ Tipo desconocido: ${tipo}`);
+                }
+
+                this.logger.log(`${logPrefix} ✅ ${tipo} guardado correctamente: ${nombreArchivo} (${stats.size} bytes)`);
+                return true;
+
+            } catch (error) {
+                this.logger.error(`${logPrefix} ❌ Error guardando ${tipo}: ${error.message}`, error.stack);
+                throw new InternalServerErrorException(`Error al guardar ${tipo}: ${error.message}`);
+            }
+        };
+
+        const obtenerExtensionPorMime = (mimeType: string): string => {
+            const mimeToExt: Record<string, string> = {
+                'application/pdf': '.pdf',
+                'application/msword': '.doc',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+                'image/jpeg': '.jpg',
+                'image/png': '.png',
+                'image/jpg': '.jpg',
+            };
+            return mimeToExt[mimeType] || '.bin';
+        };
+
+        try {
+            if (files['pagoRealizado'] && files['pagoRealizado'][0]) {
+                await guardarArchivo('pagoRealizado', files['pagoRealizado'][0]);
+            }
+        } catch (error) {
+            this.logger.error(`${logPrefix} ❌ Error durante la subida de archivos: ${error.message}`, error.stack);
+            throw error;
+        }
+
+        // 👇 APLICAR FIRMA SI SE RECIBIERON LOS DATOS
+        if (datos.signatureId && datos.signaturePosition && archivosGuardados['pagoRealizado']) {
+            try {
+                const position = JSON.parse(datos.signaturePosition);
+                const rutaPagoCompleta = path.join(carpetaTesoreria, archivosGuardados['pagoRealizado']);
+
+                await this.tesoreriaSignatureService.aplicarFirmaEnPDF(
+                    rutaPagoCompleta,
+                    datos.signatureId,
+                    position
+                );
+
+                // Marcar que se aplicó firma (opcional)
+                tesoreriaDoc.firmaAplicada = true;
+
+                this.logger.log(`${logPrefix} ✅ Firma aplicada al documento de pago`);
+            } catch (error) {
+                this.logger.error(`${logPrefix} ❌ Error aplicando firma: ${error.message}`);
+                // No lanzamos error para no interrumpir el flujo principal
+                // Pero registramos el error
+            }
+        }
+
+        if (datos.estadoFinal?.toUpperCase() === 'PAGADO') {
+            if (!tesoreriaDoc.pagoRealizadoPath) {
+                this.logger.error(`${logPrefix} ❌ Para marcar como PAGADO debe subir comprobante de pago`);
+                throw new BadRequestException('Para marcar como PAGADO es obligatorio subir el Comprobante de Pago');
+            }
+        }
+
+        let estadoFinalMapeado: TesoreriaEstado | undefined;
+        if (datos.estadoFinal) {
+            const estadoUpper = datos.estadoFinal.toUpperCase();
+            switch (estadoUpper) {
+                case 'PAGADO':
+                    estadoFinalMapeado = TesoreriaEstado.COMPLETADO_TESORERIA;
+                    break;
+                case 'OBSERVADO':
+                    estadoFinalMapeado = TesoreriaEstado.OBSERVADO_TESORERIA;
+                    break;
+                case 'RECHAZADO':
+                    estadoFinalMapeado = TesoreriaEstado.RECHAZADO_TESORERIA;
+                    break;
+                default:
+                    this.logger.warn(`${logPrefix} ⚠️ Estado final no reconocido: ${datos.estadoFinal}`);
+            }
+        }
+
+        if (estadoFinalMapeado) {
+            tesoreriaDoc.estado = estadoFinalMapeado;
+            tesoreriaDoc.fechaFinRevision = new Date();
+
+            let nuevoEstadoDocumento = documento.estado;
+            switch (estadoFinalMapeado) {
+                case TesoreriaEstado.COMPLETADO_TESORERIA:
+                    nuevoEstadoDocumento = 'COMPLETADO_TESORERIA';
+                    break;
+                case TesoreriaEstado.OBSERVADO_TESORERIA:
+                    nuevoEstadoDocumento = 'OBSERVADO_TESORERIA';
+                    break;
+                case TesoreriaEstado.RECHAZADO_TESORERIA:
+                    nuevoEstadoDocumento = 'RECHAZADO_TESORERIA';
+                    break;
+            }
+
+            if (documento.estado !== nuevoEstadoDocumento) {
+                documento.estado = nuevoEstadoDocumento;
+                documento.fechaActualizacion = new Date();
+
+                const historial = documento.historialEstados || [];
+                historial.push({
+                    fecha: new Date(),
+                    estado: nuevoEstadoDocumento,
+                    usuarioId: tesoreroId,
+                    usuarioNombre: tesorero.fullName || tesorero.username,
+                    rolUsuario: tesorero.role,
+                    observacion: `Procesado por tesorería: ${estadoFinalMapeado} - ${datos.observaciones?.substring(0, 100) || 'Sin observación'}`
+                });
+                documento.historialEstados = historial;
+
+                await this.documentoRepository.save(documento);
+                this.logger.log(`${logPrefix} ✅ Estado documento actualizado: ${documento.estado}`);
+            }
+        }
+
+        const saved = await this.tesoreriaRepository.save(tesoreriaDoc);
+
+        if (documento.rutaCarpetaRadicado) {
+            await this.registrarAccesoTesoreria(
+                documento.rutaCarpetaRadicado,
+                tesoreroId,
+                `SUBIÓ documento tesorería`,
+                `Archivo: ${Object.keys(archivosGuardados).join(', ') || 'ninguno'} | Estado: ${datos.estadoFinal || 'sin cambio'}`
+            );
+        }
+
+        this.logger.log(`${logPrefix} 🎉 Subida completada exitosamente`);
+        this.logger.log(`${logPrefix}   Archivos guardados: ${JSON.stringify(archivosGuardados)}`);
+        this.logger.log(`${logPrefix}   Estado tesorería: ${saved.estado}`);
+        this.logger.log(`${logPrefix}   Ruta pago: ${saved.pagoRealizadoPath || 'NO'}`);
+
+        return {
+            success: true,
+            message: 'Documento guardado correctamente en el servidor',
+            tesoreria: saved
+        };
     }
-
-    if (!file.buffer || file.buffer.length === 0) {
-      this.logger.error(`${logPrefix} ❌ Archivo ${tipo} no tiene buffer o está vacío`);
-      throw new BadRequestException(`El archivo ${tipo} no tiene datos. Verifica la configuración.`);
-    }
-
-    const maxSize = 15 * 1024 * 1024;
-    if (file.size > maxSize) {
-      throw new BadRequestException(`El archivo ${tipo} (${file.originalname}) excede 15MB`);
-    }
-
-    const allowedMimes = [
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'image/jpeg',
-      'image/png',
-      'image/jpg',
-    ];
-
-    if (!allowedMimes.includes(file.mimetype)) {
-      throw new BadRequestException(`Tipo de archivo no permitido para ${tipo}: ${file.mimetype}`);
-    }
-
-    try {
-      const extension = path.extname(file.originalname).toLowerCase() || this.obtenerExtensionPorMime(file.mimetype);
-      const timestamp = Date.now();
-      const hash = crypto.randomBytes(4).toString('hex');
-      const nombreArchivo = `${tipo}_${documento.numeroRadicado}_${timestamp}_${hash}${extension}`;
-      const rutaCompleta = path.join(carpetaTesoreria, nombreArchivo);
-
-      this.logger.log(`${logPrefix} 💾 Guardando ${tipo} (${file.originalname}) en: ${rutaCompleta}`);
-
-      fs.writeFileSync(rutaCompleta, file.buffer);
-
-      if (!fs.existsSync(rutaCompleta)) {
-        this.logger.error(`${logPrefix} ❌ Archivo no se creó: ${rutaCompleta}`);
-        throw new InternalServerErrorException(`No se pudo guardar el archivo ${tipo}`);
-      }
-
-      const stats = fs.statSync(rutaCompleta);
-      if (stats.size === 0) {
-        this.logger.error(`${logPrefix} ❌ Archivo se guardó vacío: ${rutaCompleta}`);
-        fs.unlinkSync(rutaCompleta);
-        throw new InternalServerErrorException(`El archivo ${tipo} se guardó vacío`);
-      }
-
-      archivosGuardados[tipo] = nombreArchivo;
-
-      const rutaRelativa = path.join('tesoreria', nombreArchivo).replace(/\\/g, '/');
-      const fechaActual = new Date();
-
-      switch (tipo) {
-        case 'pagoRealizado':
-          tesoreriaDoc.pagoRealizadoPath = rutaRelativa;
-          tesoreriaDoc.fechaPago = fechaActual;
-          this.logger.log(`${logPrefix} ✅ Pago guardado: ${rutaRelativa}`);
-          break;
-        default:
-          this.logger.warn(`${logPrefix} ⚠️ Tipo desconocido: ${tipo}`);
-      }
-
-      this.logger.log(`${logPrefix} ✅ ${tipo} guardado correctamente: ${nombreArchivo} (${stats.size} bytes)`);
-      return true;
-
-    } catch (error) {
-      this.logger.error(`${logPrefix} ❌ Error guardando ${tipo}: ${error.message}`, error.stack);
-      throw new InternalServerErrorException(`Error al guardar ${tipo}: ${error.message}`);
-    }
-  };
-
-  const obtenerExtensionPorMime = (mimeType: string): string => {
-    const mimeToExt: Record<string, string> = {
-      'application/pdf': '.pdf',
-      'application/msword': '.doc',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
-      'image/jpeg': '.jpg',
-      'image/png': '.png',
-      'image/jpg': '.jpg',
-    };
-    return mimeToExt[mimeType] || '.bin';
-  };
-
-  try {
-    if (files['pagoRealizado'] && files['pagoRealizado'][0]) {
-      await guardarArchivo('pagoRealizado', files['pagoRealizado'][0]);
-    }
-  } catch (error) {
-    this.logger.error(`${logPrefix} ❌ Error durante la subida de archivos: ${error.message}`, error.stack);
-    throw error;
-  }
-
-  // 👇 APLICAR FIRMA SI SE RECIBIERON LOS DATOS
-  if (datos.signatureId && datos.signaturePosition && archivosGuardados['pagoRealizado']) {
-    try {
-      const position = JSON.parse(datos.signaturePosition);
-      const rutaPagoCompleta = path.join(carpetaTesoreria, archivosGuardados['pagoRealizado']);
-      
-      await this.tesoreriaSignatureService.aplicarFirmaEnPDF(
-        rutaPagoCompleta,
-        datos.signatureId,
-        position
-      );
-      
-      // Marcar que se aplicó firma (opcional)
-      tesoreriaDoc.firmaAplicada = true;
-      
-      this.logger.log(`${logPrefix} ✅ Firma aplicada al documento de pago`);
-    } catch (error) {
-      this.logger.error(`${logPrefix} ❌ Error aplicando firma: ${error.message}`);
-      // No lanzamos error para no interrumpir el flujo principal
-      // Pero registramos el error
-    }
-  }
-
-  if (datos.estadoFinal?.toUpperCase() === 'PAGADO') {
-    if (!tesoreriaDoc.pagoRealizadoPath) {
-      this.logger.error(`${logPrefix} ❌ Para marcar como PAGADO debe subir comprobante de pago`);
-      throw new BadRequestException('Para marcar como PAGADO es obligatorio subir el Comprobante de Pago');
-    }
-  }
-
-  let estadoFinalMapeado: TesoreriaEstado | undefined;
-  if (datos.estadoFinal) {
-    const estadoUpper = datos.estadoFinal.toUpperCase();
-    switch (estadoUpper) {
-      case 'PAGADO':
-        estadoFinalMapeado = TesoreriaEstado.COMPLETADO_TESORERIA;
-        break;
-      case 'OBSERVADO':
-        estadoFinalMapeado = TesoreriaEstado.OBSERVADO_TESORERIA;
-        break;
-      case 'RECHAZADO':
-        estadoFinalMapeado = TesoreriaEstado.RECHAZADO_TESORERIA;
-        break;
-      default:
-        this.logger.warn(`${logPrefix} ⚠️ Estado final no reconocido: ${datos.estadoFinal}`);
-    }
-  }
-
-  if (estadoFinalMapeado) {
-    tesoreriaDoc.estado = estadoFinalMapeado;
-    tesoreriaDoc.fechaFinRevision = new Date();
-
-    let nuevoEstadoDocumento = documento.estado;
-    switch (estadoFinalMapeado) {
-      case TesoreriaEstado.COMPLETADO_TESORERIA:
-        nuevoEstadoDocumento = 'COMPLETADO_TESORERIA';
-        break;
-      case TesoreriaEstado.OBSERVADO_TESORERIA:
-        nuevoEstadoDocumento = 'OBSERVADO_TESORERIA';
-        break;
-      case TesoreriaEstado.RECHAZADO_TESORERIA:
-        nuevoEstadoDocumento = 'RECHAZADO_TESORERIA';
-        break;
-    }
-
-    if (documento.estado !== nuevoEstadoDocumento) {
-      documento.estado = nuevoEstadoDocumento;
-      documento.fechaActualizacion = new Date();
-
-      const historial = documento.historialEstados || [];
-      historial.push({
-        fecha: new Date(),
-        estado: nuevoEstadoDocumento,
-        usuarioId: tesoreroId,
-        usuarioNombre: tesorero.fullName || tesorero.username,
-        rolUsuario: tesorero.role,
-        observacion: `Procesado por tesorería: ${estadoFinalMapeado} - ${datos.observaciones?.substring(0, 100) || 'Sin observación'}`
-      });
-      documento.historialEstados = historial;
-
-      await this.documentoRepository.save(documento);
-      this.logger.log(`${logPrefix} ✅ Estado documento actualizado: ${documento.estado}`);
-    }
-  }
-
-  const saved = await this.tesoreriaRepository.save(tesoreriaDoc);
-
-  if (documento.rutaCarpetaRadicado) {
-    await this.registrarAccesoTesoreria(
-      documento.rutaCarpetaRadicado,
-      tesoreroId,
-      `SUBIÓ documento tesorería`,
-      `Archivo: ${Object.keys(archivosGuardados).join(', ') || 'ninguno'} | Estado: ${datos.estadoFinal || 'sin cambio'}`
-    );
-  }
-
-  this.logger.log(`${logPrefix} 🎉 Subida completada exitosamente`);
-  this.logger.log(`${logPrefix}   Archivos guardados: ${JSON.stringify(archivosGuardados)}`);
-  this.logger.log(`${logPrefix}   Estado tesorería: ${saved.estado}`);
-  this.logger.log(`${logPrefix}   Ruta pago: ${saved.pagoRealizadoPath || 'NO'}`);
-
-  return {
-    success: true,
-    message: 'Documento guardado correctamente en el servidor',
-    tesoreria: saved
-  };
-}
 
     private obtenerExtensionPorMime(mimeType: string): string {
         const mimeToExt: Record<string, string> = {
@@ -1050,15 +1050,22 @@ async subirDocumentoTesoreria(
         userId?: string,
     ): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
         const logPrefix = `[obtenerRutaArchivoTesoreriaFull] doc=${documentoId} tipo=${tipo} user=${userId || 'anon'}`;
+        this.logger.log(`${logPrefix} Iniciando búsqueda de archivo`);
 
+        // 1. Obtener el documento
         const documento = await this.documentoRepository.findOne({
             where: { id: documentoId },
         });
 
         if (!documento) {
+            this.logger.error(`${logPrefix} Documento no encontrado`);
             throw new NotFoundException(`Documento ${documentoId} no encontrado`);
         }
 
+        this.logger.log(`${logPrefix} Documento encontrado: ${documento.numeroRadicado}`);
+        this.logger.log(`${logPrefix} rutaCarpetaRadicado: ${documento.rutaCarpetaRadicado}`);
+
+        // 2. Obtener el registro de tesorería
         let tesoreriaDoc: TesoreriaDocumento | null = null;
 
         if (userId) {
@@ -1078,9 +1085,11 @@ async subirDocumentoTesoreria(
         }
 
         if (!tesoreriaDoc) {
+            this.logger.error(`${logPrefix} Registro de tesorería no encontrado`);
             throw new NotFoundException('Registro de tesorería no encontrado');
         }
 
+        // 3. Obtener el nombre del archivo según el tipo
         let nombreArchivoBd: string | null = null;
 
         switch (tipo.toLowerCase()) {
@@ -1092,29 +1101,40 @@ async subirDocumentoTesoreria(
         }
 
         if (!nombreArchivoBd) {
+            this.logger.error(`${logPrefix} No existe archivo registrado para tipo ${tipo}`);
             throw new NotFoundException(`No existe archivo registrado para tipo ${tipo}`);
         }
 
-        let rutaBase = this.configService.get<string>('RUTA_BASE_ARCHIVOS') || '\\\\R2-D2\\api-contract';
-        rutaBase = '\\\\' + rutaBase.replace(/^\\\\?/, '').replace(/^[\/\\]+/, '');
+        this.logger.log(`${logPrefix} Nombre archivo en BD: ${nombreArchivoBd}`);
 
-        let rutaCarpeta = documento.rutaCarpetaRadicado || '';
-        rutaCarpeta = rutaCarpeta
-            .replace(/^\\\\R2-D2\\api-contract/i, '')
-            .replace(/^[\/\\]+/, '')
-            .replace(/[\/\\]+$/, '')
-            .trim();
+        // 4. Construir la ruta absoluta de manera SIMPLE
+        // La rutaCarpetaRadicado ya es la ruta completa en el servidor
+        const rutaAbsoluta = path.join(documento.rutaCarpetaRadicado, nombreArchivoBd);
 
-        const rutaTesoreria = path.join(rutaCarpeta, 'tesoreria');
+        this.logger.log(`${logPrefix} Ruta absoluta construida: ${rutaAbsoluta}`);
 
-        let rutaAbsoluta = path.join(rutaBase, rutaTesoreria, nombreArchivoBd);
-        rutaAbsoluta = rutaAbsoluta.replace(/\//g, '\\').replace(/^\\+/, '\\\\');
-
+        // 5. Verificar que el archivo existe
         if (!fs.existsSync(rutaAbsoluta)) {
+            this.logger.error(`${logPrefix} ❌ Archivo NO encontrado en disco: ${rutaAbsoluta}`);
+
+            // Intentar con separadores de Windows
+            const rutaWindows = rutaAbsoluta.replace(/\//g, '\\');
+            this.logger.log(`${logPrefix} Intentando con ruta Windows: ${rutaWindows}`);
+
+            if (fs.existsSync(rutaWindows)) {
+                this.logger.log(`${logPrefix} ✅ Archivo encontrado con ruta Windows`);
+                return { rutaAbsoluta: rutaWindows, nombreArchivo: path.basename(nombreArchivoBd) };
+            }
+
             throw new NotFoundException(`Archivo ${tipo} no encontrado en disco`);
         }
 
-        return { rutaAbsoluta, nombreArchivo: path.basename(nombreArchivoBd) };
+        this.logger.log(`${logPrefix} ✅ Archivo encontrado exitosamente`);
+
+        return {
+            rutaAbsoluta,
+            nombreArchivo: path.basename(nombreArchivoBd)
+        };
     }
 
     private async guardarArchivoTesoreria(
@@ -1401,113 +1421,123 @@ async subirDocumentoTesoreria(
         };
     }
 
-    async getHistorial(tesoreroId: string): Promise<any[]> {
-        this.logger.log(`Obteniendo historial COMPLETO para tesorero ${tesoreroId}`);
+async getHistorial(tesoreroId: string): Promise<any[]> {
+    this.logger.log(`Obteniendo historial COMPLETO para tesorero ${tesoreroId}`);
 
-        const tesoreriaDocs = await this.tesoreriaRepository.find({
-            where: {
-                tesorero: { id: tesoreroId },
-            },
-            relations: ['documento', 'tesorero'],
-            order: { fechaActualizacion: 'DESC' }
-        });
+    const tesoreriaDocs = await this.tesoreriaRepository.find({
+        where: {
+            tesorero: { id: tesoreroId },
+        },
+        relations: ['documento', 'tesorero'],
+        order: { fechaActualizacion: 'DESC' }
+    });
 
-        return tesoreriaDocs.map(td => ({
-            id: td.id,
-            documento: {
-                id: td.documento.id,
-                numeroRadicado: td.documento.numeroRadicado,
-                numeroContrato: td.documento.numeroContrato,
-                nombreContratista: td.documento.nombreContratista,
-                documentoContratista: td.documento.documentoContratista,
-                fechaInicio: td.documento.fechaInicio,
-                fechaFin: td.documento.fechaFin,
-                fechaRadicacion: td.documento.fechaRadicacion,
-                fechaActualizacion: td.documento.fechaActualizacion
-            },
-            estado: td.estado,
-            observaciones: td.observaciones || '',
-            pagoRealizadoPath: td.pagoRealizadoPath,
-            fechaActualizacion: td.fechaActualizacion,
-            fechaFinRevision: td.fechaFinRevision,
-            fechaInicioRevision: td.fechaInicioRevision,
-            tesoreroRevisor: td.tesorero?.fullName || td.tesorero?.username || 'Tesorero'
-        }));
-    }
+    return tesoreriaDocs.map(td => ({
+        id: td.id, // ID de tesorería (para referencia)
+        tesoreriaId: td.id, // ID de tesorería explícito
+        documentoId: td.documento.id, // ← IMPORTANTE: ID del documento principal
+        documento: {
+            id: td.documento.id,
+            numeroRadicado: td.documento.numeroRadicado,
+            numeroContrato: td.documento.numeroContrato,
+            nombreContratista: td.documento.nombreContratista,
+            documentoContratista: td.documento.documentoContratista,
+            fechaInicio: td.documento.fechaInicio,
+            fechaFin: td.documento.fechaFin,
+            fechaRadicacion: td.documento.fechaRadicacion,
+            fechaActualizacion: td.documento.fechaActualizacion,
+            estado: td.documento.estado
+        },
+        estadoTesoreria: td.estado,
+        estadoPago: td.estado, // Para compatibilidad
+        observaciones: td.observaciones || '',
+        pagoRealizadoPath: td.pagoRealizadoPath,
+        fechaPago: td.fechaPago,
+        fechaActualizacion: td.fechaActualizacion,
+        fechaFinRevision: td.fechaFinRevision,
+        fechaInicioRevision: td.fechaInicioRevision,
+        tesoreroRevisor: td.tesorero?.fullName || td.tesorero?.username || 'Tesorero',
+        responsablePago: td.tesorero?.fullName || td.tesorero?.username
+    }));
 
-    async obtenerRechazadosVisibles(user: any): Promise<any[]> {
-        const rolUsuario = user.role?.toLowerCase() || '';
+}
 
-        this.logger.log(`[RECHAZADOS-VISIBLES] Rol: ${rolUsuario} | Username: ${user.username}`);
+async obtenerRechazadosVisibles(user: any): Promise<any> {
+  const rolUsuario = user.role?.toLowerCase() || '';
 
-        const estadosRechazo = [
-            'RECHAZADO_SUPERVISOR',
-            'RECHAZADO_AUDITOR_CUENTAS',
-            'RECHAZADO_CONTABILIDAD',
-            'RECHAZADO_TESORERIA',
-            'RECHAZADO_ASESOR_GERENCIA',
-            'RECHAZADO_RENDICION_CUENTAS',
-            'OBSERVADO_CONTABILIDAD',
-            'GLOSADO_CONTABILIDAD',
-            'OBSERVADO_TESORERIA'
-        ];
+  this.logger.log(`[RECHAZADOS-VISIBLES] Rol: ${rolUsuario} | Username: ${user.username}`);
 
-        const query = this.documentoRepository
-            .createQueryBuilder('doc')
-            .leftJoinAndSelect('doc.radicador', 'radicador')
-            .where('doc.estado IN (:...estados)', { estados: estadosRechazo })
-            .orderBy('doc.fechaActualizacion', 'DESC');
+  const estadosRechazo = [
+    'RECHAZADO_SUPERVISOR',
+    'RECHAZADO_AUDITOR_CUENTAS',
+    'RECHAZADO_CONTABILIDAD',
+    'RECHAZADO_TESORERIA',
+    'RECHAZADO_ASESOR_GERENCIA',
+    'RECHAZADO_RENDICION_CUENTAS',
+    'OBSERVADO_CONTABILIDAD',
+    'GLOSADO_CONTABILIDAD',
+    'OBSERVADO_TESORERIA'
+  ];
 
-        let estadosPermitidos: string[] = [];
+  const query = this.documentoRepository
+    .createQueryBuilder('doc')
+    .leftJoinAndSelect('doc.radicador', 'radicador')
+    .where('doc.estado IN (:...estados)', { estados: estadosRechazo })
+    .orderBy('doc.fechaActualizacion', 'DESC');
 
-        switch (rolUsuario) {
-            case 'admin':
-                estadosPermitidos = estadosRechazo;
-                break;
-            case 'tesoreria':
-                estadosPermitidos = [
-                    'RECHAZADO_TESORERIA',
-                    'RECHAZADO_ASESOR_GERENCIA',
-                    'RECHAZADO_RENDICION_CUENTAS',
-                    'OBSERVADO_TESORERIA'
-                ];
-                break;
-            case 'asesor_gerencia':
-                estadosPermitidos = ['RECHAZADO_ASESOR_GERENCIA', 'RECHAZADO_RENDICION_CUENTAS'];
-                break;
-            case 'rendicion_cuentas':
-                estadosPermitidos = ['RECHAZADO_RENDICION_CUENTAS'];
-                break;
-            default:
-                estadosPermitidos = [];
-        }
+  let estadosPermitidos: string[] = [];
 
-        if (estadosPermitidos.length > 0) {
-            query.andWhere('doc.estado IN (:...permitidos)', { permitidos: estadosPermitidos });
-        } else {
-            query.andWhere('1 = 0');
-        }
+  switch (rolUsuario) {
+    case 'admin':
+      estadosPermitidos = estadosRechazo;
+      break;
+    case 'tesoreria':
+      estadosPermitidos = [
+        'RECHAZADO_TESORERIA',
+        'RECHAZADO_ASESOR_GERENCIA',
+        'RECHAZADO_RENDICION_CUENTAS',
+        'OBSERVADO_TESORERIA'
+      ];
+      break;
+    case 'asesor_gerencia':
+      estadosPermitidos = ['RECHAZADO_ASESOR_GERENCIA', 'RECHAZADO_RENDICION_CUENTAS'];
+      break;
+    case 'rendicion_cuentas':
+      estadosPermitidos = ['RECHAZADO_RENDICION_CUENTAS'];
+      break;
+    default:
+      estadosPermitidos = [];
+  }
 
-        const docs = await query.getMany();
+  if (estadosPermitidos.length > 0) {
+    query.andWhere('doc.estado IN (:...permitidos)', { permitidos: estadosPermitidos });
+  } else {
+    query.andWhere('1 = 0');
+  }
 
-        this.logger.log(`[RECHAZADOS-VISIBLES] Encontrados ${docs.length} documentos para ${rolUsuario}`);
+  const docs = await query.getMany();
 
-        return docs.map(doc => ({
-            id: doc.id,
-            numeroRadicado: doc.numeroRadicado,
-            numeroContrato: doc.numeroContrato,
-            nombreContratista: doc.nombreContratista,
-            documentoContratista: doc.documentoContratista,
-            fechaInicio: doc.fechaInicio,
-            fechaFin: doc.fechaFin,
-            fechaRadicacion: doc.fechaRadicacion,
-            estado: doc.estado,
-            observacion: doc.observacion || '',
-            motivoRechazo: doc.observacion || 'Sin motivo detallado',
-            ultimoUsuario: doc.ultimoUsuario || 'Sistema',
-            rechazadoPor: this.inferirRechazadoPor(doc.estado)
-        }));
-    }
+  this.logger.log(`[RECHAZADOS-VISIBLES] Encontrados ${docs.length} documentos para ${rolUsuario}`);
+
+  const resultado = docs.map(doc => ({
+    id: doc.id,
+    numeroRadicado: doc.numeroRadicado,
+    numeroContrato: doc.numeroContrato,
+    nombreContratista: doc.nombreContratista,
+    documentoContratista: doc.documentoContratista,
+    fechaInicio: doc.fechaInicio,
+    fechaFin: doc.fechaFin,
+    fechaRadicacion: doc.fechaRadicacion,
+    estado: doc.estado,
+    observacion: doc.observacion || '',
+    motivoRechazo: doc.observacion || 'Sin motivo detallado',
+    ultimoUsuario: doc.ultimoUsuario || 'Sistema',
+    rechazadoPor: this.inferirRechazadoPor(doc.estado)
+  }));
+
+  // Devolver SOLO el array, no un objeto con data anidado
+  return resultado;
+}
 
     private inferirRechazadoPor(estado: string): string {
         const e = (estado || '').toUpperCase();

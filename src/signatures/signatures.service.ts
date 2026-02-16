@@ -1,10 +1,10 @@
-// signatures/signatures.service.ts
+// src/signatures/signatures.service.ts
 import {
     Injectable,
     NotFoundException,
     BadRequestException,
-    ForbiddenException,
-    InternalServerErrorException
+    InternalServerErrorException,
+    Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -13,16 +13,18 @@ import { User } from '../users/entities/user.entity';
 import { EncryptionService } from './encryption.service';
 import { SignatureResponseDto } from './dto/signature-response.dto';
 import { ALLOWED_SIGNATURE_ROLES } from './enums/allowed-signature-roles.enum';
+import { UserRole } from '../users/enums/user-role.enum';
 
 @Injectable()
 export class SignaturesService {
+    private readonly logger = new Logger(SignaturesService.name);
     private readonly MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
     private readonly ALLOWED_MIME_TYPES = [
         'image/png',
         'image/jpeg',
         'image/jpg',
         'image/gif',
-        'application/pdf'
+        'application/pdf',
     ];
 
     constructor(
@@ -33,159 +35,135 @@ export class SignaturesService {
         private encryptionService: EncryptionService,
     ) { }
 
-    /**
-     * Obtiene la firma del usuario
-     */
-    async getMySignature(userId: string): Promise<SignatureResponseDto | null> {
-        try {
-            const signature = await this.signaturesRepository.findOne({
-                where: { userId }
-            });
+async getMySignature(userId: string): Promise<SignatureResponseDto | null> {
+  const signature = await this.signaturesRepository.findOne({
+    where: { userId },
+    select: [
+      'id',           // ← asegúrate de que esté aquí
+      'userId',
+      'name',
+      'type',
+      'mimeType',
+      'fileSize',
+      'createdAt',
+      'updatedAt'
+    ]
+  });
 
-            return signature ? new SignatureResponseDto(signature) : null;
-        } catch (error) {
-            console.error('Error getting signature:', error);
-            throw new InternalServerErrorException('Error al obtener la firma');
-        }
-    }
+  return signature ? new SignatureResponseDto(signature) : null;
+}
 
-    /**
-     * Guarda o actualiza la firma del usuario
-     */
     async uploadSignature(
         userId: string,
         file: Express.Multer.File,
         name: string,
     ): Promise<SignatureResponseDto> {
-        console.log('📥 uploadSignature llamado con userId:', userId); // 👈 DEBUG
-        console.log('📥 file:', file?.originalname);
-        console.log('📥 name:', name);
+        this.logger.log(`Subiendo firma → user: ${userId} | archivo: ${file?.originalname || 'sin archivo'}`);
+
+        if (!userId) throw new BadRequestException('ID de usuario obligatorio');
+        if (!file) throw new BadRequestException('Archivo de firma obligatorio');
+        if (!this.ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+            throw new BadRequestException('Formato no permitido (PNG, JPG, GIF, PDF)');
+        }
+        if (file.size > this.MAX_FILE_SIZE) {
+            throw new BadRequestException(`Archivo muy grande (máx. 2MB)`);
+        }
+        if (!name?.trim() || name.trim().length < 3) {
+            throw new BadRequestException('Nombre de firma debe tener al menos 3 caracteres');
+        }
 
         try {
-            // Validar que userId existe
-            if (!userId) {
-                console.error('❌ userId es null o undefined');
-                throw new BadRequestException('ID de usuario no proporcionado');
-            }
-
-            // Validar archivo
-            if (!file) {
-                throw new BadRequestException('No se ha proporcionado ningún archivo');
-            }
-
-            // Validar tipo MIME
-            if (!this.ALLOWED_MIME_TYPES.includes(file.mimetype)) {
-                throw new BadRequestException(
-                    'Tipo de archivo no permitido. Usa: PNG, JPG, JPEG, GIF o PDF'
-                );
-            }
-
-            // Validar tamaño
-            if (file.size > this.MAX_FILE_SIZE) {
-                throw new BadRequestException('Archivo demasiado grande. Máximo 2MB');
-            }
-
-            // Buscar si ya existe una firma
-            const existingSignature = await this.signaturesRepository.findOne({
-                where: { userId }
-            });
-
-            // Encriptar el archivo
             const encryptedJson = this.encryptionService.encryptForDb(file.buffer);
-            const type = file.mimetype.includes('pdf') ? 'pdf' : 'image';
+            const type: 'image' | 'pdf' = file.mimetype.includes('pdf') ? 'pdf' : 'image';
 
-            if (existingSignature) {
-                // Actualizar firma existente
-                existingSignature.name = name;
-                existingSignature.type = type;
-                existingSignature.encryptedData = encryptedJson;
-                existingSignature.mimeType = file.mimetype;
-                existingSignature.fileSize = file.size;
-                existingSignature.updatedAt = new Date();
+            let signature = await this.signaturesRepository.findOne({ where: { userId } });
 
-                const updated = await this.signaturesRepository.save(existingSignature);
-                return new SignatureResponseDto(updated);
+            if (signature) {
+                signature.name = name.trim();
+                signature.type = type;
+                signature.encryptedData = encryptedJson;
+                signature.mimeType = file.mimetype;
+                signature.fileSize = file.size;
+                signature.updatedAt = new Date();
+                signature = await this.signaturesRepository.save(signature);
+                this.logger.log(`Firma actualizada → ID: ${signature.id}`);
             } else {
-                // Crear nueva firma
-                const newSignature = this.signaturesRepository.create({
+                signature = this.signaturesRepository.create({
                     userId,
-                    name,
+                    name: name.trim(),
                     type,
                     encryptedData: encryptedJson,
                     mimeType: file.mimetype,
-                    fileSize: file.size
+                    fileSize: file.size,
                 });
+                signature = await this.signaturesRepository.save(signature);
+                this.logger.log(`Nueva firma creada → ID: ${signature.id}`);
+            }
 
-                const saved = await this.signaturesRepository.save(newSignature);
-                return new SignatureResponseDto(saved);
-            }
+            return new SignatureResponseDto(signature);
         } catch (error) {
-            if (error instanceof BadRequestException) {
-                console.error('❌ Error en uploadSignature:', error);
-                throw error;
-            }
-            console.error('Error uploading signature:', error);
-            throw new InternalServerErrorException('Error al guardar la firma');
+            this.logger.error(`Error al guardar firma de ${userId}`, error.stack);
+            throw error instanceof BadRequestException ? error : new InternalServerErrorException('Fallo al guardar firma');
         }
     }
 
-    /**
-     * Elimina la firma del usuario
-     */
     async deleteSignature(userId: string): Promise<void> {
-        try {
-            const signature = await this.signaturesRepository.findOne({
-                where: { userId }
-            });
-
-            if (!signature) {
-                throw new NotFoundException('No tienes una firma guardada');
-            }
-
-            await this.signaturesRepository.remove(signature);
-        } catch (error) {
-            if (error instanceof NotFoundException) {
-                throw error;
-            }
-            console.error('Error deleting signature:', error);
-            throw new InternalServerErrorException('Error al eliminar la firma');
+        const signature = await this.signaturesRepository.findOne({ where: { userId } });
+        if (!signature) {
+            throw new NotFoundException('No tienes firma registrada para eliminar');
         }
+        await this.signaturesRepository.remove(signature);
+        this.logger.log(`Firma eliminada → userId: ${userId}`);
     }
 
-    /**
-     * Verifica si el usuario tiene firma
-     */
     async hasSignature(userId: string): Promise<boolean> {
-        const count = await this.signaturesRepository.count({
-            where: { userId }
-        });
-        return count > 0;
+        return (await this.signaturesRepository.count({ where: { userId } })) > 0;
     }
 
-    /**
-     * Obtiene la firma para firmar documentos
-     */
     async getSignatureForSigning(userId: string): Promise<{
         buffer: Buffer;
         mimeType: string;
         type: 'image' | 'pdf';
     }> {
-        const signature = await this.signaturesRepository.findOne({
-            where: { userId }
-        });
+        const signature = await this.signaturesRepository.findOne({ where: { userId } });
+        if (!signature) throw new NotFoundException('No tienes una firma registrada');
 
-        if (!signature) {
-            throw new NotFoundException('No tienes una firma guardada');
+        try {
+            const buffer = this.encryptionService.decryptFromDb(signature.encryptedData);
+            if (!buffer || buffer.length < 100) {
+                throw new InternalServerErrorException('Contenido de firma inválido o corrupto');
+            }
+
+            return {
+                buffer,
+                mimeType: signature.mimeType,
+                type: signature.type as 'image' | 'pdf',
+            };
+        } catch (err) {
+            this.logger.error(`Error desencriptando firma de ${userId}`, err);
+            throw new InternalServerErrorException('No se pudo preparar la firma para su uso');
         }
-
-        const buffer = this.encryptionService.decryptFromDb(signature.encryptedData);
-
-        return {
-            buffer,
-            mimeType: signature.mimeType,
-            type: signature.type
-        };
     }
 
-}
+    async getSignatureBlob(userId: string): Promise<Buffer> {
+        const { buffer } = await this.getSignatureForSigning(userId);
+        return buffer;
+    }
 
+    canUserHaveSignature(role: string): boolean {
+        if (!role) return false;
+
+        // Normalizamos el rol entrante (case-insensitive)
+        const normalizedRole = role.trim().toLowerCase();
+
+        // Lista de roles permitidos también normalizados
+        const allowedRoles = [
+            UserRole.ADMIN,
+            UserRole.ASESOR_GERENCIA,
+            UserRole.RENDICION_CUENTAS,
+            UserRole.TESORERIA
+        ].map(r => r.toLowerCase());
+
+        return allowedRoles.includes(normalizedRole);
+    }
+}

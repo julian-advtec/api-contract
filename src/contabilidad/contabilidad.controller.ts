@@ -38,7 +38,6 @@ import { ContabilidadEstado, TipoCausacion } from './entities/contabilidad-docum
 import { multerContabilidadConfig } from './../config/multer-contabilidad.config';
 import { Public } from './../common/decorators/public.decorator';
 
-// Tipo que coincide exactamente con lo que devuelve JwtStrategy.validate()
 type JwtUser = {
     id: string;
     username: string;
@@ -114,7 +113,7 @@ export class ContabilidadController {
     // ───────────────────────────────────────────────────────────────
     @Post('documentos/:documentoId/subir-documentos')
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(UserRole.CONTABILIDAD, UserRole.ADMIN) // Ambos roles permitidos
+    @Roles(UserRole.CONTABILIDAD, UserRole.ADMIN)
     @UseInterceptors(
         FileFieldsInterceptor(
             [
@@ -133,18 +132,15 @@ export class ContabilidadController {
         @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
     ) {
         this.logger.log(`[SUBIR] Usuario ${user.id} (${user.username}) con rol ${user.role} subiendo para ${documentoId}`);
-        // DEBUG: Verificar archivos recibidos
+
         if (files) {
-            this.logger.debug(`📁 Archivos recibidos en controller (${Object.keys(files).length}):`);
             Object.keys(files).forEach(key => {
                 const fileArray = files[key];
                 if (fileArray && fileArray.length > 0) {
                     const file = fileArray[0];
-                    this.logger.debug(`  ${key}: ${file.originalname} - ${file.size} bytes - Buffer: ${file.buffer ? 'YES' : 'NO'}`);
+                    this.logger.debug(`  ${key}: ${file.originalname} - ${file.size} bytes`);
                 }
             });
-        } else {
-            this.logger.warn('⚠️ No se recibieron archivos');
         }
 
         const datos = {
@@ -216,55 +212,109 @@ export class ContabilidadController {
     }
 
     // ───────────────────────────────────────────────────────────────
-    // PREVISUALIZAR ARCHIVO (PÚBLICO)
+    // DESCARGAR ARCHIVO CONTABLE (extracto, glosa, causacion, comprobanteEgreso)
     // ───────────────────────────────────────────────────────────────
-    @Get('documentos/:documentoId/archivo/:tipo')
-    @Public()
-    async previsualizarArchivoContabilidad(
+    @Get('documentos/:documentoId/descargar-contable/:tipo')
+    async descargarArchivoContable(
         @Param('documentoId', ParseUUIDPipe) documentoId: string,
         @Param('tipo') tipo: string,
-        @Query('download') download: string = 'false',
+        @GetUser() user: JwtUser,
         @Res() res: Response,
     ) {
-        this.logger.log(`[PUBLIC-PREVIEW] Acceso público → ${documentoId}/${tipo}`);
+        this.logger.log(`[DESCARGA-CONTABLE] Usuario ${user.id} (${user.username}) solicitando ${tipo} de ${documentoId}`);
 
         try {
             const { rutaAbsoluta, nombreArchivo } = await this.contabilidadService.obtenerRutaArchivoContabilidadFull(
                 documentoId,
                 tipo,
-                undefined
+                user.id
             );
 
             if (!fs.existsSync(rutaAbsoluta)) {
-                this.logger.error(`[PUBLIC-PREVIEW 404] No existe: ${rutaAbsoluta}`);
-                return res.status(HttpStatus.NOT_FOUND).json({ message: 'Archivo no encontrado' });
+                throw new NotFoundException(`Archivo ${tipo} no encontrado en disco`);
             }
 
-            const ext = path.extname(nombreArchivo).toLowerCase();
-
-            if (['.doc', '.docx'].includes(ext) && download !== 'true') {
-                const tmpPdf = path.join(os.tmpdir(), `preview-${crypto.randomUUID()}.pdf`);
-                try {
-                    await this.contabilidadService.convertirWordAPdf(rutaAbsoluta, tmpPdf);
-                    res.setHeader('Content-Type', 'application/pdf');
-                    res.setHeader('Content-Disposition', 'inline; filename="vista.pdf"');
-                    const stream = fs.createReadStream(tmpPdf);
-                    stream.on('end', () => fs.unlink(tmpPdf, () => { }));
-                    return stream.pipe(res);
-                } catch (e) {
-                    this.logger.error(`[CONVERSIÓN ERROR] ${e.message}`);
-                }
-            }
-
-            const mimeType = mime.lookup(ext) || 'application/octet-stream';
-            res.setHeader('Content-Type', mimeType);
-            res.setHeader('Content-Disposition', download === 'true' ? `attachment; filename="${nombreArchivo}"` : 'inline');
-            return fs.createReadStream(rutaAbsoluta).pipe(res);
+            res.setHeader('Content-Type', 'application/octet-stream');
+            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreArchivo)}"`);
+            fs.createReadStream(rutaAbsoluta).pipe(res);
         } catch (error: any) {
-            this.logger.error(`[PUBLIC-PREVIEW ERROR] ${error.message}`);
-            res.status(500).json({ message: error.message || 'Error al procesar archivo' });
+            this.logger.error(`[ERROR DESCARGA] ${tipo}: ${error.message}`);
+            const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
+            res.status(status).json({
+                success: false,
+                message: error.message || 'Error al descargar el archivo'
+            });
         }
     }
+
+    // ───────────────────────────────────────────────────────────────
+    // PREVISUALIZAR ARCHIVO CONTABLE (CORREGIDO)
+    // ───────────────────────────────────────────────────────────────
+ @Get('documentos/:documentoId/preview-contable/:tipo')
+@Public()
+async previsualizarArchivoContable(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @Param('tipo') tipo: string,
+    @Query('download') download: string = 'false',
+    @Res() res: Response,
+) {
+    this.logger.log(`[PREVIEW-CONTABLE] Acceso a ${tipo} de ${documentoId} (download=${download})`);
+
+    try {
+        const { rutaAbsoluta, nombreArchivo } = await this.contabilidadService.obtenerRutaArchivoContabilidadFull(
+            documentoId,
+            tipo
+        );
+
+        this.logger.log(`✅ Archivo encontrado: ${rutaAbsoluta}`);
+        
+        if (!fs.existsSync(rutaAbsoluta)) {
+            throw new NotFoundException(`Archivo ${tipo} no existe en disco`);
+        }
+
+        const stats = fs.statSync(rutaAbsoluta);
+        this.logger.log(`   Tamaño: ${stats.size} bytes`);
+
+        const ext = path.extname(nombreArchivo).toLowerCase();
+
+        // Si es Word y NO es descarga forzada → convertir a PDF temporalmente
+        if (['.doc', '.docx'].includes(ext) && download !== 'true') {
+            const tmpPdf = path.join(os.tmpdir(), `preview-${crypto.randomUUID()}.pdf`);
+            try {
+                await this.contabilidadService.convertirWordAPdf(rutaAbsoluta, tmpPdf);
+                const pdfStream = fs.createReadStream(tmpPdf);
+                res.setHeader('Content-Type', 'application/pdf');
+                res.setHeader('Content-Disposition', 'inline; filename="vista.pdf"');
+                pdfStream.on('end', () => fs.unlink(tmpPdf, () => {}));
+                return pdfStream.pipe(res);
+            } catch (conversionError) {
+                this.logger.warn(`[CONVERSIÓN FALLIDA] Sirviendo Word directamente: ${conversionError.message}`);
+            }
+        }
+
+        const mimeType = mime.lookup(ext) || 'application/octet-stream';
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Content-Disposition', download === 'true' ? 
+            `attachment; filename="${encodeURIComponent(nombreArchivo)}"` : 
+            `inline; filename="${encodeURIComponent(nombreArchivo)}"`
+        );
+
+        const stream = fs.createReadStream(rutaAbsoluta);
+        stream.pipe(res);
+
+    } catch (error: any) {
+        this.logger.error(`[ERROR PREVIEW] ${tipo}: ${error.message}`);
+        const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
+        if (!res.headersSent) {
+            res.status(status).json({ 
+                success: false, 
+                message: error.message || 'Error al previsualizar',
+                tipo,
+                documentoId
+            });
+        }
+    }
+}
 
     // ───────────────────────────────────────────────────────────────
     // MIS AUDITORÍAS
@@ -295,7 +345,6 @@ export class ContabilidadController {
 
         try {
             const historial = await this.contabilidadService.getHistorial(user.id);
-
             return {
                 success: true,
                 message: `Historial cargado (${historial.length} registros)`,
@@ -393,109 +442,4 @@ export class ContabilidadController {
             },
         };
     }
-
-    // DESCARGAR ARCHIVO CONTABLE (extracto, glosa, causacion, comprobanteEgreso)
-   // DESCARGAR ARCHIVO CONTABLE (extracto, glosa, causacion, comprobanteEgreso)
-@Get('documentos/:documentoId/descargar-contable/:tipo')
-async descargarArchivoContable(
-  @Param('documentoId', ParseUUIDPipe) documentoId: string,
-  @Param('tipo') tipo: string,
-  @GetUser() user: JwtUser,
-  @Res() res: Response,
-) {
-  this.logger.log(`[DESCARGA-CONTABLE] Usuario ${user.id} (${user.username}) solicitando ${tipo} de ${documentoId}`);
-
-  try {
-    // Usar los nombres correctos que devuelve el servicio
-    const { rutaAbsoluta, nombreArchivo } = await this.contabilidadService.obtenerRutaArchivoContabilidadFull(
-      documentoId,
-      tipo,
-      user.id
-    );
-
-    if (!fs.existsSync(rutaAbsoluta)) {
-      throw new NotFoundException(`Archivo ${tipo} no encontrado en disco`);
-    }
-
-    res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreArchivo)}"`);
-    fs.createReadStream(rutaAbsoluta).pipe(res);
-  } catch (error: any) {
-    this.logger.error(`[ERROR DESCARGA] ${tipo}: ${error.message}`);
-    const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
-    res.status(status).json({
-      success: false,
-      message: error.message || 'Error al descargar el archivo'
-    });
-  }
-}
-
-// PREVISUALIZAR ARCHIVO CONTABLE (inline)
-@Get('documentos/:documentoId/preview-contable/:tipo')
-@Public() // Opcional: si quieres que sea público para previsualización
-async previsualizarArchivoContable(
-  @Param('documentoId', ParseUUIDPipe) documentoId: string,
-  @Param('tipo') tipo: string,
-  @Query('download') download: string = 'false',
-  @Res() res: Response,
-) {
-  this.logger.log(`[PREVIEW-CONTABLE] Acceso a ${tipo} de ${documentoId} (download=${download})`);
-
-  let rutaAbsoluta: string;
-  let nombreArchivo: string;
-
-  try {
-    const result = await this.contabilidadService.obtenerRutaArchivoContabilidadFull(
-      documentoId,
-      tipo
-    );
-    rutaAbsoluta = result.rutaAbsoluta;
-    nombreArchivo = result.nombreArchivo;
-
-    if (!fs.existsSync(rutaAbsoluta)) {
-      throw new NotFoundException(`Archivo ${tipo} no encontrado`);
-    }
-
-    const ext = path.extname(nombreArchivo).toLowerCase();
-
-    // Si es Word y NO es descarga forzada → convertir a PDF temporalmente
-    if (['.doc', '.docx'].includes(ext) && download !== 'true') {
-      const tmpPdf = path.join(os.tmpdir(), `preview-${crypto.randomUUID()}.pdf`);
-      try {
-        await this.contabilidadService.convertirWordAPdf(rutaAbsoluta, tmpPdf);
-        rutaAbsoluta = tmpPdf;
-        nombreArchivo = nombreArchivo.replace(/\.(doc|docx)$/i, '.pdf');
-      } catch (conversionError) {
-        this.logger.warn(`[CONVERSIÓN FALLIDA] ${conversionError.message} - Sirviendo Word directamente`);
-        // Si falla conversión, servir el .docx tal cual
-      }
-    }
-
-    const mimeType = mime.lookup(path.extname(nombreArchivo)) || 'application/octet-stream';
-
-    res.setHeader('Content-Type', mimeType);
-    res.setHeader('Content-Disposition', download === 'true' ? 
-      `attachment; filename="${encodeURIComponent(nombreArchivo)}"` : 
-      `inline; filename="${encodeURIComponent(nombreArchivo)}"`
-    );
-
-    const stream = fs.createReadStream(rutaAbsoluta);
-    stream.pipe(res);
-
-    // Limpieza del temporal (solo si se creó PDF)
-    if (rutaAbsoluta.includes('preview-') && rutaAbsoluta.endsWith('.pdf')) {
-      stream.on('end', () => {
-        fs.unlink(rutaAbsoluta, (err) => {
-          if (err) this.logger.warn(`No se pudo eliminar temporal: ${err.message}`);
-        });
-      });
-    }
-  } catch (error: any) {
-    this.logger.error(`[ERROR PREVIEW] ${tipo}: ${error.message}`);
-    const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
-    if (!res.headersSent) {
-      res.status(status).json({ success: false, message: error.message || 'Error al previsualizar' });
-    }
-  }
-}
 }

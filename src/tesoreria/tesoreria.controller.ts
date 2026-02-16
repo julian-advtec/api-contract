@@ -80,39 +80,39 @@ export class TesoreriaController {
         return this.tesoreriaService.obtenerDetalleDocumento(documentoId, user.id);
     }
 
- @Post('documentos/:documentoId/subir-documento')
-@UseInterceptors(
-  FileFieldsInterceptor(
-    [
-      { name: 'pagoRealizado', maxCount: 1 }
-    ],
-    multerTesoreriaConfig
-  ),
-)
-async subirDocumentoTesoreria(
-  @Param('documentoId', ParseUUIDPipe) documentoId: string,
-  @GetUser() user: JwtUser,
-  @Body() body: any,
-  @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
-) {
-  this.logger.log(`[SUBIR] Tesorero ${user.id} subiendo pago para ${documentoId}`);
-  this.logger.log(`📥 signatureId: ${body.signatureId}`);
-  this.logger.log(`📥 signaturePosition: ${body.signaturePosition}`);
+    @Post('documentos/:documentoId/subir-documento')
+    @UseInterceptors(
+        FileFieldsInterceptor(
+            [
+                { name: 'pagoRealizado', maxCount: 1 }
+            ],
+            multerTesoreriaConfig
+        ),
+    )
+    async subirDocumentoTesoreria(
+        @Param('documentoId', ParseUUIDPipe) documentoId: string,
+        @GetUser() user: JwtUser,
+        @Body() body: any,
+        @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
+    ) {
+        this.logger.log(`[SUBIR] Tesorero ${user.id} subiendo pago para ${documentoId}`);
+        this.logger.log(`📥 signatureId: ${body.signatureId}`);
+        this.logger.log(`📥 signaturePosition: ${body.signaturePosition}`);
 
-  const datos = {
-    observaciones: body.observaciones,
-    estadoFinal: body.estadoFinal,
-    signatureId: body.signatureId, // 👈 AGREGAR
-    signaturePosition: body.signaturePosition // 👈 AGREGAR
-  };
+        const datos = {
+            observaciones: body.observaciones,
+            estadoFinal: body.estadoFinal,
+            signatureId: body.signatureId, // 👈 AGREGAR
+            signaturePosition: body.signaturePosition // 👈 AGREGAR
+        };
 
-  return this.tesoreriaService.subirDocumentoTesoreria(
-    documentoId,
-    user.id,
-    datos,
-    files,
-  );
-}
+        return this.tesoreriaService.subirDocumentoTesoreria(
+            documentoId,
+            user.id,
+            datos,
+            files,
+        );
+    }
 
     @Put('documentos/:documentoId/finalizar')
     async finalizarRevision(
@@ -158,7 +158,7 @@ async subirDocumentoTesoreria(
     }
 
     @Get('documentos/:documentoId/archivo/:tipo')
-    @Public()
+    @Public() // O con autenticación según tu necesidad
     async previsualizarArchivoTesoreria(
         @Param('documentoId', ParseUUIDPipe) documentoId: string,
         @Param('tipo') tipo: string,
@@ -168,11 +168,14 @@ async subirDocumentoTesoreria(
         this.logger.log(`[PUBLIC-PREVIEW] Acceso público → ${documentoId}/${tipo}`);
 
         try {
+            // Obtener la ruta del archivo (sin userId para acceso público)
             const { rutaAbsoluta, nombreArchivo } = await this.tesoreriaService.obtenerRutaArchivoTesoreriaFull(
                 documentoId,
                 tipo,
-                undefined
+                undefined // undefined para no requerir userId
             );
+
+            this.logger.log(`[PUBLIC-PREVIEW] Ruta encontrada: ${rutaAbsoluta}`);
 
             if (!fs.existsSync(rutaAbsoluta)) {
                 this.logger.error(`[PUBLIC-PREVIEW 404] No existe: ${rutaAbsoluta}`);
@@ -180,25 +183,20 @@ async subirDocumentoTesoreria(
             }
 
             const ext = path.extname(nombreArchivo).toLowerCase();
-
-            if (['.doc', '.docx'].includes(ext) && download !== 'true') {
-                const tmpPdf = path.join(os.tmpdir(), `preview-${crypto.randomUUID()}.pdf`);
-                try {
-                    await this.tesoreriaService.convertirWordAPdf(rutaAbsoluta, tmpPdf);
-                    res.setHeader('Content-Type', 'application/pdf');
-                    res.setHeader('Content-Disposition', 'inline; filename="vista.pdf"');
-                    const stream = fs.createReadStream(tmpPdf);
-                    stream.on('end', () => fs.unlink(tmpPdf, () => { }));
-                    return stream.pipe(res);
-                } catch (e) {
-                    this.logger.error(`[CONVERSIÓN ERROR] ${e.message}`);
-                }
-            }
-
             const mimeType = mime.lookup(ext) || 'application/octet-stream';
+
+            // Para vista previa (download=false), usar inline
+            // Para descarga (download=true), usar attachment
+            const contentDisposition = download === 'true'
+                ? `attachment; filename="${nombreArchivo}"`
+                : 'inline';
+
             res.setHeader('Content-Type', mimeType);
-            res.setHeader('Content-Disposition', download === 'true' ? `attachment; filename="${nombreArchivo}"` : 'inline');
-            return fs.createReadStream(rutaAbsoluta).pipe(res);
+            res.setHeader('Content-Disposition', contentDisposition);
+
+            const stream = fs.createReadStream(rutaAbsoluta);
+            stream.pipe(res);
+
         } catch (error: any) {
             this.logger.error(`[PUBLIC-PREVIEW ERROR] ${error.message}`);
             res.status(500).json({ message: error.message || 'Error al procesar archivo' });
@@ -270,20 +268,20 @@ async subirDocumentoTesoreria(
         });
     }
 
-    @Get('rechazados-visibles')
-    async obtenerRechazadosVisibles(@GetUser() user: JwtUser) {
-        const docs = await this.tesoreriaService.obtenerRechazadosVisibles(user);
-        return {
-            success: true,
-            count: docs.length,
-            data: docs
-        };
-    }
+@Get('rechazados-visibles')
+async obtenerRechazadosVisibles(@GetUser() user: JwtUser) {
+  const docs = await this.tesoreriaService.obtenerRechazadosVisibles(user);
+  return {
+    success: true,
+    count: docs.length,
+    data: docs // ← Esto es el array directamente
+  };
+}
 
     @Get('test-metadata')
     async testMetadata() {
         const count = await this.tesoreriaService.getTesoreriaCount();
         return { success: true, count };
     }
-    
+
 }
