@@ -1,4 +1,3 @@
-// backend/tesoreria/tesoreria.module.ts
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { TesoreriaController } from './tesoreria.controller';
@@ -11,6 +10,10 @@ import { ContabilidadDocumento } from '../contabilidad/entities/contabilidad-doc
 import { Signature } from '../signatures/entities/signature.entity';
 import { EncryptionService } from '../signatures/encryption.service';
 
+// 👇 IMPORTAR el nuevo controlador y servicio
+import { EstadisticasTesoreriaController } from './estadisticas/estadisticas-tesoreria.controller';
+import { EstadisticasTesoreriaService } from './estadisticas/estadisticas-tesoreria.service';
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -18,15 +21,24 @@ import { EncryptionService } from '../signatures/encryption.service';
       Documento,
       User,
       ContabilidadDocumento,
-      Signature, // 👈 IMPORTANTE: agregar Signature aquí
+      Signature,
     ]),
   ],
-  controllers: [TesoreriaController],
+  controllers: [
+    TesoreriaController,
+    EstadisticasTesoreriaController,
+  ],
   providers: [
     TesoreriaService,
     TesoreriaSignatureService,
     EncryptionService,
+    EstadisticasTesoreriaService,
   ],
-  exports: [TesoreriaService],
+  exports: [
+    TesoreriaService,
+    TypeOrmModule.forFeature([TesoreriaDocumento]),  // ← AGREGAR ESTA LÍNEA
+  ],
 })
-export class TesoreriaModule {}
+
+
+export class TesoreriaModule { }

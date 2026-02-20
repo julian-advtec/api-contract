@@ -1,4 +1,4 @@
-// src/radicacion/entities/documento.entity.ts (VERSIÓN SIMPLIFICADA)
+// src/radicacion/entities/documento.entity.ts
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -13,6 +13,7 @@ import { User } from '../../users/entities/user.entity';
 import { SupervisorDocumento } from '../../supervision/entities/supervisor.entity';
 // import { AuditorDocumento } from '../../auditor/entities/auditor-documento.entity'; // COMENTA TEMPORAL
 // import { ContabilidadDocumento } from '../../contabilidad/entities/contabilidad-documento.entity'; // COMENTA TEMPORAL
+import { AsesorGerenciaDocumento } from '../../asesor-gerencia/entities/asesor-gerencia-documento.entity';
 
 @Entity('documentos')
 export class Documento {
@@ -108,6 +109,10 @@ export class Documento {
 
   // @OneToMany(() => ContabilidadDocumento, contabilidadDocumento => contabilidadDocumento.documento)
   // contabilidadDocumentos: ContabilidadDocumento[];
+
+  // RELACIÓN AGREGADA: Asesor Gerencia (solo esto se añadió)
+  @OneToMany(() => AsesorGerenciaDocumento, asesorGerenciaDocumento => asesorGerenciaDocumento.documento)
+  asesorGerenciaDocumentos: AsesorGerenciaDocumento[];
 
   @CreateDateColumn({ name: 'fecha_radicacion' })
   fechaRadicacion: Date;

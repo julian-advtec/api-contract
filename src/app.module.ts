@@ -15,6 +15,8 @@ import { AuditorModule } from './auditor/auditor.module';
 import { ContabilidadModule } from './contabilidad/contabilidad.module';
 import { TesoreriaModule } from './tesoreria/tesoreria.module';
 import { SignaturesModule } from './signatures/signatures.module';
+import { AsesorGerenciaModule } from './asesor-gerencia/asesor-gerencia.module';
+
 
 @Module({
   imports: [
@@ -31,8 +33,9 @@ import { SignaturesModule } from './signatures/signatures.module';
     AuditorModule,
     ContabilidadModule,
     TesoreriaModule,
-    SignaturesModule
-    
+    SignaturesModule,
+    AsesorGerenciaModule
+
   ],
   controllers: [AppController],
   providers: [AppService],
