@@ -14,6 +14,7 @@ import {
   Req,
   BadRequestException,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -74,7 +75,9 @@ export class AsesorGerenciaController {
     @Body() body: any,
     @UploadedFiles() files: { aprobacion?: Express.Multer.File[] },
   ) {
-    return this.service.subirDocumentoAprobacion(documentoId, user.id, body, files || {});
+    return this.
+
+      service.subirDocumentoAprobacion(documentoId, user.id, body, files || {});
   }
 
   @Post('documentos/:documentoId/finalizar')
@@ -82,12 +85,45 @@ export class AsesorGerenciaController {
   async finalizar(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
     @GetUser() user: JwtUser,
-    @Body() body: { estado: AsesorGerenciaEstado; observaciones?: string },
+    @Body() body: {
+      estadoFinal: string;
+      observaciones?: string;
+      signatureId?: string;
+      signaturePosition?: any;
+    },
   ) {
-    if (!body.estado || !Object.values(AsesorGerenciaEstado).includes(body.estado)) {
-      throw new BadRequestException('Estado inválido');
+    this.logger.log(`Finalizar revisión - doc: ${documentoId}, usuario: ${user.username}, estado: ${body.estadoFinal}`);
+
+    if (!body.estadoFinal) {
+      throw new BadRequestException('Debe especificar estadoFinal');
     }
-    return this.service.finalizarRevision(documentoId, user.id, body.estado, body.observaciones);
+
+    let estado: AsesorGerenciaEstado;
+    const ef = (body.estadoFinal || '').toUpperCase();
+
+    if (ef.includes('APROBADO') || ef.includes('COMPLETADO')) {
+      estado = AsesorGerenciaEstado.COMPLETADO_ASESOR_GERENCIA;
+
+      // Firma OBLIGATORIA para APROBADO
+      if (!body.signatureId || !body.signaturePosition) {
+        throw new BadRequestException('Para aprobar es obligatorio proporcionar signatureId y signaturePosition');
+      }
+    } else if (ef.includes('OBSERVADO')) {
+      estado = AsesorGerenciaEstado.OBSERVADO_ASESOR_GERENCIA;
+    } else if (ef.includes('RECHAZADO')) {
+      estado = AsesorGerenciaEstado.RECHAZADO_ASESOR_GERENCIA;
+    } else {
+      throw new BadRequestException('Estado inválido. Valores permitidos: APROBADO, OBSERVADO, RECHAZADO');
+    }
+
+    return this.service.finalizarRevision(
+      documentoId,
+      user.id,
+      estado,
+      body.observaciones,
+      body.signatureId,
+      body.signaturePosition
+    );
   }
 
   @Delete('documentos/:documentoId/liberar')
@@ -156,4 +192,25 @@ export class AsesorGerenciaController {
       });
     }
   }
+
+@Get('documentos/:documentoId/comprobante-firmado')
+@Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA)
+async verComprobanteFirmado(
+  @Param('documentoId', ParseUUIDPipe) documentoId: string,
+  @Res() res: Response,
+) {
+  try {
+    const { rutaAbsoluta, nombreArchivo } = await this.service.obtenerRutaComprobanteFirmado(documentoId);
+    this.logger.log(`Sirviendo comprobante firmado: ${rutaAbsoluta}`);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${nombreArchivo}"`);
+    res.sendFile(rutaAbsoluta);
+  } catch (error) {
+    this.logger.error(`Error sirviendo comprobante firmado ${documentoId}: ${error.message}`);
+    res.status(error instanceof NotFoundException ? 404 : 500).json({
+      message: error.message || 'Comprobante firmado no encontrado'
+    });
+  }
+}
 }

@@ -42,6 +42,10 @@ export class AsesorGerenciaDocumento {
   @Column({ name: 'firma_aplicada', default: false })
   firmaAplicada: boolean;
 
+  @Column({ nullable: true })
+  comprobanteFirmadoPath: string;
+
+
   puedeFinalizar(): { puede: boolean; razon?: string } {
     if (!this.aprobacionPath) {
       return { puede: false, razon: 'Debe subir el comprobante de aprobación o documento firmado' };

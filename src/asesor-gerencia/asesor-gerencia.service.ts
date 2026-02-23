@@ -363,6 +363,18 @@ export class AsesorGerenciaService {
     let nombreArchivo: string | null = null;
     const carpetaBase = documento.rutaCarpetaRadicado;
 
+    if (tipo.toLowerCase() === 'comprobantefirmado' || tipo === 'comprobanteFirmado') {
+    const registro = await this.asesorGerenciaRepository.findOne({
+      where: { documento: { id: documentoId } },
+    });
+
+    if (!registro?.comprobanteFirmadoPath) {
+      throw new NotFoundException('No hay comprobante firmado por gerencia');
+    }
+
+
+    nombreArchivo = registro.comprobanteFirmadoPath;
+  }
     // Caso 1: Aprobación subido por Asesor Gerencia
     if (tipo.toLowerCase() === 'aprobacion') {
       const registro = await this.asesorGerenciaRepository.findOne({
@@ -494,53 +506,55 @@ export class AsesorGerenciaService {
     }));
   }
 
-  async obtenerDetalleRevision(documentoId: string, asesorId: string): Promise<any> {
-    try {
-      const documento = await this.documentoRepository.findOne({
-        where: { id: documentoId },
-        relations: ['radicador', 'usuarioAsignado'],
-      });
+ async obtenerDetalleRevision(documentoId: string, asesorId: string): Promise<any> {
+  try {
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId },
+      relations: ['radicador', 'usuarioAsignado'],
+    });
 
-      if (!documento) {
-        throw new NotFoundException(`Documento ${documentoId} no encontrado`);
-      }
-
-      const registroGerencia = await this.asesorGerenciaRepository.findOne({
-        where: { documento: { id: documentoId } },
-        relations: ['asesor'],
-      });
-
-      return {
-        success: true,
-        data: {
-          id: documento.id,
-          numeroRadicado: documento.numeroRadicado,
-          numeroContrato: documento.numeroContrato,
-          nombreContratista: documento.nombreContratista,
-          documentoContratista: documento.documentoContratista,
-          fechaRadicacion: documento.fechaRadicacion,
-          estado: documento.estado,
-          observacion: documento.observacion || '',
-          historialEstados: documento.historialEstados || [],
-          asesorAsignado: registroGerencia?.asesor?.fullName || registroGerencia?.asesor?.username || null,
-          fechaAsignacionGerencia: registroGerencia?.fechaInicioRevision || null,
-          aprobacionPath: registroGerencia?.aprobacionPath || null,
-          firmaAplicada: registroGerencia?.firmaAplicada || false,
-          estadoGerencia: registroGerencia?.estado || 'PENDIENTE',
-          observacionesGerencia: registroGerencia?.observaciones || '',
-        }
-      };
-    } catch (error) {
-      this.logger.error(`[obtenerDetalleRevision] Error para documento ${documentoId}: ${error.message}`, error.stack);
-      throw new InternalServerErrorException(`Error al cargar detalle del documento: ${error.message}`);
+    if (!documento) {
+      throw new NotFoundException(`Documento ${documentoId} no encontrado`);
     }
-  }
 
+    const registroGerencia = await this.asesorGerenciaRepository.findOne({
+      where: { documento: { id: documentoId } },
+      relations: ['asesor'],
+    });
+
+    return {
+      success: true,
+      data: {
+        id: documento.id,
+        numeroRadicado: documento.numeroRadicado,
+        numeroContrato: documento.numeroContrato,
+        nombreContratista: documento.nombreContratista,
+        documentoContratista: documento.documentoContratista,
+        fechaRadicacion: documento.fechaRadicacion,
+        estado: documento.estado,
+        observacion: documento.observacion || '',
+        historialEstados: documento.historialEstados || [],
+        asesorAsignado: registroGerencia?.asesor?.fullName || registroGerencia?.asesor?.username || null,
+        fechaAsignacionGerencia: registroGerencia?.fechaInicioRevision || null,
+        aprobacionPath: registroGerencia?.aprobacionPath || null,
+        firmaAplicada: registroGerencia?.firmaAplicada || false,
+        comprobanteFirmadoPath: registroGerencia?.comprobanteFirmadoPath || null,  // ← AGREGAR ESTA LÍNEA
+        estadoGerencia: registroGerencia?.estado || 'PENDIENTE',
+        observacionesGerencia: registroGerencia?.observaciones || '',
+      }
+    };
+  } catch (error) {
+    this.logger.error(`[obtenerDetalleRevision] Error para documento ${documentoId}: ${error.message}`, error.stack);
+    throw new InternalServerErrorException(`Error al cargar detalle del documento: ${error.message}`);
+  }
+}
 async finalizarRevision(
   documentoId: string,
   asesorId: string,
   estado: AsesorGerenciaEstado,
   observaciones?: string,
+  signatureId?: string,
+  signaturePosition?: any,
 ) {
   this.logger.log(`[finalizarRevision] Iniciando - docId: ${documentoId}, asesorId: ${asesorId}, estado: ${estado}`);
 
@@ -558,14 +572,60 @@ async finalizarRevision(
     throw new ForbiddenException('No tienes este documento en revisión');
   }
 
-  this.logger.log(`Registro encontrado: ID=${registro.id}, aprobacionPath=${registro.aprobacionPath || 'null'}`);
-
-  if (!registro.aprobacionPath) {
-    throw new BadRequestException('Debe haber subido documento de aprobación');
-  }
-
   const documento = registro.documento;
 
+  if (estado === AsesorGerenciaEstado.COMPLETADO_ASESOR_GERENCIA) {
+    if (!signatureId || !signaturePosition) {
+      throw new BadRequestException('Firma obligatoria para aprobar (signatureId y signaturePosition requeridos)');
+    }
+
+    const tesoreria = await this.tesoreriaRepository.findOne({
+      where: { documento: { id: documentoId } },
+    });
+
+    if (!tesoreria?.pagoRealizadoPath) {
+      this.logger.error(`[APROBADO] No hay pagoRealizadoPath en tesorería para ${documentoId}`);
+      throw new BadRequestException('No existe comprobante de pago precargado para firmar');
+    }
+
+    const rutaOriginal = path.join(documento.rutaCarpetaRadicado, tesoreria.pagoRealizadoPath);
+    this.logger.log(`[APROBADO] Ruta original (tesorería): ${rutaOriginal}`);
+
+    const carpetaGerencia = path.join(documento.rutaCarpetaRadicado, 'asesor-gerencia');
+    if (!fs.existsSync(carpetaGerencia)) {
+      this.logger.log(`[APROBADO] Creando carpeta: ${carpetaGerencia}`);
+      fs.mkdirSync(carpetaGerencia, { recursive: true });
+    }
+
+    const nombreFirmado = `comprobante_firmado_${Date.now()}.pdf`;
+    const rutaDestino = path.join(carpetaGerencia, nombreFirmado);
+    this.logger.log(`[APROBADO] Ruta destino (firmado): ${rutaDestino}`);
+
+    try {
+      fs.copyFileSync(rutaOriginal, rutaDestino);
+      this.logger.log(`[APROBADO] Copia OK a ${rutaDestino}`);
+    } catch (copyErr) {
+      this.logger.error(`[APROBADO] Falló fs.copyFileSync: ${copyErr.message}`);
+      throw new InternalServerErrorException(`No se pudo copiar el comprobante para firmar: ${copyErr.message}`);
+    }
+
+    if (!fs.existsSync(rutaDestino)) {
+      this.logger.error(`[APROBADO] Archivo no existe después de copia: ${rutaDestino}`);
+      throw new InternalServerErrorException('Copia realizada pero archivo no encontrado en destino');
+    }
+
+    try {
+      await this.signatureService.aplicarFirmaEnPDF(rutaDestino, signatureId, signaturePosition);
+      registro.firmaAplicada = true;
+      registro.comprobanteFirmadoPath = path.join('asesor-gerencia', nombreFirmado);
+      this.logger.log(`[APROBADO] Firma aplicada OK - Path guardado: ${registro.comprobanteFirmadoPath}`);
+    } catch (firmErr) {
+      this.logger.error(`[APROBADO] Error aplicando firma: ${firmErr.message}`);
+      throw new InternalServerErrorException(`Error al aplicar la firma digital: ${firmErr.message}`);
+    }
+  }
+
+  // Resto del método sin cambios (actualizaciones comunes, save, etc.)
   registro.estado = estado;
   registro.observaciones = observaciones || registro.observaciones;
   registro.fechaFinRevision = new Date();
@@ -598,7 +658,7 @@ async finalizarRevision(
     usuarioId: asesorId,
     usuarioNombre: registro.asesor.fullName || registro.asesor.username,
     rolUsuario: registro.asesor.role,
-    observacion: `Finalizado por asesor gerencia: ${estado} - ${observaciones || 'sin observación'}`,
+    observacion: `Finalizado por asesor gerencia: ${estado} - ${observaciones || 'sin observación'}${estado === AsesorGerenciaEstado.COMPLETADO_ASESOR_GERENCIA ? ' (con firma digital)' : ''}`,
   });
   documento.historialEstados = historial;
 
@@ -616,4 +676,41 @@ async finalizarRevision(
     message: `Revisión finalizada - Estado: ${estadoDoc}`,
   };
 }
+
+
+async obtenerRutaComprobanteFirmado(documentoId: string): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
+  this.logger.log(`[obtenerRutaComprobanteFirmado] Iniciando para doc ${documentoId}`);
+
+  const documento = await this.documentoRepository.findOne({ where: { id: documentoId } });
+  if (!documento) throw new NotFoundException('Documento no encontrado');
+
+  const registro = await this.asesorGerenciaRepository.findOne({ where: { documento: { id: documentoId } } });
+  if (!registro?.comprobanteFirmadoPath) {
+    this.logger.warn(`No hay comprobanteFirmadoPath en BD para ${documentoId}`);
+    throw new NotFoundException('No hay comprobante firmado registrado');
+  }
+
+  const pathRelativo = registro.comprobanteFirmadoPath;
+  this.logger.log(`Path relativo desde BD: ${pathRelativo}`);
+
+  // Normalizamos separadores para Windows
+  const pathNormalizado = pathRelativo.replace(/\\/g, path.sep).replace(/\//g, path.sep);
+
+  const rutaAbsoluta = path.join(documento.rutaCarpetaRadicado, pathNormalizado);
+  this.logger.log(`Ruta absoluta calculada: ${rutaAbsoluta}`);
+
+  if (!fs.existsSync(rutaAbsoluta)) {
+    this.logger.error(`Archivo NO encontrado en disco: ${rutaAbsoluta}`);
+    throw new NotFoundException(`El archivo ${path.basename(pathNormalizado)} no existe en el servidor`);
+  }
+
+  this.logger.log(`Archivo listo para servir: ${rutaAbsoluta}`);
+
+  return {
+    rutaAbsoluta,
+    nombreArchivo: path.basename(pathNormalizado),
+  };
+}
+
+
 }
