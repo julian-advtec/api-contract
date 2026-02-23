@@ -25,7 +25,7 @@ export interface ActividadReciente {
   contratista: string;
   fecha: Date;
   responsable: string;
-  estado: string;
+  estado: RendicionCuentasEstado;
 }
 
 export interface DocumentoItem {
@@ -35,9 +35,9 @@ export interface DocumentoItem {
   contrato: string;
   estado: RendicionCuentasEstado;
   fechaAsignacion: Date;
-  fechaDecision?: Date | null; // ← CORREGIDO: acepta null
+  fechaDecision?: Date | null;
   responsableAsignado?: string;
-  observaciones?: string | null; // ← CORREGIDO: acepta null
+  observaciones?: string | null;
 }
 
 export interface DistribucionEstado {
@@ -45,6 +45,13 @@ export interface DistribucionEstado {
   cantidad: number;
   porcentaje: number;
   color: string;
+}
+
+export interface Rendimiento {
+  tiempoPromedioHoras: number;
+  tasaAprobacion: number;
+  tasaObservacion: number;
+  tasaRechazo: number;
 }
 
 export interface MetricasDesempeno {
@@ -88,11 +95,19 @@ export interface TendenciaPeriodo {
   tasaAprobacion: number;
 }
 
+export interface MisMetricas {
+  pendientes: number;
+  procesadosHoy: number;
+  procesadosSemana: number;
+  promedioRespuesta: number;
+}
+
 export interface EstadisticasRendicionCuentas {
   desde: Date;
   hasta: Date;
   fechaCalculo: Date;
   resumen: DocumentosPorEstado;
+  rendimiento: Rendimiento;                    // ← AÑADIDO: propiedad que faltaba
   metricas: MetricasDesempeno;
   distribucion: DistribucionEstado[];
   documentosPendientes: DocumentoItem[];
@@ -101,10 +116,5 @@ export interface EstadisticasRendicionCuentas {
   tiempos: TiemposRespuesta;
   cumplimiento?: CumplimientoObjetivos;
   tendencias?: TendenciaPeriodo[];
-  misMetricas?: {
-    pendientes: number;
-    procesadosHoy: number;
-    procesadosSemana: number;
-    promedioRespuesta: number;
-  };
+  misMetricas?: MisMetricas;
 }

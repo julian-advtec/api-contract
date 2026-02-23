@@ -1,4 +1,3 @@
-// src/rendicion-cuentas/estadisticas/estadisticas-rendicion-cuentas.service.ts
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, In } from 'typeorm';
@@ -31,14 +30,14 @@ export class EstadisticasRendicionCuentasService {
     private userRepo: Repository<User>,
   ) {}
 
-  async obtenerEstadisticas(
+ async obtenerEstadisticas(
     query: EstadisticasQueryDto,
     usuario: any
   ): Promise<EstadisticasRendicionCuentas> {
     const { desde, hasta } = this.calcularRangoFechas(query);
 
     try {
-      this.logger.log(`Calculando estadísticas desde ${desde} hasta ${hasta}`);
+      this.logger.log(`Calculando estadísticas desde ${desde} hasta ${hasta} para usuario ${usuario?.id || 'N/A'}`);
 
       const documentos = await this.documentoRepo.find({
         where: {
@@ -63,6 +62,12 @@ export class EstadisticasRendicionCuentasService {
         hasta,
         fechaCalculo: new Date(),
         resumen,
+        rendimiento: {  // ← AÑADIDO AQUÍ para coincidir con la interfaz
+          tiempoPromedioHoras: tiempos.promedioHoras,
+          tasaAprobacion: metricas.tasaAprobacion,
+          tasaObservacion: metricas.tasaObservacion,
+          tasaRechazo: metricas.tasaRechazo,
+        },
         metricas,
         distribucion,
         documentosPendientes,
@@ -172,9 +177,7 @@ export class EstadisticasRendicionCuentasService {
         fechaCreacion: Between(desde, hasta),
       },
       relations: ['documento', 'responsable'],
-      order: {
-        fechaCreacion: 'DESC',
-      },
+      order: { fechaCreacion: 'DESC' },
       take: 20,
     });
 
@@ -188,81 +191,49 @@ export class EstadisticasRendicionCuentasService {
         fechaDecision: Between(desde, hasta),
       },
       relations: ['documento', 'responsable'],
-      order: {
-        fechaDecision: 'DESC',
-      },
+      order: { fechaDecision: 'DESC' },
       take: 20,
     });
 
     return documentos.map(d => this.mapearADocumentoItem(d));
   }
 
-  private mapearADocumentoItem(doc: RendicionCuentasDocumento): DocumentoItem {
-    const getNombreResponsable = (user: any): string => {
-      if (!user) return '—';
-      
-      if (typeof user === 'object') {
-        const posibleNombres = [
-          user.nombreCompleto,
-          user.fullName,
-          user.nombre,
-          user.name,
-          user.username,
-          user.email
-        ].filter(Boolean);
-        
-        if (posibleNombres.length > 0) {
-          return String(posibleNombres[0]);
-        }
-      }
-      
-      return 'Usuario';
-    };
+private mapearADocumentoItem(doc: RendicionCuentasDocumento): DocumentoItem {
+  const getNombreResponsable = (user: User | null): string => {
+    if (!user) return '—';
 
-    return {
-      id: doc.id,
-      numeroRadicado: doc.documento?.numeroRadicado || '—',
-      contratista: doc.documento?.nombreContratista || '—',
-      contrato: doc.documento?.numeroContrato || '—',
-      estado: doc.estado,
-      fechaAsignacion: doc.fechaAsignacion || doc.fechaCreacion,
-      fechaDecision: doc.fechaDecision,
-      responsableAsignado: getNombreResponsable(doc.responsable),
-      observaciones: doc.observaciones,
-    };
-  }
+    return (
+      user.fullName ||                  // ← existe en tu entidad User
+      user.username ||
+      user.email?.split('@')[0] ||
+      `Usuario-${user.id}`
+    );
+  };
+
+  return {
+    id: doc.id,
+    numeroRadicado: doc.documento?.numeroRadicado || '—',
+    contratista: doc.documento?.nombreContratista || '—',
+    contrato: doc.documento?.numeroContrato || '—',
+    estado: doc.estado,
+    fechaAsignacion: doc.fechaAsignacion || doc.fechaCreacion,
+    fechaDecision: doc.fechaDecision,
+    responsableAsignado: getNombreResponsable(doc.responsable),  // ← ahora compila
+    observaciones: doc.observaciones,
+  };
+}
 
   private async obtenerActividadReciente(desde: Date, hasta: Date): Promise<ActividadReciente[]> {
     const historial = await this.historialRepo.find({
-      where: {
-        fechaCreacion: Between(desde, hasta),
-      },
+      where: { fechaCreacion: Between(desde, hasta) },
       relations: ['documento', 'documento.documento', 'usuario'],
-      order: {
-        fechaCreacion: 'DESC',
-      },
+      order: { fechaCreacion: 'DESC' },
       take: 15,
     });
 
     const getNombreUsuario = (user: any): string => {
       if (!user) return 'Sistema';
-      
-      if (typeof user === 'object') {
-        const posibleNombres = [
-          user.nombreCompleto,
-          user.fullName,
-          user.nombre,
-          user.name,
-          user.username,
-          user.email
-        ].filter(Boolean);
-        
-        if (posibleNombres.length > 0) {
-          return String(posibleNombres[0]);
-        }
-      }
-      
-      return 'Usuario';
+      return user.fullName || user.nombreCompleto || user.nombre || user.name || user.username || user.email || 'Usuario';
     };
 
     return historial.map(h => ({
@@ -277,9 +248,9 @@ export class EstadisticasRendicionCuentasService {
   }
 
   private mapearAccionATipo(accion: string): 'APROBADO' | 'OBSERVADO' | 'RECHAZADO' | 'INICIADO' | 'ASIGNADO' {
-    if (accion === 'APROBAR' || accion === 'APROBADO') return 'APROBADO';
-    if (accion === 'OBSERVAR' || accion === 'OBSERVADO') return 'OBSERVADO';
-    if (accion === 'RECHAZAR' || accion === 'RECHAZADO') return 'RECHAZADO';
+    if (['APROBAR', 'APROBADO'].includes(accion)) return 'APROBADO';
+    if (['OBSERVAR', 'OBSERVADO'].includes(accion)) return 'OBSERVADO';
+    if (['RECHAZAR', 'RECHAZADO'].includes(accion)) return 'RECHAZADO';
     if (accion === 'INICIAR_REVISION') return 'INICIADO';
     if (accion === 'ASIGNAR') return 'ASIGNADO';
     return 'INICIADO';
@@ -295,12 +266,7 @@ export class EstadisticasRendicionCuentasService {
     });
 
     if (documentosConDecision.length === 0) {
-      return {
-        promedioHoras: 0,
-        minimoHoras: 0,
-        maximoHoras: 0,
-        promedioDias: 0,
-      };
+      return { promedioHoras: 0, minimoHoras: 0, maximoHoras: 0, promedioDias: 0 };
     }
 
     const tiempos: number[] = [];
@@ -308,30 +274,21 @@ export class EstadisticasRendicionCuentasService {
     documentosConDecision.forEach(doc => {
       if (doc.fechaInicioRevision && doc.fechaDecision) {
         const tiempoHoras = (doc.fechaDecision.getTime() - doc.fechaInicioRevision.getTime()) / (1000 * 60 * 60);
-        if (tiempoHoras > 0) {
-          tiempos.push(tiempoHoras);
-        }
+        if (tiempoHoras > 0) tiempos.push(tiempoHoras);
       }
     });
 
     if (tiempos.length === 0) {
-      return {
-        promedioHoras: 0,
-        minimoHoras: 0,
-        maximoHoras: 0,
-        promedioDias: 0,
-      };
+      return { promedioHoras: 0, minimoHoras: 0, maximoHoras: 0, promedioDias: 0 };
     }
 
     const suma = tiempos.reduce((a, b) => a + b, 0);
     const promedioHoras = suma / tiempos.length;
-    const minimoHoras = Math.min(...tiempos);
-    const maximoHoras = Math.max(...tiempos);
 
     return {
       promedioHoras: Math.round(promedioHoras * 10) / 10,
-      minimoHoras: Math.round(minimoHoras * 10) / 10,
-      maximoHoras: Math.round(maximoHoras * 10) / 10,
+      minimoHoras: Math.round(Math.min(...tiempos) * 10) / 10,
+      maximoHoras: Math.round(Math.max(...tiempos) * 10) / 10,
       promedioDias: Math.round((promedioHoras / 24) * 10) / 10,
     };
   }
@@ -362,9 +319,7 @@ export class EstadisticasRendicionCuentasService {
 
   private async calcularCumplimientoObjetivos(desde: Date, hasta: Date, usuario: any): Promise<any> {
     const documentos = await this.documentoRepo.find({
-      where: {
-        fechaCreacion: Between(desde, hasta),
-      },
+      where: { fechaCreacion: Between(desde, hasta) },
     });
 
     const procesados = documentos.filter(d => 
@@ -429,15 +384,12 @@ export class EstadisticasRendicionCuentasService {
 
     if (documentos.length === 0) return 0;
 
-    // Usamos un array y forEach para tener control explícito de null
     const tiempos: number[] = [];
     
     for (const doc of documentos) {
       if (doc.fechaInicioRevision && doc.fechaDecision) {
         const tiempo = (doc.fechaDecision.getTime() - doc.fechaInicioRevision.getTime()) / (1000 * 60 * 60);
-        if (tiempo > 0) {
-          tiempos.push(tiempo);
-        }
+        if (tiempo > 0) tiempos.push(tiempo);
       }
     }
 
@@ -460,9 +412,7 @@ export class EstadisticasRendicionCuentasService {
       inicio.setMonth(inicio.getMonth() - 1);
       
       const documentos = await this.documentoRepo.find({
-        where: {
-          fechaCreacion: Between(inicio, fin),
-        },
+        where: { fechaCreacion: Between(inicio, fin) },
       });
 
       const procesados = documentos.filter(d => 
@@ -485,54 +435,49 @@ export class EstadisticasRendicionCuentasService {
   }
 
   private async calcularMisMetricas(userId: string, desde: Date, hasta: Date): Promise<any> {
-  const misDocumentos = await this.documentoRepo.find({
-    where: {
-      responsableId: userId,
-      fechaCreacion: Between(desde, hasta),
-    },
-  });
+    const misDocumentos = await this.documentoRepo.find({
+      where: {
+        responsableId: userId,
+        fechaCreacion: Between(desde, hasta),
+      },
+    });
 
-  const pendientes = misDocumentos.filter(d => 
-    [RendicionCuentasEstado.PENDIENTE, RendicionCuentasEstado.EN_REVISION].includes(d.estado)
-  ).length;
+    const pendientes = misDocumentos.filter(d => 
+      [RendicionCuentasEstado.PENDIENTE, RendicionCuentasEstado.EN_REVISION].includes(d.estado)
+    ).length;
 
-  const procesadosHoy = misDocumentos.filter(d => {
     const hoy = new Date();
-    return d.fechaDecision && 
-           d.fechaDecision.toDateString() === hoy.toDateString() &&
-           [RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO].includes(d.estado);
-  }).length;
+    const procesadosHoy = misDocumentos.filter(d => {
+      return d.fechaDecision && d.fechaDecision.toDateString() === hoy.toDateString() &&
+             [RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO].includes(d.estado);
+    }).length;
 
-  const haceUnaSemana = new Date();
-  haceUnaSemana.setDate(haceUnaSemana.getDate() - 7);
-  
-  const procesadosSemana = misDocumentos.filter(d => 
-    d.fechaDecision && 
-    d.fechaDecision >= haceUnaSemana &&
-    [RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO].includes(d.estado)
-  ).length;
+    const haceUnaSemana = new Date();
+    haceUnaSemana.setDate(haceUnaSemana.getDate() - 7);
+    
+    const procesadosSemana = misDocumentos.filter(d => 
+      d.fechaDecision && d.fechaDecision >= haceUnaSemana &&
+      [RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO].includes(d.estado)
+    ).length;
 
-  // CORREGIDO: Usar forEach en lugar de filter().map()
-  const tiempos: number[] = [];
-  
-  for (const doc of misDocumentos) {
-    if (doc.fechaInicioRevision && doc.fechaDecision) {
-      const tiempo = (doc.fechaDecision.getTime() - doc.fechaInicioRevision.getTime()) / (1000 * 60 * 60);
-      if (tiempo > 0) {
-        tiempos.push(tiempo);
+    const tiempos: number[] = [];
+    
+    for (const doc of misDocumentos) {
+      if (doc.fechaInicioRevision && doc.fechaDecision) {
+        const tiempo = (doc.fechaDecision.getTime() - doc.fechaInicioRevision.getTime()) / (1000 * 60 * 60);
+        if (tiempo > 0) tiempos.push(tiempo);
       }
     }
+
+    const promedioRespuesta = tiempos.length > 0 
+      ? Math.round((tiempos.reduce((a, b) => a + b, 0) / tiempos.length) * 10) / 10
+      : 0;
+
+    return {
+      pendientes,
+      procesadosHoy,
+      procesadosSemana,
+      promedioRespuesta,
+    };
   }
-
-  const promedioRespuesta = tiempos.length > 0 
-    ? Math.round((tiempos.reduce((a, b) => a + b, 0) / tiempos.length) * 10) / 10
-    : 0;
-
-  return {
-    pendientes,
-    procesadosHoy,
-    procesadosSemana,
-    promedioRespuesta,
-  };
-}
 }

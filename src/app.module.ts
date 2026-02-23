@@ -16,7 +16,7 @@ import { ContabilidadModule } from './contabilidad/contabilidad.module';
 import { TesoreriaModule } from './tesoreria/tesoreria.module';
 import { SignaturesModule } from './signatures/signatures.module';
 import { AsesorGerenciaModule } from './asesor-gerencia/asesor-gerencia.module';
-
+import { RendicionCuentasModule } from './rendicion-cuentas/rendicion-cuentas.module';
 
 @Module({
   imports: [
@@ -34,7 +34,9 @@ import { AsesorGerenciaModule } from './asesor-gerencia/asesor-gerencia.module';
     ContabilidadModule,
     TesoreriaModule,
     SignaturesModule,
-    AsesorGerenciaModule
+    AsesorGerenciaModule,
+    RendicionCuentasModule
+    
 
   ],
   controllers: [AppController],

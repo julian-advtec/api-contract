@@ -1,4 +1,4 @@
-// src/rendicion-cuentas/rendicion-cuentas.service.ts
+// rendicion-cuentas.service.ts
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, Between } from 'typeorm';
@@ -19,6 +19,15 @@ import {
   FiltrosRendicionCuentasDto,
 } from './dto/rendicion-cuentas.dto';
 
+// Definir un tipo parcial para el usuario del JWT
+interface JwtUser {
+  id: string;
+  username: string;
+  role: UserRole;
+  fullName?: string;
+  email?: string;
+}
+
 @Injectable()
 export class RendicionCuentasService {
   private readonly logger = new Logger(RendicionCuentasService.name);
@@ -34,22 +43,20 @@ export class RendicionCuentasService {
     private userRepo: Repository<User>,
   ) {}
 
-  async create(createDto: CreateRendicionCuentasDto, usuario: User): Promise<RendicionCuentasDocumento> {
-    const documento = await this.documentoRadicacionRepo.findOne({
-      where: { id: createDto.documentoId }
-    });
+  private logAccess(usuario: JwtUser, metodo: string) {
+    this.logger.log(
+      `[ACCESS] ${metodo} - User: ${usuario.username || 'N/A'} (${usuario.id}) | Role: ${usuario.role || 'N/A'}`
+    );
+  }
 
-    if (!documento) {
-      throw new NotFoundException('Documento no encontrado');
-    }
+  async create(createDto: CreateRendicionCuentasDto, usuario: JwtUser): Promise<RendicionCuentasDocumento> {
+    this.logAccess(usuario, 'create');
+    const documento = await this.documentoRadicacionRepo.findOne({ where: { id: createDto.documentoId } });
 
-    const existe = await this.documentoRepo.findOne({
-      where: { documentoId: createDto.documentoId }
-    });
+    if (!documento) throw new NotFoundException('Documento no encontrado');
 
-    if (existe) {
-      throw new BadRequestException('El documento ya está en rendición de cuentas');
-    }
+    const existe = await this.documentoRepo.findOne({ where: { documentoId: createDto.documentoId } });
+    if (existe) throw new BadRequestException('El documento ya está en rendición de cuentas');
 
     const rendicionDocumento = new RendicionCuentasDocumento();
     rendicionDocumento.documentoId = createDto.documentoId;
@@ -71,41 +78,26 @@ export class RendicionCuentasService {
     return this.findOne(saved.id);
   }
 
-  async asignar(id: string, asignarDto: AsignarRendicionCuentasDto, usuario: User): Promise<RendicionCuentasDocumento> {
+  async asignar(id: string, asignarDto: AsignarRendicionCuentasDto, usuario: JwtUser): Promise<RendicionCuentasDocumento> {
+    this.logAccess(usuario, 'asignar');
     const documento = await this.findOne(id);
 
-    const responsable = await this.userRepo.findOne({
-      where: { id: asignarDto.responsableId }
-    });
-
-    if (!responsable) {
-      throw new NotFoundException('Responsable no encontrado');
-    }
+    const responsable = await this.userRepo.findOne({ where: { id: asignarDto.responsableId } });
+    if (!responsable) throw new NotFoundException('Responsable no encontrado');
 
     if (documento.estado !== RendicionCuentasEstado.PENDIENTE) {
       throw new BadRequestException('Solo se pueden asignar documentos en estado PENDIENTE');
     }
 
     const estadoAnterior = documento.estado;
-
     documento.responsableId = asignarDto.responsableId;
     documento.fechaAsignacion = new Date();
 
     const updated = await this.documentoRepo.save(documento);
 
     const getNombreResponsable = (user: User): string => {
-      try {
-        if (user && typeof user === 'object') {
-          const anyUser = user as any;
-          return anyUser.nombreCompleto || 
-                 anyUser.fullName || 
-                 anyUser.name || 
-                 anyUser.username || 
-                 anyUser.email || 
-                 `Usuario-${anyUser.id || ''}`;
-        }
-      } catch (e) {}
-      return 'Usuario';
+      if (!user) return '—';
+      return user.fullName || user.username || user.email?.split('@')[0] || `Usuario-${user.id}`;
     };
 
     await this.registrarHistorial({
@@ -120,17 +112,16 @@ export class RendicionCuentasService {
     return updated;
   }
 
-  async iniciarRevision(id: string, iniciarDto: IniciarRevisionDto, usuario: User): Promise<RendicionCuentasDocumento> {
+  async iniciarRevision(id: string, iniciarDto: IniciarRevisionDto, usuario: JwtUser): Promise<RendicionCuentasDocumento> {
+    this.logAccess(usuario, 'iniciarRevision');
     const documento = await this.findOne(id);
-
-    this.verificarAcceso(documento, usuario);
+    await this.verificarAcceso(documento, usuario);
 
     if (!documento.puedeIniciarRevision()) {
       throw new BadRequestException('No se puede iniciar revisión en este estado');
     }
 
     const estadoAnterior = documento.estado;
-
     documento.estado = RendicionCuentasEstado.EN_REVISION;
     documento.fechaInicioRevision = new Date();
 
@@ -148,17 +139,16 @@ export class RendicionCuentasService {
     return updated;
   }
 
-  async tomarDecision(id: string, decisionDto: TomarDecisionDto, usuario: User): Promise<RendicionCuentasDocumento> {
+  async tomarDecision(id: string, decisionDto: TomarDecisionDto, usuario: JwtUser): Promise<RendicionCuentasDocumento> {
+    this.logAccess(usuario, 'tomarDecision');
     const documento = await this.findOne(id);
-
-    this.verificarAcceso(documento, usuario);
+    await this.verificarAcceso(documento, usuario);
 
     if (!documento.puedeTomarDecision()) {
       throw new BadRequestException('No se puede tomar decisión en este estado');
     }
 
     const estadoAnterior = documento.estado;
-
     documento.estado = decisionDto.decision;
     documento.fechaDecision = new Date();
     documento.observaciones = decisionDto.observacion || null;
@@ -177,17 +167,16 @@ export class RendicionCuentasService {
     return updated;
   }
 
-  async completar(id: string, completarDto: CompletarDto, usuario: User): Promise<RendicionCuentasDocumento> {
+  async completar(id: string, completarDto: CompletarDto, usuario: JwtUser): Promise<RendicionCuentasDocumento> {
+    this.logAccess(usuario, 'completar');
     const documento = await this.findOne(id);
-
-    this.verificarAcceso(documento, usuario, true);
+    await this.verificarAcceso(documento, usuario, true);
 
     if (![RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO].includes(documento.estado)) {
       throw new BadRequestException('Solo documentos con decisión pueden ser completados');
     }
 
     const estadoAnterior = documento.estado;
-
     documento.estado = RendicionCuentasEstado.COMPLETADO;
 
     const updated = await this.documentoRepo.save(documento);
@@ -204,7 +193,9 @@ export class RendicionCuentasService {
     return updated;
   }
 
-  async findAll(filtros?: FiltrosRendicionCuentasDto): Promise<{ data: RendicionCuentasDocumento[]; total: number }> {
+// rendicion-cuentas.service.ts
+async findAll(filtros?: FiltrosRendicionCuentasDto): Promise<{ data: RendicionCuentasDocumento[]; total: number }> {
+  try {
     const query = this.documentoRepo.createQueryBuilder('rcd')
       .leftJoinAndSelect('rcd.documento', 'doc')
       .leftJoinAndSelect('rcd.responsable', 'user');
@@ -232,9 +223,12 @@ export class RendicionCuentasService {
       .getManyAndCount();
 
     return { data, total };
+  } catch (error) {
+    this.logger.error(`Error en findAll: ${error.message}`, error.stack);
+    return { data: [], total: 0 };  // ← Siempre devolver array vacío
   }
-
-  async findMisDocumentos(usuario: User, filtros?: {
+}
+  async findMisDocumentos(usuario: JwtUser, filtros?: {
     estados?: RendicionCuentasEstado[];
     desde?: Date;
     hasta?: Date;
@@ -260,7 +254,7 @@ export class RendicionCuentasService {
       .getMany();
   }
 
-  async findPendientes(usuario: User): Promise<RendicionCuentasDocumento[]> {
+  async findPendientes(usuario: JwtUser): Promise<RendicionCuentasDocumento[]> {
     return this.documentoRepo.find({
       where: [
         { estado: RendicionCuentasEstado.PENDIENTE },
@@ -277,10 +271,7 @@ export class RendicionCuentasService {
       relations: ['documento', 'responsable'],
     });
 
-    if (!documento) {
-      throw new NotFoundException('Documento de rendición de cuentas no encontrado');
-    }
-
+    if (!documento) throw new NotFoundException('Documento de rendición de cuentas no encontrado');
     return documento;
   }
 
@@ -292,7 +283,8 @@ export class RendicionCuentasService {
     });
   }
 
-  async obtenerEstadisticas(usuario: User, filtros?: { desde?: Date; hasta?: Date }) {
+  async obtenerEstadisticas(usuario: JwtUser, filtros?: { desde?: Date; hasta?: Date }) {
+    this.logAccess(usuario, 'obtenerEstadisticas');
     const desde = filtros?.desde || new Date(new Date().setMonth(new Date().getMonth() - 1));
     const hasta = filtros?.hasta || new Date();
 
@@ -412,22 +404,18 @@ export class RendicionCuentasService {
     return this.historialRepo.save(historial);
   }
 
-  private verificarAcceso(
+  private async verificarAcceso(
     documento: RendicionCuentasDocumento,
-    usuario: User,
+    usuario: JwtUser,
     permitirAdminSiempre: boolean = false
-  ): void {
-    if (usuario.role === UserRole.ADMIN) {
+  ): Promise<void> {
+    if (usuario.role?.toLowerCase() === UserRole.ADMIN.toLowerCase()) {
       return;
     }
 
-    if (usuario.role === UserRole.RENDICION_CUENTAS) {
-      if (documento.responsableId === usuario.id) {
-        return;
-      }
-      if (documento.estado === RendicionCuentasEstado.PENDIENTE) {
-        return;
-      }
+    if (usuario.role?.toLowerCase() === UserRole.RENDICION_CUENTAS.toLowerCase()) {
+      if (documento.responsableId === usuario.id) return;
+      if (documento.estado === RendicionCuentasEstado.PENDIENTE) return;
     }
 
     if ([UserRole.SUPERVISOR, UserRole.AUDITOR_CUENTAS].includes(usuario.role as UserRole)) {
