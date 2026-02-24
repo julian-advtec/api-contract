@@ -11,8 +11,9 @@ import { ContabilidadDocumento } from '../contabilidad/entities/contabilidad-doc
 import { TesoreriaDocumento } from '../tesoreria/entities/tesoreria-documento.entity';
 import { Signature } from '../signatures/entities/signature.entity';
 import { AsesorGerenciaDocumento } from '../asesor-gerencia/entities/asesor-gerencia-documento.entity';
+import { RendicionCuentasDocumento } from 'src/rendicion-cuentas/entities/rendicion-cuentas-documento.entity';
+import { RendicionCuentasHistorial } from 'src/rendicion-cuentas/entities/rendicion-cuentas-historial.entity';
 
-// Opciones de configuración
 export const ormconfig: DataSourceOptions = {
   type: 'postgres',
   host: process.env.DB_HOST || 'localhost',
@@ -31,6 +32,8 @@ export const ormconfig: DataSourceOptions = {
     TesoreriaDocumento,
     Signature,
     AsesorGerenciaDocumento,
+    RendicionCuentasDocumento,
+    RendicionCuentasHistorial
   ],
 
   synchronize: process.env.NODE_ENV !== 'production',

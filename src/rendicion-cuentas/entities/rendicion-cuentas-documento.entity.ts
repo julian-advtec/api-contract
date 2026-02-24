@@ -18,10 +18,10 @@ export class RendicionCuentasDocumento {
 
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'responsableId' })
-  responsable: User | null; // ← AÑADIDO: tipo explícito con null
+  responsable: User | null;
 
   @Column({ nullable: true })
-  responsableId: string | null; // ← CORREGIDO: tipo explícito con null
+  responsableId: string | null;
 
   @Column({ 
     type: 'enum', 
@@ -31,22 +31,41 @@ export class RendicionCuentasDocumento {
   estado: RendicionCuentasEstado;
 
   @Column({ type: 'text', nullable: true })
-  observaciones: string | null; // ← CORREGIDO: tipo explícito con null
+  observaciones: string | null;
 
   @Column({ type: 'timestamp', nullable: true })
-  fechaAsignacion: Date | null; // ← CORREGIDO: tipo explícito con null
+  fechaAsignacion: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
-  fechaInicioRevision: Date | null; // ← CORREGIDO: tipo explícito con null
+  fechaInicioRevision: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
-  fechaDecision: Date | null; // ← CORREGIDO: tipo explícito con null
+  fechaDecision: Date | null;
 
   @CreateDateColumn()
   fechaCreacion: Date;
 
   @UpdateDateColumn()
   fechaActualizacion: Date;
+
+  // Campos adicionales para el proceso
+  @Column({ type: 'text', nullable: true })
+  informeRendicionPath: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  documentosAdjuntosPath: string | null;
+
+  @Column({ type: 'decimal', precision: 15, scale: 2, nullable: true })
+  montoRendido: number | null;
+
+  @Column({ type: 'decimal', precision: 15, scale: 2, nullable: true })
+  montoAprobado: number | null;
+
+  @Column({ type: 'jsonb', nullable: true, default: [] })
+  informesPresentados: any[];
+
+  @Column({ type: 'jsonb', nullable: true, default: [] })
+  documentosAdjuntos: any[];
 
   puedeIniciarRevision(): boolean {
     return [RendicionCuentasEstado.PENDIENTE].includes(this.estado);

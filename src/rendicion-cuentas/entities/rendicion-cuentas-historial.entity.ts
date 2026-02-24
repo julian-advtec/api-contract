@@ -4,7 +4,7 @@ import { RendicionCuentasDocumento } from './rendicion-cuentas-documento.entity'
 import { User } from '../../users/entities/user.entity';
 import { RendicionCuentasEstado } from './rendicion-cuentas-estado.enum';
 
-@Entity('rendicion_cuentas_historial')
+@Entity('rendicion_cuentas_historial') // ← Verificar que la tabla existe
 export class RendicionCuentasHistorial {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -24,13 +24,13 @@ export class RendicionCuentasHistorial {
   usuarioId: string;
 
   @Column({ type: 'enum', enum: RendicionCuentasEstado, nullable: true })
-  estadoAnterior: RendicionCuentasEstado | null; // ← CORREGIDO: tipo explícito con null
+  estadoAnterior: RendicionCuentasEstado | null;
 
   @Column({ type: 'enum', enum: RendicionCuentasEstado })
   estadoNuevo: RendicionCuentasEstado;
 
   @Column({ type: 'text', nullable: true })
-  observacion: string | null; // ← CORREGIDO: tipo explícito con null
+  observacion: string | null;
 
   @Column({ type: 'varchar', length: 50 })
   accion: string;

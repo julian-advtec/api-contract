@@ -12,14 +12,16 @@ import { EstadisticasRendicionCuentas, DistribucionEstado, DocumentoItem, Activi
 export class EstadisticasRendicionCuentasService {
   private readonly logger = new Logger(EstadisticasRendicionCuentasService.name);
 
-  private readonly coloresPorEstado: Record<string, string> = {
-    [RendicionCuentasEstado.PENDIENTE]: '#FFC107',
-    [RendicionCuentasEstado.EN_REVISION]: '#2196F3',
-    [RendicionCuentasEstado.APROBADO]: '#4CAF50',
-    [RendicionCuentasEstado.OBSERVADO]: '#FF9800',
-    [RendicionCuentasEstado.RECHAZADO]: '#F44336',
-    [RendicionCuentasEstado.COMPLETADO]: '#9E9E9E',
-  };
+private readonly coloresPorEstado: Record<string, string> = {
+  [RendicionCuentasEstado.PENDIENTE]: '#FFC107',              // amarillo
+  [RendicionCuentasEstado.EN_REVISION]: '#2196F3',            // azul
+  [RendicionCuentasEstado.APROBADO]: '#4CAF50',               // verde
+  [RendicionCuentasEstado.OBSERVADO]: '#FF9800',              // naranja
+  [RendicionCuentasEstado.RECHAZADO]: '#F44336',              // rojo
+  [RendicionCuentasEstado.COMPLETADO]: '#9E9E9E',             // gris
+  [RendicionCuentasEstado.ESPERA_APROBACION_GERENCIA]: '#9C27B0',   // morado claro
+  [RendicionCuentasEstado.APROBADO_POR_GERENCIA]: '#673AB7',        // morado fuerte
+};
 
   constructor(
     @InjectRepository(RendicionCuentasDocumento)
@@ -118,34 +120,31 @@ export class EstadisticasRendicionCuentasService {
     return { desde, hasta };
   }
 
-  private calcularResumen(documentos: RendicionCuentasDocumento[]): any {
-    const conteo = {
-      [RendicionCuentasEstado.PENDIENTE]: 0,
-      [RendicionCuentasEstado.EN_REVISION]: 0,
-      [RendicionCuentasEstado.APROBADO]: 0,
-      [RendicionCuentasEstado.OBSERVADO]: 0,
-      [RendicionCuentasEstado.RECHAZADO]: 0,
-      [RendicionCuentasEstado.COMPLETADO]: 0,
-    };
+private calcularResumen(documentos: RendicionCuentasDocumento[]): any {
+  const conteo = new Map<RendicionCuentasEstado | string, number>();
 
-    documentos.forEach(doc => {
-      if (conteo.hasOwnProperty(doc.estado)) {
-        conteo[doc.estado]++;
-      }
-    });
+  documentos.forEach(doc => {
+    const estado = doc.estado;
+    conteo.set(estado, (conteo.get(estado) || 0) + 1);
+  });
 
-    const total = documentos.length;
+  const total = documentos.length;
 
-    return {
-      pendientes: conteo[RendicionCuentasEstado.PENDIENTE],
-      enRevision: conteo[RendicionCuentasEstado.EN_REVISION],
-      aprobados: conteo[RendicionCuentasEstado.APROBADO],
-      observados: conteo[RendicionCuentasEstado.OBSERVADO],
-      rechazados: conteo[RendicionCuentasEstado.RECHAZADO],
-      completados: conteo[RendicionCuentasEstado.COMPLETADO],
-      total,
-    };
-  }
+  return {
+    pendientes: conteo.get(RendicionCuentasEstado.PENDIENTE) || 0,
+    enRevision: conteo.get(RendicionCuentasEstado.EN_REVISION) || 0,
+    aprobados: conteo.get(RendicionCuentasEstado.APROBADO) || 0,
+    observados: conteo.get(RendicionCuentasEstado.OBSERVADO) || 0,
+    rechazados: conteo.get(RendicionCuentasEstado.RECHAZADO) || 0,
+    completados: conteo.get(RendicionCuentasEstado.COMPLETADO) || 0,
+    
+    // Nuevos estados agregados al enum → ahora se cuentan sin error
+    esperaAprobacionGerencia: conteo.get(RendicionCuentasEstado.ESPERA_APROBACION_GERENCIA) || 0,
+    aprobadoPorGerencia: conteo.get(RendicionCuentasEstado.APROBADO_POR_GERENCIA) || 0,
+    
+    total,
+  };
+}
 
   private calcularDistribucion(documentos: RendicionCuentasDocumento[]): DistribucionEstado[] {
     const conteo = new Map<string, number>();
