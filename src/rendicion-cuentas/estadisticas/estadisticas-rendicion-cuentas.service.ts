@@ -23,6 +23,7 @@ private readonly coloresPorEstado: Record<string, string> = {
   [RendicionCuentasEstado.APROBADO_POR_GERENCIA]: '#673AB7',        // morado fuerte
 };
 
+
   constructor(
     @InjectRepository(RendicionCuentasDocumento)
     private documentoRepo: Repository<RendicionCuentasDocumento>,

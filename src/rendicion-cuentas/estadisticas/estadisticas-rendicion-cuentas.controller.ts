@@ -70,4 +70,8 @@ export class EstadisticasRendicionCuentasController {
       return { ok: false, error: error.message };
     }
   }
+
+
+  
+  
 }

@@ -215,8 +215,9 @@ async tomarDocumento(documentoId: string, usuarioId: string) {
       relations: ['documento', 'responsable'],
       order: { fechaCreacion: 'DESC' },
     });
-    
 
+
+    
     return documentos.map(doc => ({
       id: doc.documento.id,
       rendicionId: doc.id,
