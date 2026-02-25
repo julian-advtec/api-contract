@@ -26,8 +26,12 @@ import * as mime from 'mime-types';
 import * as os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { UserRole } from '../users/enums/user-role.enum';
 
 const execAsync = promisify(exec);
+
+
+
 
 @Injectable()
 export class ContabilidadService {
@@ -61,18 +65,17 @@ export class ContabilidadService {
 
             qb.andWhere(
                 `NOT EXISTS (
-                    SELECT 1 
-                    FROM contabilidad_documentos cd
-                    WHERE cd."documento_id" = d.id 
-                    AND cd.estado NOT IN ('DISPONIBLE')
-                )`
+          SELECT 1 
+          FROM contabilidad_documentos cd
+          WHERE cd."documento_id" = d.id 
+          AND cd.estado NOT IN ('DISPONIBLE')
+        )`
             );
 
             qb.leftJoinAndSelect('d.radicador', 'radicador')
                 .leftJoinAndSelect('d.usuarioAsignado', 'asignado')
                 .orderBy('d.fechaRadicacion', 'ASC');
 
-            this.logger.debug('Ejecutando query para documentos disponibles...');
             const documentos = await qb.getMany();
 
             this.logger.log(`[SUCCESS] Encontrados ${documentos.length} documentos disponibles`);
@@ -94,16 +97,9 @@ export class ContabilidadService {
                 enRevisionPorMi: false,
                 tipo: 'disponible'
             }));
-
         } catch (error: any) {
             this.logger.error(`[ERROR CRÍTICO] Falló obtenerDocumentosDisponibles`, error.stack);
-            console.error('STACK TRACE COMPLETO:', error);
-            throw new InternalServerErrorException({
-                message: 'Error interno al cargar documentos disponibles',
-                detail: error.message,
-                code: error.code,
-                position: error.position
-            });
+            throw new InternalServerErrorException('Error interno al cargar documentos disponibles');
         }
     }
 
@@ -130,10 +126,6 @@ export class ContabilidadService {
                 throw new NotFoundException('Documento no disponible para contabilidad');
             }
 
-            if (documento.estado === ContabilidadEstado.EN_REVISION) {
-                throw new ConflictException('Ya está siendo revisado por contabilidad');
-            }
-
             const contador = await queryRunner.manager.findOne(User, { where: { id: contadorId } });
             if (!contador) throw new NotFoundException('Usuario no encontrado');
 
@@ -158,11 +150,9 @@ export class ContabilidadService {
             documento.usuarioAsignado = contador;
             documento.usuarioAsignadoNombre = contador.fullName || contador.username;
             documento.fechaActualizacion = new Date();
-            documento.ultimoAcceso = new Date();
-            documento.ultimoUsuario = `Contabilidad: ${contador.username}`;
 
-            await queryRunner.manager.save(Documento, documento);
-            await queryRunner.manager.save(ContabilidadDocumento, contabilidadDoc);
+            await queryRunner.manager.save(documento);
+            await queryRunner.manager.save(contabilidadDoc);
 
             await queryRunner.commitTransaction();
 
@@ -205,7 +195,61 @@ export class ContabilidadService {
 
     // ───────────────────────────────────────────────────────────────
     // 4. OBTENER DETALLE DE DOCUMENTO
+
     // ───────────────────────────────────────────────────────────────
+    private puedeVerDetalleEnEstadoActual(
+        estado: string,
+        rolUsuario: UserRole | string,
+    ): boolean {
+        const e = (estado || '').toUpperCase();
+
+        // Estados muy iniciales → solo roles muy tempranos
+        if (e.includes('RADICADO') || e.includes('PENDIENTE') || e.includes('ENVIADO')) {
+            return [UserRole.ADMIN, UserRole.RADICADOR].includes(rolUsuario as any);
+        }
+
+        // Estados activos de contabilidad → contadores + supervisores + posteriores (lectura)
+        if (
+            e.includes('CONTABILIDAD') ||
+            e.includes('EN_REVISION_CONTABILIDAD') ||
+            e.includes('GLOSADO') ||
+            e.includes('PROCESADO_CONTABILIDAD')
+        ) {
+            return [
+                UserRole.ADMIN,
+                UserRole.CONTABILIDAD,
+                UserRole.SUPERVISOR,
+                UserRole.ASESOR_GERENCIA,      // ← AGREGADO
+                UserRole.RENDICION_CUENTAS,    // ← AGREGADO
+            ].some(r => r === rolUsuario);
+        }
+
+        // Estados posteriores (tesorería, gerencia, rendición, finalizados)
+        if (
+            e.includes('TESORERIA') ||
+            e.includes('GERENCIA') ||
+            e.includes('RENDICION') ||
+            e.includes('APROBADO_RENDICION_CUENTAS') ||
+            e.includes('APROBADO_POR_GERENCIA') ||
+            e.includes('COMPLETADO') ||
+            e.includes('FINALIZADO') ||
+            e.includes('CERRADO') ||
+            e.includes('RECHAZADO') ||
+            e.includes('OBSERVADO')
+        ) {
+            // Permitir lectura a: admin, gerencia, rendición y contabilidad (por si necesitan revisar histórico)
+            return [
+                UserRole.ADMIN,
+                UserRole.ASESOR_GERENCIA,     // ← soluciona tu 403 principal
+                UserRole.RENDICION_CUENTAS,   // ← para que rendición vea contabilidad histórica
+                UserRole.CONTABILIDAD,        // opcional, pero útil
+            ].some(r => r === rolUsuario);
+        }
+
+        // Por defecto: solo admin en estados desconocidos
+        return rolUsuario === UserRole.ADMIN;
+    }
+
     async obtenerDetalleDocumento(documentoId: string, userId: string): Promise<any> {
         const user = await this.userRepository.findOne({ where: { id: userId } });
         if (!user) throw new NotFoundException('Usuario no encontrado');
@@ -219,31 +263,26 @@ export class ContabilidadService {
 
         const estadoUpper = documento.estado?.toUpperCase() || '';
 
-        const estadosEdicion = ['EN_REVISION_CONTABILIDAD', 'EN_REVISION'];
-
-        if (!estadosEdicion.some(e => estadoUpper.includes(e)) &&
-            !estadoUpper.includes('CONTABILIDAD') &&
-            !estadoUpper.includes('TESORERIA') &&
-            !estadoUpper.includes('SUPERVISOR') &&
-            !estadoUpper.includes('AUDITOR') &&
-            !estadoUpper.includes('COMPLETADO') &&
-            !estadoUpper.includes('PROCESADO') &&
-            !estadoUpper.includes('GLOSADO') &&
-            !estadoUpper.includes('RECHAZADO')) {
+        // Validación basada en rol y estado
+        if (!this.puedeVerDetalleEnEstadoActual(estadoUpper, user.role)) {
             throw new ForbiddenException(`No tienes acceso en estado: ${documento.estado}`);
         }
 
+        // Buscar registro contable (sin filtrar por contador actual)
         const contabilidadDoc = await this.contabilidadRepository.findOne({
-            where: { documento: { id: documentoId }, contador: { id: userId } },
+            where: { documento: { id: documentoId } },  // ← SIN filtrar por contador
             relations: ['contador'],
+            order: { fechaActualizacion: 'DESC' }
         });
 
+        // Buscar registro de auditoría (el más reciente)
         const auditorDoc = await this.auditorDocumentoRepository.findOne({
             where: { documento: { id: documentoId } },
             relations: ['auditor'],
             order: { fechaActualizacion: 'DESC' },
         });
 
+        // Construir respuesta con manejo de nulls
         return this.construirRespuestaDetalle(documento, contabilidadDoc, auditorDoc, user);
     }
 
@@ -755,93 +794,94 @@ export class ContabilidadService {
     // ───────────────────────────────────────────────────────────────
     // 11. OBTENER RUTA COMPLETA DE ARCHIVO (CORREGIDO)
     // ───────────────────────────────────────────────────────────────
-async obtenerRutaArchivoContabilidadFull(
-    documentoId: string,
-    tipo: string,
-    userId?: string,
-): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
-    const documento = await this.documentoRepository.findOne({ where: { id: documentoId } });
-    if (!documento) throw new NotFoundException('Documento no encontrado');
+    async obtenerRutaArchivoContabilidadFull(
+        documentoId: string,
+        tipo: string,
+        userId?: string,
+    ): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
+        const documento = await this.documentoRepository.findOne({ where: { id: documentoId } });
+        if (!documento) throw new NotFoundException('Documento no encontrado');
 
-    let contabilidadDoc: ContabilidadDocumento | null = null;
+        let contabilidadDoc: ContabilidadDocumento | null = null;
 
-    if (userId) {
-        contabilidadDoc = await this.contabilidadRepository.findOne({
-            where: { documento: { id: documentoId }, contador: { id: userId } },
-        });
-    }
-
-    if (!contabilidadDoc) {
-        contabilidadDoc = await this.contabilidadRepository.findOne({
-            where: { documento: { id: documentoId } },
-            order: { fechaActualizacion: 'DESC' },
-        });
-    }
-
-    if (!contabilidadDoc) throw new NotFoundException('No hay registro de contabilidad');
-
-    let nombreArchivo: string | null = null;
-
-    switch (tipo.toLowerCase()) {
-        case 'glosa':
-            nombreArchivo = contabilidadDoc.glosaPath ?? null;
-            break;
-        case 'causacion':
-            nombreArchivo = contabilidadDoc.causacionPath ?? null;
-            break;
-        case 'extracto':
-            nombreArchivo = contabilidadDoc.extractoPath ?? null;
-            break;
-        case 'comprobanteegreso':
-        case 'comprobante':
-            nombreArchivo = contabilidadDoc.comprobanteEgresoPath ?? null;
-            break;
-        default:
-            throw new BadRequestException('Tipo no soportado');
-    }
-
-    if (!nombreArchivo) {
-        throw new NotFoundException(`No hay archivo de tipo ${tipo}`);
-    }
-
-    // CORRECCIÓN: Limpiar la ruta base
-    let rutaBase = this.basePath;
-    // Eliminar backslashes al final
-    rutaBase = rutaBase.replace(/\\+$/, '').replace(/\/+$/, '');
-    
-    // Obtener la ruta del documento (ya debería ser relativa)
-    const rutaCarpeta = documento.rutaCarpetaRadicado || '';
-    
-    // Limpiar la ruta de la carpeta (eliminar posibles duplicados de la base)
-    let rutaCarpetaLimpia = rutaCarpeta;
-    // Si la rutaCarpeta ya contiene la base, extraer solo la parte relativa
-    if (rutaCarpeta.includes('R2-D2\\api-contract')) {
-        rutaCarpetaLimpia = rutaCarpeta.split('api-contract\\').pop() || '';
-    }
-    
-    // Construir la ruta completa
-    let rutaAbsoluta = path.join(rutaBase, rutaCarpetaLimpia, nombreArchivo);
-    
-    // Normalizar para Windows
-    rutaAbsoluta = rutaAbsoluta.replace(/\//g, '\\');
-
-    this.logger.log(`🔍 Buscando archivo: ${rutaAbsoluta}`);
-
-    if (!fs.existsSync(rutaAbsoluta)) {
-        // Segundo intento: si nombreArchivo ya tiene 'contabilidad/', usarlo directamente
-        const rutaAlternativa = path.join(rutaBase, rutaCarpetaLimpia, nombreArchivo.replace(/^contabilidad[\\\/]/, ''));
-        this.logger.log(`🔄 Intento alternativo: ${rutaAlternativa}`);
-        
-        if (fs.existsSync(rutaAlternativa)) {
-            rutaAbsoluta = rutaAlternativa;
-            this.logger.log(`✅ Archivo encontrado en alternativa`);
-        } else {
-            throw new NotFoundException(`Archivo ${tipo} no encontrado en el servidor`);
+        if (userId) {
+            contabilidadDoc = await this.contabilidadRepository.findOne({
+                where: { documento: { id: documentoId }, contador: { id: userId } },
+            });
         }
+
+        if (!contabilidadDoc) {
+            contabilidadDoc = await this.contabilidadRepository.findOne({
+                where: { documento: { id: documentoId } },
+                order: { fechaActualizacion: 'DESC' },
+            });
+        }
+
+        if (!contabilidadDoc) throw new NotFoundException('No hay registro de contabilidad');
+
+        let nombreArchivo: string | null = null;
+
+        switch (tipo.toLowerCase()) {
+            case 'glosa':
+                nombreArchivo = contabilidadDoc.glosaPath ?? null;
+                break;
+            case 'causacion':
+                nombreArchivo = contabilidadDoc.causacionPath ?? null;
+                break;
+            case 'extracto':
+                nombreArchivo = contabilidadDoc.extractoPath ?? null;
+                break;
+            case 'comprobanteegreso':
+            case 'comprobante':
+                nombreArchivo = contabilidadDoc.comprobanteEgresoPath ?? null;
+                break;
+            default:
+                throw new BadRequestException('Tipo no soportado');
+        }
+
+        if (!nombreArchivo) {
+            throw new NotFoundException(`No hay archivo de tipo ${tipo}`);
+        }
+
+        // CORRECCIÓN: Limpiar la ruta base
+        let rutaBase = this.basePath;
+        // Eliminar backslashes al final
+        rutaBase = rutaBase.replace(/\\+$/, '').replace(/\/+$/, '');
+
+        // Obtener la ruta del documento (ya debería ser relativa)
+        const rutaCarpeta = documento.rutaCarpetaRadicado || '';
+
+        // Limpiar la ruta de la carpeta (eliminar posibles duplicados de la base)
+        let rutaCarpetaLimpia = rutaCarpeta;
+        // Si la rutaCarpeta ya contiene la base, extraer solo la parte relativa
+        if (rutaCarpeta.includes('R2-D2\\api-contract')) {
+            rutaCarpetaLimpia = rutaCarpeta.split('api-contract\\').pop() || '';
+        }
+
+        // Construir la ruta completa
+        let rutaAbsoluta = path.join(rutaBase, rutaCarpetaLimpia, nombreArchivo);
+
+        // Normalizar para Windows
+        rutaAbsoluta = rutaAbsoluta.replace(/\//g, '\\');
+
+        this.logger.log(`🔍 Buscando archivo: ${rutaAbsoluta}`);
+
+        if (!fs.existsSync(rutaAbsoluta)) {
+            // Segundo intento: si nombreArchivo ya tiene 'contabilidad/', usarlo directamente
+            const rutaAlternativa = path.join(rutaBase, rutaCarpetaLimpia, nombreArchivo.replace(/^contabilidad[\\\/]/, ''));
+            this.logger.log(`🔄 Intento alternativo: ${rutaAlternativa}`);
+
+            if (fs.existsSync(rutaAlternativa)) {
+                rutaAbsoluta = rutaAlternativa;
+                this.logger.log(`✅ Archivo encontrado en alternativa`);
+            } else {
+                throw new NotFoundException(`Archivo ${tipo} no encontrado en el servidor`);
+            }
+        }
+
+        return { rutaAbsoluta, nombreArchivo: path.basename(nombreArchivo) };
     }
 
-    return { rutaAbsoluta, nombreArchivo: path.basename(nombreArchivo) };
-}
 
     // ───────────────────────────────────────────────────────────────
     // 12. DESCARGAR ARCHIVO
@@ -1173,6 +1213,7 @@ async obtenerRutaArchivoContabilidadFull(
         auditorDoc: AuditorDocumento | null,
         user: User,
     ): any {
+        // Si no hay contabilidadDoc, devolver datos vacíos en lugar de null
         return {
             documento: {
                 id: documento.id,
@@ -1185,13 +1226,13 @@ async obtenerRutaArchivoContabilidadFull(
                 fechaRadicacion: documento.fechaRadicacion,
                 estado: documento.estado,
                 observacionesContabilidad: contabilidadDoc?.observaciones || '',
-                tipoProceso: contabilidadDoc?.tipoProceso || 'nada',
+                tipoProceso: contabilidadDoc?.tipoProceso || 'n/a',
                 tieneGlosa: contabilidadDoc?.tieneGlosa ?? null,
                 glosaPath: contabilidadDoc?.glosaPath || null,
                 causacionPath: contabilidadDoc?.causacionPath || null,
                 extractoPath: contabilidadDoc?.extractoPath || null,
                 comprobanteEgresoPath: contabilidadDoc?.comprobanteEgresoPath || null,
-                estadoFinal: this.inferirEstadoFinal(contabilidadDoc?.estado),
+                estadoFinal: contabilidadDoc ? this.inferirEstadoFinal(contabilidadDoc.estado) : 'PENDIENTE',
             },
             archivosRadicados: [
                 { numero: 1, nombre: documento.cuentaCobro, tipo: 'cuenta_cobro', existe: !!documento.cuentaCobro },
@@ -1211,7 +1252,7 @@ async obtenerRutaArchivoContabilidadFull(
                 { tipo: 'causacion', subido: !!contabilidadDoc.causacionPath, nombre: contabilidadDoc.causacionPath },
                 { tipo: 'extracto', subido: !!contabilidadDoc.extractoPath, nombre: contabilidadDoc.extractoPath },
                 { tipo: 'comprobanteEgreso', subido: !!contabilidadDoc.comprobanteEgresoPath, nombre: contabilidadDoc.comprobanteEgresoPath },
-            ] : [],
+            ] : [],  // ← Devuelve array vacío en lugar de null
             contabilidad: contabilidadDoc ? {
                 id: contabilidadDoc.id,
                 estado: contabilidadDoc.estado,
@@ -1219,7 +1260,19 @@ async obtenerRutaArchivoContabilidadFull(
                 tipoProceso: contabilidadDoc.tipoProceso,
                 tieneGlosa: contabilidadDoc.tieneGlosa,
                 contador: contabilidadDoc.contador?.fullName || contabilidadDoc.contador?.username,
-            } : null,
+                // Indicador de que existe registro contable
+                existeRegistro: true
+            } : {
+                // Objeto vacío pero con indicador de que no existe
+                existeRegistro: false,
+                estado: null,
+                observaciones: '',
+                tipoProceso: null,
+                tieneGlosa: null,
+                contador: null
+            },
         };
     }
+
+
 }

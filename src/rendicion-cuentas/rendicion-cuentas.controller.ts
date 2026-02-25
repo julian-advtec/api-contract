@@ -219,4 +219,5 @@ export class RendicionCuentasController {
     const historial = await this.service.obtenerHistorial(user.id);
     return historial;
   }
+  
 }

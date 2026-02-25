@@ -295,7 +295,6 @@ async obtenerDocumentoParaVista(
     auditorIdSanitizado = undefined;
   }
 
-
   try {
     // 1. Buscar el documento principal
     const documento = await this.documentoRepository.findOne({
@@ -378,124 +377,53 @@ async obtenerDocumentoParaVista(
       `[VISTA PERMITIDA] ${razonPermiso} - documentoId: ${documentoId}, auditorId: ${auditorIdSanitizado || 'no especificado'}`
     );
 
-    // 4. Lógica de paths y primer radicado (sin cambios)
-    let primerRadicado: Documento | null = null;
-
-    let paths = {
-      rpPath: null as string | null,
-      cdpPath: null as string | null,
-      polizaPath: null as string | null,
-      certificadoBancarioPath: null as string | null,
-      minutaPath: null as string | null,
-      actaInicioPath: null as string | null,
-    };
-
-    if (documento.primerRadicadoDelAno) {
-      if (auditorDoc) {
-        paths = {
-          rpPath: auditorDoc.rpPath,
-          cdpPath: auditorDoc.cdpPath,
-          polizaPath: auditorDoc.polizaPath,
-          certificadoBancarioPath: auditorDoc.certificadoBancarioPath,
-          minutaPath: auditorDoc.minutaPath,
-          actaInicioPath: auditorDoc.actaInicioPath,
-        };
-      }
-    } else {
-      console.log('[VISTA-AUDITORIA] Buscando primer radicado válido con auditoría para contrato:', documento.numeroContrato);
-
-      const posiblesPrimeros = await this.documentoRepository.find({
-        where: {
-          numeroContrato: documento.numeroContrato,
-          primerRadicadoDelAno: true,
-        },
-        order: { fechaRadicacion: 'ASC' },
-      });
-
-      let encontrado = false;
-      for (const primer of posiblesPrimeros) {
-        const ad = await this.auditorDocumentoRepository.findOne({
-          where: { documento: { id: primer.id } },
-        });
-
-        if (ad && (ad.rpPath || ad.cdpPath || ad.polizaPath || ad.certificadoBancarioPath || ad.minutaPath || ad.actaInicioPath)) {
-          primerRadicado = primer;
-          paths = {
-            rpPath: ad.rpPath,
-            cdpPath: ad.cdpPath,
-            polizaPath: ad.polizaPath,
-            certificadoBancarioPath: ad.certificadoBancarioPath,
-            minutaPath: ad.minutaPath,
-            actaInicioPath: ad.actaInicioPath,
-          };
-          console.log('[VISTA-AUDITORIA] Usando primer radicado con auditoría:', primer.numeroRadicado);
-          encontrado = true;
-          break;
-        }
-      }
-
-      if (!encontrado) {
-        console.log('[VISTA-AUDITORIA] No se encontró primer radicado con documentos de auditoría guardados');
-      }
-    }
-
-    // 5. Construir archivosAuditor (completa los que faltaban)
-    const archivosAuditor = [
-      {
-        tipo: 'rp',
-        descripcion: 'Resolución de Pago',
-        subido: !!paths.rpPath,
-        nombreArchivo: paths.rpPath || 'No disponible',
-        rutaServidor: paths.rpPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.rpPath) : null,
-      },
-      {
-        tipo: 'cdp',
-        descripcion: 'Certificado de Disponibilidad Presupuestal',
-        subido: !!paths.cdpPath,
-        nombreArchivo: paths.cdpPath || 'No disponible',
-        rutaServidor: paths.cdpPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.cdpPath) : null,
-      },
-      {
-        tipo: 'poliza',
-        descripcion: 'Póliza de Cumplimiento',
-        subido: !!paths.polizaPath,
-        nombreArchivo: paths.polizaPath || 'No disponible',
-        rutaServidor: paths.polizaPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.polizaPath) : null,
-      },
-      {
-        tipo: 'certificadoBancario',
-        descripcion: 'Certificado Bancario',
-        subido: !!paths.certificadoBancarioPath,
-        nombreArchivo: paths.certificadoBancarioPath || 'No disponible',
-        rutaServidor: paths.certificadoBancarioPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.certificadoBancarioPath) : null,
-      },
-      {
-        tipo: 'minuta',
-        descripcion: 'Minuta de Contrato',
-        subido: !!paths.minutaPath,
-        nombreArchivo: paths.minutaPath || 'No disponible',
-        rutaServidor: paths.minutaPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.minutaPath) : null,
-      },
-      {
-        tipo: 'actaInicio',
-        descripcion: 'Acta de Inicio',
-        subido: !!paths.actaInicioPath,
-        nombreArchivo: paths.actaInicioPath || 'No disponible',
-        rutaServidor: paths.actaInicioPath ? path.join(primerRadicado?.rutaCarpetaRadicado || documento.rutaCarpetaRadicado, paths.actaInicioPath) : null,
-      },
+    // 4. Construir archivosAuditor usando el método unificado de búsqueda
+    const tiposArchivo = [
+      { key: 'rp', desc: 'Resolución de Pago', campo: 'rpPath' },
+      { key: 'cdp', desc: 'Certificado de Disponibilidad Presupuestal', campo: 'cdpPath' },
+      { key: 'poliza', desc: 'Póliza de Cumplimiento', campo: 'polizaPath' },
+      { key: 'certificadoBancario', desc: 'Certificado Bancario', campo: 'certificadoBancarioPath' },
+      { key: 'minuta', desc: 'Minuta de Contrato', campo: 'minutaPath' },
+      { key: 'actaInicio', desc: 'Acta de Inicio', campo: 'actaInicioPath' },
     ];
 
-    // 6. Nota de auditoría si no es primer radicado
+    const archivosAuditor = [];
     let notaAuditoria: string | null = null;
-    if (!documento.primerRadicadoDelAno) {
-      if (primerRadicado) {
-        notaAuditoria = `Documentos de auditoría tomados del primer radicado del año: ${primerRadicado.numeroRadicado}`;
+    const origenesDiferentes = new Set<string>();
+
+    for (const tipo of tiposArchivo) {
+      const resultado = await this.encontrarRutaArchivoAuditor(documento, tipo.campo as any);
+      
+      if (resultado) {
+        archivosAuditor.push({
+          tipo: tipo.key,
+          descripcion: tipo.desc,
+          subido: true,
+          nombreArchivo: resultado.nombreArchivo,
+          rutaServidor: resultado.rutaAbsoluta, // Ruta completa para el frontend
+        });
+        
+        // Registrar si el documento de origen es diferente
+        if (resultado.documentoOrigen.id !== documento.id) {
+          origenesDiferentes.add(resultado.documentoOrigen.numeroRadicado);
+        }
       } else {
-        notaAuditoria = 'No se encontraron documentos de auditoría para este contrato';
+        archivosAuditor.push({
+          tipo: tipo.key,
+          descripcion: tipo.desc,
+          subido: false,
+          nombreArchivo: 'No disponible',
+          rutaServidor: null,
+        });
       }
     }
 
-    // 7. Respuesta final
+    // Generar nota de auditoría si hay documentos de diferentes orígenes
+    if (origenesDiferentes.size > 0) {
+      notaAuditoria = `Algunos documentos de auditoría se están cargando desde ${origenesDiferentes.size === 1 ? 'el primer radicado' : 'radicados anteriores'}: ${Array.from(origenesDiferentes).join(', ')}`;
+    }
+
+    // 5. Respuesta final
     const respuesta = {
       data: {
         documento: {
@@ -561,7 +489,6 @@ async obtenerDocumentoParaVista(
           : null,
       }
     };
-    
 
     return respuesta;
   } catch (error) {
@@ -2260,141 +2187,61 @@ async obtenerDocumentoParaVista(
 
 
 
-  async obtenerRutaArchivoAuditorFull(
-    documentoId: string,
-    tipo: string,
-    userId?: string,
-  ): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
-    const logPrefix = `[obtenerRutaArchivoAuditorFull] doc=${documentoId} tipo=${tipo} user=${userId || 'anon'}`;
-    this.logger.log(`${logPrefix} → Iniciando`);
+  
 
-    const documentoSolicitado = await this.documentoRepository.findOne({
-      where: { id: documentoId },
-    });
+async obtenerRutaArchivoAuditorFull(
+  documentoId: string,
+  tipo: string,
+  userId?: string,
+): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
+  const logPrefix = `[obtenerRutaArchivoAuditorFull] doc=${documentoId} tipo=${tipo} user=${userId || 'anon'}`;
+  this.logger.log(`${logPrefix} → Iniciando`);
 
-    if (!documentoSolicitado) {
-      this.logger.error(`${logPrefix} → Documento no encontrado`);
-      throw new NotFoundException(`Documento ${documentoId} no encontrado`);
-    }
-
-    this.logger.debug(`${logPrefix} → Documento: ${documentoSolicitado.numeroRadicado} | primerRadicado: ${documentoSolicitado.primerRadicadoDelAno}`);
-
-    let auditorDoc: AuditorDocumento | null = null;
-    let documentoParaArchivos = documentoSolicitado;
-
-    if (!documentoSolicitado.primerRadicadoDelAno) {
-      this.logger.log(`${logPrefix} → No es primer → buscando AuditorDocumento con archivos para contrato ${documentoSolicitado.numeroContrato}`);
-
-      const auditorConArchivos = await this.auditorDocumentoRepository
-        .createQueryBuilder('aud')
-        .innerJoinAndSelect('aud.documento', 'doc')
-        .where('doc.numeroContrato = :contrato', { contrato: documentoSolicitado.numeroContrato })
-        .andWhere(
-          'aud.rpPath IS NOT NULL OR aud.cdpPath IS NOT NULL OR aud.polizaPath IS NOT NULL OR ' +
-          'aud.certificadoBancarioPath IS NOT NULL OR aud.minutaPath IS NOT NULL OR aud.actaInicioPath IS NOT NULL'
-        )
-        .orderBy('doc.fechaRadicacion', 'ASC')
-        .limit(1)
-        .getOne();
-
-      if (!auditorConArchivos) {
-        this.logger.warn(`${logPrefix} → No se encontró AuditorDocumento con archivos`);
-        throw new NotFoundException(
-          `No se encontraron documentos de auditoría subidos para el contrato ${documentoSolicitado.numeroContrato}.`
-        );
-      }
-
-      documentoParaArchivos = auditorConArchivos.documento;
-      auditorDoc = auditorConArchivos;
-      this.logger.log(`${logPrefix} → Usando radicado con archivos: ${documentoParaArchivos.numeroRadicado} (id: ${documentoParaArchivos.id})`);
-    } else {
-      auditorDoc = await this.auditorDocumentoRepository.findOne({
-        where: { documento: { id: documentoParaArchivos.id } },
-      });
-
-      if (!auditorDoc) {
-        this.logger.error(`${logPrefix} → Registro auditor no encontrado para doc ${documentoParaArchivos.id}`);
-        throw new NotFoundException(`Registro de auditoría no encontrado`);
-      }
-    }
-
-    // Aquí auditorDoc ya está garantizado no-null
-    let nombreArchivoBd: string | undefined | null;
-    switch (tipo.toLowerCase()) {
-      case 'rp':
-        nombreArchivoBd = auditorDoc.rpPath;
-        break;
-      case 'cdp':
-        nombreArchivoBd = auditorDoc.cdpPath;
-        break;
-      case 'poliza':
-        nombreArchivoBd = auditorDoc.polizaPath;
-        break;
-      case 'certificadobancario':
-        nombreArchivoBd = auditorDoc.certificadoBancarioPath;
-        break;
-      case 'minuta':
-        nombreArchivoBd = auditorDoc.minutaPath;
-        break;
-      case 'actainicio':
-        nombreArchivoBd = auditorDoc.actaInicioPath;
-        break;
-      default:
-        this.logger.error(`${logPrefix} → Tipo inválido: ${tipo}`);
-        throw new BadRequestException(`Tipo de archivo no soportado: ${tipo}`);
-    }
-
-    if (!nombreArchivoBd || nombreArchivoBd.trim() === '') {
-      this.logger.warn(`${logPrefix} → No hay archivo para tipo ${tipo} en auditor_documentos (id: ${auditorDoc.id})`);
-      throw new NotFoundException(`No existe archivo registrado para tipo ${tipo}`);
-    }
-
-    let nombreArchivoLimpio = nombreArchivoBd
-      .replace(/^auditor[\/\\]?/i, '')
-      .replace(/^[\/\\]+/, '')
-      .replace(/[\/\\]+$/, '')
-      .trim();
-
-    this.logger.log(`${logPrefix} → Nombre BD: ${nombreArchivoBd}`);
-    this.logger.log(`${logPrefix} → Nombre limpio: ${nombreArchivoLimpio}`);
-
-    let rutaBase = this.configService.get<string>('RUTA_BASE_ARCHIVOS') || '\\\\R2-D2\\api-contract';
-    rutaBase = '\\\\' + rutaBase.replace(/^\\\\?/, '').replace(/^[\/\\]+/, '');
-
-    let rutaCarpeta = documentoParaArchivos.rutaCarpetaRadicado || '';
-    rutaCarpeta = rutaCarpeta
-      .replace(/^\\\\R2-D2\\api-contract/i, '')
-      .replace(/^[\/\\]+/, '')
-      .replace(/[\/\\]+$/, '')
-      .trim();
-
-    const rutaAuditor = path.join(rutaCarpeta, 'auditor');
-
-    let rutaAbsoluta = path.join(rutaBase, rutaAuditor, nombreArchivoLimpio);
-    rutaAbsoluta = rutaAbsoluta.replace(/\//g, '\\').replace(/^\\+/, '\\\\');
-
-    this.logger.log(`${logPrefix} → Ruta base: ${rutaBase}`);
-    this.logger.log(`${logPrefix} → Carpeta limpia: ${rutaCarpeta}`);
-    this.logger.log(`${logPrefix} → Ruta final: ${rutaAbsoluta}`);
-
-    if (!fs.existsSync(rutaAbsoluta)) {
-      this.logger.error(`${logPrefix} → NO existe: ${rutaAbsoluta}`);
-      try {
-        const carpeta = path.dirname(rutaAbsoluta);
-        this.logger.log(`[DEBUG] ¿Existe carpeta? ${fs.existsSync(carpeta)}`);
-        if (fs.existsSync(carpeta)) {
-          this.logger.log(`[DEBUG] Archivos: ${fs.readdirSync(carpeta).join(', ') || 'ninguno'}`);
-        }
-      } catch (e) {
-        this.logger.error(`[DEBUG] Error: ${e.message}`);
-      }
-      throw new NotFoundException(`Archivo ${tipo} no encontrado en disco`);
-    }
-
-    this.logger.log(`${logPrefix} → ÉXITO: ${rutaAbsoluta}`);
-
-    return { rutaAbsoluta, nombreArchivo: nombreArchivoLimpio };
+  // 1. Mapear el tipo de archivo al campo de la base de datos
+  const tipoACampo: Record<string, string> = {
+    'rp': 'rpPath',
+    'cdp': 'cdpPath',
+    'poliza': 'polizaPath',
+    'certificadobancario': 'certificadoBancarioPath',
+    'minuta': 'minutaPath',
+    'actainicio': 'actaInicioPath',
+  };
+  
+  const campoBd = tipoACampo[tipo.toLowerCase()];
+  if (!campoBd) {
+    this.logger.error(`${logPrefix} → Tipo inválido: ${tipo}`);
+    throw new BadRequestException(`Tipo de archivo no soportado: ${tipo}`);
   }
+
+  // 2. Obtener el documento solicitado
+  const documentoSolicitado = await this.documentoRepository.findOne({
+    where: { id: documentoId },
+  });
+
+  if (!documentoSolicitado) {
+    this.logger.error(`${logPrefix} → Documento no encontrado`);
+    throw new NotFoundException(`Documento ${documentoId} no encontrado`);
+  }
+
+  this.logger.debug(`${logPrefix} → Documento: ${documentoSolicitado.numeroRadicado} | primerRadicado: ${documentoSolicitado.primerRadicadoDelAno}`);
+
+  // 3. Usar el método unificado para encontrar el archivo
+  const resultado = await this.encontrarRutaArchivoAuditor(documentoSolicitado, campoBd as any);
+
+  if (!resultado) {
+    this.logger.error(`${logPrefix} → Archivo no encontrado.`);
+    throw new NotFoundException(
+      `No se encontró el archivo de tipo ${tipo} para el documento ${documentoSolicitado.numeroRadicado} ni en radicados anteriores del contrato ${documentoSolicitado.numeroContrato}.`
+    );
+  }
+
+  this.logger.log(`${logPrefix} → ÉXITO: ${resultado.rutaAbsoluta} (desde radicado: ${resultado.documentoOrigen.numeroRadicado})`);
+  
+  return { 
+    rutaAbsoluta: resultado.rutaAbsoluta, 
+    nombreArchivo: resultado.nombreArchivo 
+  };
+}
 
   // ============================================================================
   // CONVERSIÓN WORD → PDF (usando LibreOffice)
@@ -2429,6 +2276,64 @@ async obtenerDocumentoParaVista(
     });
   }
 
+private async encontrarRutaArchivoAuditor(
+  documento: Documento,
+  tipoArchivo: 'rpPath' | 'cdpPath' | 'polizaPath' | 'certificadoBancarioPath' | 'minutaPath' | 'actaInicioPath'
+): Promise<{ rutaAbsoluta: string; nombreArchivo: string; documentoOrigen: Documento } | null> {
+  
+  this.logger.debug(`[BUSQUEDA-ARCHIVO] Buscando ${tipoArchivo} para doc ${documento.id} (Rad: ${documento.numeroRadicado})`);
 
+  // 1. Intentar encontrar un AuditorDocumento para el documento actual
+  let auditorDoc = await this.auditorDocumentoRepository.findOne({
+    where: { documento: { id: documento.id } },
+  });
+
+  // 2. Si el documento actual tiene el archivo, devolverlo
+  if (auditorDoc && (auditorDoc as any)[tipoArchivo]) {
+    const nombreArchivo = (auditorDoc as any)[tipoArchivo];
+    const rutaAbsoluta = path.join(documento.rutaCarpetaRadicado, nombreArchivo);
+    if (fs.existsSync(rutaAbsoluta)) {
+      this.logger.debug(`[BUSQUEDA-ARCHIVO] ✅ Encontrado en el documento actual: ${nombreArchivo}`);
+      return { rutaAbsoluta, nombreArchivo, documentoOrigen: documento };
+    } else {
+       this.logger.warn(`[BUSQUEDA-ARCHIVO] ⚠️ Archivo ${nombreArchivo} en BD pero no en disco para doc actual.`);
+    }
+  }
+
+  // 3. Si no se encontró en el actual y el documento NO es el primer radicado, buscar en el primer radicado
+  if (!documento.primerRadicadoDelAno) {
+    this.logger.debug(`[BUSQUEDA-ARCHIVO] No es primer radicado. Buscando en primer radicado del contrato ${documento.numeroContrato}.`);
+
+    const primerRadicado = await this.documentoRepository.findOne({
+      where: {
+        numeroContrato: documento.numeroContrato,
+        primerRadicadoDelAno: true,
+      },
+      order: { fechaRadicacion: 'ASC' },
+    });
+
+    if (primerRadicado) {
+      const auditorDocPrimero = await this.auditorDocumentoRepository.findOne({
+        where: { documento: { id: primerRadicado.id } },
+      });
+
+      if (auditorDocPrimero && (auditorDocPrimero as any)[tipoArchivo]) {
+        const nombreArchivo = (auditorDocPrimero as any)[tipoArchivo];
+        const rutaAbsoluta = path.join(primerRadicado.rutaCarpetaRadicado, nombreArchivo);
+        if (fs.existsSync(rutaAbsoluta)) {
+          this.logger.debug(`[BUSQUEDA-ARCHIVO] ✅ Encontrado en primer radicado (${primerRadicado.numeroRadicado}): ${nombreArchivo}`);
+          return { rutaAbsoluta, nombreArchivo, documentoOrigen: primerRadicado };
+        } else {
+          this.logger.warn(`[BUSQUEDA-ARCHIVO] ⚠️ Archivo ${nombreArchivo} en BD pero no en disco para primer radicado.`);
+        }
+      }
+    } else {
+      this.logger.warn(`[BUSQUEDA-ARCHIVO] No se encontró un primer radicado para el contrato ${documento.numeroContrato}.`);
+    }
+  }
+
+  this.logger.debug(`[BUSQUEDA-ARCHIVO] ❌ No se encontró ${tipoArchivo} para el documento ${documento.id}.`);
+  return null;
+}
 
 }
