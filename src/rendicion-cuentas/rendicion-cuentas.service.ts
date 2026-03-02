@@ -217,7 +217,7 @@ async tomarDocumento(documentoId: string, usuarioId: string) {
     });
 
 
-    
+
     return documentos.map(doc => ({
       id: doc.documento.id,
       rendicionId: doc.id,
@@ -236,6 +236,7 @@ async tomarDocumento(documentoId: string, usuarioId: string) {
     }));
   }
 
+  
   /**
    * 4. OBTENER MIS DOCUMENTOS EN REVISIÓN
    */

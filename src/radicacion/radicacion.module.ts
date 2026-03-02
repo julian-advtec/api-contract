@@ -9,17 +9,27 @@ import { User } from '../users/entities/user.entity';
 import { RegistroAcceso } from './entities/registro-acceso.entity';
 import { EstadosModule } from '../estados/estados.module';
 import { SupervisionModule } from '../supervision/supervisor.module';
-import { ContratistaModule } from '../contratista/contratista.module'; // 👈 AÑADIR ESTO
+import { ContratistaModule } from '../contratista/contratista.module';
+
+// Nuevos imports para estadísticas del radicador
+import { EstadisticasRadicadorController } from './estadisticas/estadisticas-radicador.controller';
+import { EstadisticasRadicadorService } from './estadisticas/estadisticas-radicador.service';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Documento, Contratista, User, RegistroAcceso]),
-    ContratistaModule, // 👈 IMPORTAR EL MÓDULO COMPLETO
+    ContratistaModule,
     EstadosModule,
     forwardRef(() => SupervisionModule),
   ],
-  controllers: [RadicacionController],
-  providers: [RadicacionService],
+  controllers: [
+    RadicacionController,
+    EstadisticasRadicadorController,      // ← AÑADIDO AQUÍ
+  ],
+  providers: [
+    RadicacionService,
+    EstadisticasRadicadorService,         // ← AÑADIDO AQUÍ
+  ],
   exports: [RadicacionService],
 })
 export class RadicacionModule {}
