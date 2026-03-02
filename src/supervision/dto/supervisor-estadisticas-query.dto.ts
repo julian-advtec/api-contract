@@ -1,8 +1,19 @@
-// src/supervisor/estadisticas/dto/supervisor-estadisticas-query.dto.ts
-import { IsOptional, IsNumberString } from 'class-validator';
+import { IsEnum, IsOptional, IsNumberString } from 'class-validator';
 
-export class SupervisorEstadisticasQueryDto {
+export enum PeriodoEstadisticasSupervisor {
+  HOY = 'hoy',
+  SEMANA = 'semana',
+  MES = 'mes',
+  TRIMESTRE = 'trimestre',
+  ANO = 'ano',
+}
+
+export class EstadisticasSupervisorQueryDto {
+  @IsOptional()
+  @IsEnum(PeriodoEstadisticasSupervisor)
+  periodo?: PeriodoEstadisticasSupervisor = PeriodoEstadisticasSupervisor.ANO;
+
   @IsOptional()
   @IsNumberString()
-  limit?: string; // para el historial, opcional
+  limit?: string;
 }

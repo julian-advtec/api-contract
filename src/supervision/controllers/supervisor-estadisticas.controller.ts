@@ -1,4 +1,3 @@
-// src/supervisor/estadisticas/supervisor-estadisticas.controller.ts
 import {
   Controller,
   Get,
@@ -8,7 +7,7 @@ import {
   ForbiddenException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import type { Request } from 'express';  // ← Cambia a import type
+import type { Request } from 'express';
 
 import { SupervisorEstadisticasService } from '../services/supervisor-estadisticas.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -16,7 +15,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { SupervisorGuard } from '../../common/guards/supervisor.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { UserRole } from '../../users/enums/user-role.enum';
-import { SupervisorEstadisticasQueryDto } from '../dto/supervisor-estadisticas-query.dto';
+import { PeriodoEstadisticasSupervisor } from '../dto/supervisor-estadisticas-query.dto';
 
 @Controller('supervisor/estadisticas')
 @UseGuards(JwtAuthGuard, RolesGuard, SupervisorGuard)
@@ -29,47 +28,67 @@ export class SupervisorEstadisticasController {
   private getUserIdFromRequest(req: Request): string {
     const user = (req as any).user;
     const userId = user?.id || user?.userId || user?.sub || user?.user?.id;
-
-    if (!userId) {
-      throw new ForbiddenException('Usuario no autenticado correctamente');
-    }
+    if (!userId) throw new ForbiddenException('Usuario no autenticado correctamente');
     return userId;
   }
+
+ @Get()
+async obtenerEstadisticas(
+  @Req() req: Request,
+  @Query('periodo') periodo?: string,
+) {
+  const userId = this.getUserIdFromRequest(req);
+  
+  console.log('========== DEBUG CONTROLLER ==========');
+  console.log('Período recibido (raw):', periodo);
+  console.log('URL completa:', req.url);
+  
+  let periodoValido: PeriodoEstadisticasSupervisor;
+  
+  if (periodo && Object.values(PeriodoEstadisticasSupervisor).includes(periodo as PeriodoEstadisticasSupervisor)) {
+    periodoValido = periodo as PeriodoEstadisticasSupervisor;
+    console.log(`✅ Período válido: "${periodoValido}"`);
+  } else {
+    periodoValido = PeriodoEstadisticasSupervisor.ANO;
+    console.log(`⚠️ Período inválido o no proporcionado, usando default: "${periodoValido}"`);
+  }
+  console.log('======================================');
+
+  try {
+    const resultado = await this.supervisorEstadisticasService.obtenerEstadisticasSupervisor(userId, periodoValido);
+
+    return {
+      success: true,
+      data: resultado,
+      meta: {
+        periodo: periodoValido,
+        calculadoEn: new Date().toISOString(),
+      },
+    };
+  } catch (error) {
+    console.error('[ERROR en estadisticas supervisor]', error);
+    throw new InternalServerErrorException('Error al calcular estadísticas');
+  }
+}
 
   @Get('historial')
   async obtenerHistorial(
     @Req() req: Request,
-    @Query() query: SupervisorEstadisticasQueryDto,
+    @Query('limit') limit?: string,
   ) {
     const userId = this.getUserIdFromRequest(req);
-    const limit = query.limit ? parseInt(query.limit, 10) : 50;
+    const limitValue = limit ? parseInt(limit, 10) : 50;
 
     try {
       const historial = await this.supervisorEstadisticasService.obtenerHistorialSupervisor(userId);
       return {
         success: true,
         count: historial.length,
-        data: limit ? historial.slice(0, limit) : historial,
+        data: limitValue ? historial.slice(0, limitValue) : historial,
       };
     } catch (error) {
       console.error('[ERROR en historial]', error);
       throw new InternalServerErrorException('Error al obtener historial');
-    }
-  }
-
-  @Get()
-  async obtenerEstadisticas(@Req() req: Request) {
-    const userId = this.getUserIdFromRequest(req);
-
-    try {
-      const estadisticas = await this.supervisorEstadisticasService.obtenerEstadisticasSupervisor(userId);
-      return {
-        success: true,
-        data: estadisticas,
-      };
-    } catch (error) {
-      console.error('[ERROR en estadisticas supervisor]', error);
-      throw new InternalServerErrorException('Error al obtener estadísticas');
     }
   }
 

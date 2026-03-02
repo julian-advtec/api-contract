@@ -1,4 +1,4 @@
-import { IsOptional, IsDateString, IsEnum } from 'class-validator';
+/*import { IsOptional, IsDateString, IsEnum } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class EstadisticasSupervisorDto {
@@ -13,4 +13,4 @@ export class EstadisticasSupervisorDto {
   @IsOptional()
   @Type(() => Boolean)
   incluirDetalles?: boolean = false;
-}
+}*/
