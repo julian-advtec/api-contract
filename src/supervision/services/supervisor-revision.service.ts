@@ -32,109 +32,124 @@ export class SupervisorRevisionService {
     private userRepository: Repository<User>,
   ) {}
 
-  /**
-   * ✅ REVISAR DOCUMENTO (método principal)
-   */
-  async revisarDocumento(
-    documentoId: string,
-    supervisorId: string,
-    revisarDto: RevisarDocumentoDto,
-    archivoSupervisor?: Express.Multer.File,
-    pazSalvoArchivo?: Express.Multer.File
-  ): Promise<{ supervisor: SupervisorDocumento; documento: Documento }> {
-    this.logger.log(`🔍 Supervisor ${supervisorId} revisando documento ${documentoId} - Estado: ${revisarDto.estado}`);
 
-    // ✅ LOG ADICIONAL: Verificar datos recibidos
-    this.logger.log(`📝 DTO recibido:`, JSON.stringify(revisarDto));
-    this.logger.log(`📝 ¿Tiene archivo supervisor?: ${!!archivoSupervisor}`);
-    this.logger.log(`📝 ¿Tiene pazSalvo archivo?: ${!!pazSalvoArchivo}`);
-    this.logger.log(`📝 Requiere paz y salvo?: ${revisarDto.requierePazSalvo}`);
-    this.logger.log(`📝 Es último radicado?: ${revisarDto.esUltimoRadicado}`);
+// src/supervision/services/supervisor-revision.service.ts
+// Corregir el método revisarDocumento para RECHAZADO
 
-    // ✅ VALIDACIÓN MEJORADA: Si se sube paz y salvo, forzar que sea último radicado
-    if (pazSalvoArchivo && !revisarDto.esUltimoRadicado) {
-      this.logger.warn('⚠️ Se subió archivo de paz y salvo pero no está marcado como último radicado. Forzando...');
-      revisarDto.esUltimoRadicado = true;
-    }
+async revisarDocumento(
+  documentoId: string,
+  supervisorId: string,
+  revisarDto: RevisarDocumentoDto,
+  archivoSupervisor?: Express.Multer.File,
+  pazSalvoArchivo?: Express.Multer.File
+): Promise<{ supervisor: SupervisorDocumento; documento: Documento }> {
+  this.logger.log(`🔍 Supervisor ${supervisorId} revisando documento ${documentoId} - Estado: ${revisarDto.estado}`);
 
-    // ✅ VALIDACIÓN MEJORADA: Si es último radicado y aprobado, requiere paz y salvo
-    if (revisarDto.estado === SupervisorEstado.APROBADO &&
-      revisarDto.esUltimoRadicado &&
-      !pazSalvoArchivo) {
-      throw new BadRequestException('Para marcar como último radicado APROBADO debe adjuntar el archivo de paz y salvo');
-    }
+  // ✅ Validar que el estado sea válido
+  const estadosValidos = [
+    SupervisorEstado.APROBADO,
+    SupervisorEstado.OBSERVADO,
+    SupervisorEstado.RECHAZADO,
+    'DEVUELTO' as any
+  ];
 
-    const supervisorDoc = await this.supervisorRepository.findOne({
-      where: {
-        documento: { id: documentoId },
-        supervisor: { id: supervisorId },
-        estado: SupervisorEstado.EN_REVISION
-      },
-      relations: ['documento', 'supervisor']
-    });
+  if (!estadosValidos.includes(revisarDto.estado as any)) {
+    throw new BadRequestException(`Estado inválido: ${revisarDto.estado}`);
+  }
 
-    if (!supervisorDoc) {
-      throw new ForbiddenException('No tienes este documento en revisión');
-    }
+  // Buscar el documento en revisión
+  const supervisorDoc = await this.supervisorRepository.findOne({
+    where: {
+      documento: { id: documentoId },
+      supervisor: { id: supervisorId },
+      estado: SupervisorEstado.EN_REVISION
+    },
+    relations: ['documento', 'supervisor']
+  });
 
-    const documento = supervisorDoc.documento;
+  if (!supervisorDoc) {
+    throw new ForbiddenException('No tienes este documento en revisión');
+  }
 
-    // ✅ ACTUALIZAR EL DOCUMENTO PRINCIPAL CON ES_ULTIMO_RADICADO
-    documento.esUltimoRadicado = revisarDto.esUltimoRadicado || false;
+  const documento = supervisorDoc.documento;
 
-    // Resto del código permanece igual...
-    if ((revisarDto.estado === SupervisorEstado.OBSERVADO ||
-      revisarDto.estado === SupervisorEstado.RECHAZADO) &&
+  // Validar observación para estados que la requieren
+  if ((revisarDto.estado === SupervisorEstado.OBSERVADO ||
+       revisarDto.estado === SupervisorEstado.RECHAZADO) &&
       (!revisarDto.observacion || revisarDto.observacion.trim() === '')) {
-      throw new BadRequestException('Se requiere una observación para este estado');
-    }
+    throw new BadRequestException('Se requiere una observación para este estado');
+  }
 
-    // Guardar archivo de aprobación si existe
-    if (archivoSupervisor && revisarDto.estado === SupervisorEstado.APROBADO) {
+  // Guardar archivo de aprobación si existe (solo para APROBADO)
+  if (archivoSupervisor && revisarDto.estado === SupervisorEstado.APROBADO) {
+    try {
       const nombreArchivo = await this.guardarArchivoSupervisor(documento, archivoSupervisor, 'aprobacion');
       supervisorDoc.nombreArchivoSupervisor = nombreArchivo;
+    } catch (error) {
+      this.logger.error(`Error guardando archivo de aprobación: ${error.message}`);
+      // No lanzar error, continuar con la revisión
     }
+  }
 
-    // Guardar archivo de paz y salvo si existe
-    if (pazSalvoArchivo && revisarDto.estado === SupervisorEstado.APROBADO && revisarDto.esUltimoRadicado) {
+  // Guardar archivo de paz y salvo si existe (solo para APROBADO y último radicado)
+  if (pazSalvoArchivo && revisarDto.estado === SupervisorEstado.APROBADO && revisarDto.esUltimoRadicado) {
+    try {
       const nombrePazSalvo = await this.guardarArchivoSupervisor(documento, pazSalvoArchivo, 'paz_salvo');
       supervisorDoc.pazSalvo = nombrePazSalvo;
+    } catch (error) {
+      this.logger.error(`Error guardando paz y salvo: ${error.message}`);
+      // No lanzar error, continuar con la revisión
     }
+  }
 
-    const estadoAnterior = supervisorDoc.estado;
-    supervisorDoc.estado = revisarDto.estado;
-    supervisorDoc.observacion = revisarDto.observacion?.trim() || '';
-    supervisorDoc.fechaActualizacion = new Date();
-    supervisorDoc.fechaFinRevision = new Date();
+  const estadoAnterior = supervisorDoc.estado;
+  
+  // Actualizar supervisorDoc
+  supervisorDoc.estado = revisarDto.estado;
+  supervisorDoc.observacion = revisarDto.observacion?.trim() || '';
+  supervisorDoc.correcciones = revisarDto.correcciones?.trim() || ''; // Guardar correcciones
+  supervisorDoc.fechaActualizacion = new Date();
+  supervisorDoc.fechaFinRevision = new Date();
 
-    if (revisarDto.estado === SupervisorEstado.APROBADO) {
-      supervisorDoc.fechaAprobacion = new Date();
-    }
+  if (revisarDto.estado === SupervisorEstado.APROBADO) {
+    supervisorDoc.fechaAprobacion = new Date();
+  }
 
-    documento.ultimoAcceso = new Date();
-    documento.ultimoUsuario = `Supervisor: ${supervisorDoc.supervisor.fullName || supervisorDoc.supervisor.username}`;
-    documento.fechaActualizacion = new Date();
+  // Actualizar documento principal
+  documento.ultimoAcceso = new Date();
+  documento.ultimoUsuario = `Supervisor: ${supervisorDoc.supervisor.fullName || supervisorDoc.supervisor.username}`;
+  documento.fechaActualizacion = new Date();
+  documento.esUltimoRadicado = revisarDto.esUltimoRadicado || false; // Guardar si es último radicado
 
-    switch (revisarDto.estado) {
-      case SupervisorEstado.APROBADO:
-        documento.estado = 'APROBADO_SUPERVISOR';
-        documento.comentarios = revisarDto.observacion || 'Aprobado por supervisor';
-        break;
+  // Actualizar estado según la decisión
+  switch (revisarDto.estado) {
+    case SupervisorEstado.APROBADO:
+      documento.estado = 'APROBADO_SUPERVISOR';
+      documento.comentarios = revisarDto.observacion || 'Aprobado por supervisor';
+      break;
 
-      case SupervisorEstado.OBSERVADO:
-        documento.estado = 'OBSERVADO_SUPERVISOR';
-        documento.comentarios = revisarDto.observacion || 'Observado por supervisor';
-        documento.correcciones = revisarDto.correcciones?.trim() || '';
-        break;
+    case SupervisorEstado.OBSERVADO:
+      documento.estado = 'OBSERVADO_SUPERVISOR';
+      documento.comentarios = revisarDto.observacion || 'Observado por supervisor';
+      documento.correcciones = revisarDto.correcciones?.trim() || '';
+      break;
 
-      case SupervisorEstado.RECHAZADO:
-        documento.estado = 'RECHAZADO_SUPERVISOR';
-        documento.comentarios = revisarDto.observacion || 'Rechazado por supervisor';
-        break;
-    }
+    case SupervisorEstado.RECHAZADO:
+      documento.estado = 'RECHAZADO_SUPERVISOR';
+      documento.comentarios = revisarDto.observacion || 'Rechazado por supervisor';
+      break;
 
-    this.agregarAlHistorial(documento, supervisorDoc.supervisor, estadoAnterior, revisarDto.estado, revisarDto.observacion);
+    case 'DEVUELTO':
+      documento.estado = 'DEVUELTO_SUPERVISOR';
+      documento.comentarios = revisarDto.observacion || 'Devuelto por supervisor';
+      documento.correcciones = revisarDto.correcciones?.trim() || '';
+      break;
+  }
 
+  // Agregar al historial
+  this.agregarAlHistorial(documento, supervisorDoc.supervisor, estadoAnterior, revisarDto.estado, revisarDto.observacion);
+
+  try {
     await this.documentoRepository.save(documento);
     const savedSupervisorDoc = await this.supervisorRepository.save(supervisorDoc);
 
@@ -144,7 +159,12 @@ export class SupervisorRevisionService {
       supervisor: savedSupervisorDoc,
       documento
     };
+  } catch (error) {
+    this.logger.error(`❌ Error guardando revisión: ${error.message}`);
+    this.logger.error(error.stack);
+    throw new InternalServerErrorException(`Error al guardar la revisión: ${error.message}`);
   }
+}
 
   /**
    * ✅ CORREGIR DATOS INCONSISTENTES
@@ -345,4 +365,44 @@ export class SupervisorRevisionService {
       throw new BadRequestException(`Error al guardar archivo: ${error.message}`);
     }
   }
+
+  // En SupervisorDocumentosService
+async obtenerDocumentosRevisados(supervisorId: string): Promise<any[]> {
+  this.logger.log(`📋 Supervisor ${supervisorId} solicitando documentos revisados`);
+
+  try {
+    const supervisiones = await this.supervisorRepository.find({
+      where: [
+        { supervisor: { id: supervisorId }, estado: SupervisorEstado.APROBADO },
+        { supervisor: { id: supervisorId }, estado: SupervisorEstado.OBSERVADO },
+        { supervisor: { id: supervisorId }, estado: SupervisorEstado.RECHAZADO }
+      ],
+      relations: ['documento', 'documento.radicador'],
+      order: { fechaActualizacion: 'DESC' },
+      take: 100
+    });
+
+    return supervisiones.map(sd => ({
+      id: sd.documento.id,
+      numeroRadicado: sd.documento.numeroRadicado,
+      numeroContrato: sd.documento.numeroContrato,
+      nombreContratista: sd.documento.nombreContratista,
+      documentoContratista: sd.documento.documentoContratista,
+      fechaRadicacion: sd.documento.fechaRadicacion,
+      fechaInicio: sd.documento.fechaInicio,
+      fechaFin: sd.documento.fechaFin,
+      estado: sd.estado, // Estado de la supervisión
+      radicador: sd.documento.nombreRadicador,
+      fechaRechazo: sd.fechaAprobacion || sd.fechaActualizacion,
+      observaciones: sd.observacion,
+      supervisorRechazo: sd.supervisor?.fullName || sd.supervisor?.username,
+      cuentaCobro: sd.documento.cuentaCobro,
+      seguridadSocial: sd.documento.seguridadSocial,
+      informeActividades: sd.documento.informeActividades
+    }));
+  } catch (error) {
+    this.logger.error(`❌ Error obteniendo documentos revisados: ${error.message}`);
+    throw error;
+  }
+}
 }

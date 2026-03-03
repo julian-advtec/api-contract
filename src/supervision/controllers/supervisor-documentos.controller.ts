@@ -205,4 +205,27 @@ export class SupervisorDocumentosController {
       );
     }
   }
+
+  // En supervisor-documentos.controller.ts
+@Get('mis-supervisiones')
+async obtenerMisSupervisiones(@Req() req: Request) {
+  const userId = this.getUserIdFromRequest(req);
+  this.logger.log(`📋 Usuario ${userId} solicitando todas sus supervisiones`);
+
+  try {
+    const supervisiones = await this.supervisorDocumentosService.obtenerMisSupervisiones(userId);
+    
+    return {
+      success: true,
+      count: supervisiones.length,
+      data: supervisiones
+    };
+  } catch (error) {
+    this.logger.error(`❌ Error obteniendo supervisiones: ${error.message}`);
+    throw new HttpException(
+      { success: false, message: 'Error al obtener supervisiones' },
+      HttpStatus.INTERNAL_SERVER_ERROR
+    );
+  }
+}
 }

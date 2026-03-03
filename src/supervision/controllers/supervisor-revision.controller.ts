@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   Post,
   Put,
   Body,
@@ -24,7 +25,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { SupervisorGuard } from '../../common/guards/supervisor.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { UserRole } from '../../users/enums/user-role.enum';
-
+import { SupervisorDocumentosService } from '../services/supervisor-documentos.service';
 @Controller('supervisor/revision')
 @UseGuards(JwtAuthGuard, RolesGuard, SupervisorGuard)
 @Roles(UserRole.SUPERVISOR, UserRole.ADMIN)
@@ -33,7 +34,7 @@ export class SupervisorRevisionController {
 
   constructor(
     private readonly supervisorRevisionService: SupervisorRevisionService,
-  ) {}
+  ) { }
 
   private getUserIdFromRequest(req: Request): string {
     const user = (req as any).user;
@@ -177,4 +178,6 @@ export class SupervisorRevisionController {
       );
     }
   }
+
+
 }

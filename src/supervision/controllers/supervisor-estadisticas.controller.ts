@@ -8,6 +8,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { Body, Post,   } from '@nestjs/common';
 
 import { SupervisorEstadisticasService } from '../services/supervisor-estadisticas.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -23,53 +24,53 @@ import { PeriodoEstadisticasSupervisor } from '../dto/supervisor-estadisticas-qu
 export class SupervisorEstadisticasController {
   constructor(
     private readonly supervisorEstadisticasService: SupervisorEstadisticasService,
-  ) {}
+  ) { }
 
-  private getUserIdFromRequest(req: Request): string {
+private getUserIdFromRequest(req: Request): string {
     const user = (req as any).user;
     const userId = user?.id || user?.userId || user?.sub || user?.user?.id;
     if (!userId) throw new ForbiddenException('Usuario no autenticado correctamente');
     return userId;
   }
 
- @Get()
+ @Post()
 async obtenerEstadisticas(
   @Req() req: Request,
-  @Query('periodo') periodo?: string,
+  @Body() body: { periodo?: string },
 ) {
   const userId = this.getUserIdFromRequest(req);
-  
-  console.log('========== DEBUG CONTROLLER ==========');
-  console.log('Período recibido (raw):', periodo);
-  console.log('URL completa:', req.url);
-  
-  let periodoValido: PeriodoEstadisticasSupervisor;
-  
-  if (periodo && Object.values(PeriodoEstadisticasSupervisor).includes(periodo as PeriodoEstadisticasSupervisor)) {
-    periodoValido = periodo as PeriodoEstadisticasSupervisor;
-    console.log(`✅ Período válido: "${periodoValido}"`);
-  } else {
-    periodoValido = PeriodoEstadisticasSupervisor.ANO;
-    console.log(`⚠️ Período inválido o no proporcionado, usando default: "${periodoValido}"`);
+
+  let periodoFinal = 'ano';
+
+  if (body?.periodo) {
+    const normalized = body.periodo.trim().toLowerCase();
+    const validos = ['hoy', 'semana', 'mes', 'trimestre', 'ano'];
+    if (validos.includes(normalized)) {
+      periodoFinal = normalized;
+    }
   }
-  console.log('======================================');
 
   try {
-    const resultado = await this.supervisorEstadisticasService.obtenerEstadisticasSupervisor(userId, periodoValido);
+    const resultado = await this.supervisorEstadisticasService.obtenerEstadisticasSupervisor(
+      userId,
+      periodoFinal
+    );
 
     return {
-      success: true,
-      data: resultado,
-      meta: {
-        periodo: periodoValido,
-        calculadoEn: new Date().toISOString(),
+      ok: true,
+      timestamp: new Date().toISOString(),
+      data: {
+        success: true,
+        data: resultado,
       },
     };
   } catch (error) {
-    console.error('[ERROR en estadisticas supervisor]', error);
+    console.error('[ERROR en controlador POST estadisticas]', error);
     throw new InternalServerErrorException('Error al calcular estadísticas');
   }
 }
+
+
 
   @Get('historial')
   async obtenerHistorial(
@@ -91,6 +92,7 @@ async obtenerEstadisticas(
       throw new InternalServerErrorException('Error al obtener historial');
     }
   }
+
 
   @Get('diagnostico/inconsistencias')
   async verificarInconsistencias(@Req() req: Request) {

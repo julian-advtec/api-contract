@@ -25,7 +25,7 @@ export class SupervisorDocumentosService {
 
     @InjectRepository(User)
     private userRepository: Repository<User>,
-  ) {}
+  ) { }
 
   /**
    * ✅ OBTENER DOCUMENTOS DISPONIBLES PARA REVISIÓN
@@ -564,4 +564,99 @@ export class SupervisorDocumentosService {
       } : null
     };
   }
+
+  async obtenerDocumentosRevisados(supervisorId: string): Promise<any[]> {
+    this.logger.log(`📋 Supervisor ${supervisorId} solicitando documentos revisados`);
+
+    try {
+      const supervisiones = await this.supervisorRepository.find({
+        where: [
+          { supervisor: { id: supervisorId }, estado: SupervisorEstado.APROBADO },
+          { supervisor: { id: supervisorId }, estado: SupervisorEstado.OBSERVADO },
+          { supervisor: { id: supervisorId }, estado: SupervisorEstado.RECHAZADO }
+        ],
+        relations: ['documento', 'documento.radicador'],
+        order: { fechaActualizacion: 'DESC' },
+        take: 100
+      });
+
+      return supervisiones.map(sd => ({
+        id: sd.documento.id,
+        numeroRadicado: sd.documento.numeroRadicado,
+        numeroContrato: sd.documento.numeroContrato,
+        nombreContratista: sd.documento.nombreContratista,
+        documentoContratista: sd.documento.documentoContratista,
+        fechaRadicacion: sd.documento.fechaRadicacion,
+        fechaInicio: sd.documento.fechaInicio,
+        fechaFin: sd.documento.fechaFin,
+        estado: sd.estado,
+        radicador: sd.documento.nombreRadicador,
+        fechaRechazo: sd.fechaAprobacion || sd.fechaActualizacion,
+        observaciones: sd.observacion,
+        supervisorRechazo: sd.supervisor?.fullName || sd.supervisor?.username,
+        cuentaCobro: sd.documento.cuentaCobro,
+        seguridadSocial: sd.documento.seguridadSocial,
+        informeActividades: sd.documento.informeActividades
+      }));
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo documentos revisados: ${error.message}`);
+      throw error;
+    }
+
+  }
+
+  // En supervisor-documentos.service.ts (Backend)
+  async obtenerMisSupervisiones(supervisorId: string): Promise<any[]> {
+    this.logger.log(`📋 Supervisor ${supervisorId} solicitando todas sus supervisiones`);
+
+    try {
+      const misSupervisiones = await this.supervisorRepository.find({
+        where: {
+          supervisor: { id: supervisorId }
+        },
+        relations: ['documento', 'documento.radicador'],
+        order: { fechaActualizacion: 'DESC' }
+      });
+
+      this.logger.log(`✅ Encontradas ${misSupervisiones.length} supervisiones para el supervisor`);
+
+      return misSupervisiones.map(sd => {
+        const documento = sd.documento;
+
+        return {
+          id: documento.id,
+          numeroRadicado: documento.numeroRadicado,
+          numeroContrato: documento.numeroContrato,
+          nombreContratista: documento.nombreContratista,
+          documentoContratista: documento.documentoContratista,
+          fechaInicio: documento.fechaInicio,
+          fechaFin: documento.fechaFin,
+          fechaRadicacion: documento.fechaRadicacion,
+          radicador: documento.nombreRadicador,
+          // Estado del documento principal
+          estado: documento.estado,
+          // Estado en supervisor_documentos
+          supervisorEstado: sd.estado,
+          observacion: sd.observacion || '',
+          fechaInicioRevision: sd.fechaInicioRevision,
+          fechaFinRevision: sd.fechaFinRevision,
+          fechaAprobacion: sd.fechaAprobacion,
+          supervisorAsignado: sd.supervisor?.fullName || sd.supervisor?.username,
+          tieneArchivo: !!sd.nombreArchivoSupervisor,
+          nombreArchivoSupervisor: sd.nombreArchivoSupervisor,
+          tienePazSalvo: !!sd.pazSalvo,
+          pazSalvo: sd.pazSalvo,
+          puedeEditar: sd.estado === 'EN_REVISION',
+          cuentaCobro: documento.cuentaCobro,
+          seguridadSocial: documento.seguridadSocial,
+          informeActividades: documento.informeActividades
+        };
+      });
+
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo supervisiones: ${error.message}`);
+      throw error;
+    }
+  }
+
 }
