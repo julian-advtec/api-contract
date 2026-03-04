@@ -1,3 +1,4 @@
+// src/supervision/controllers/supervisor-revision.controller.ts
 import {
   Controller,
   Get,
@@ -7,6 +8,7 @@ import {
   Param,
   UseGuards,
   UploadedFile,
+  UploadedFiles,  // ← AÑADIR ESTA IMPORTACIÓN
   UseInterceptors,
   Req,
   HttpException,
@@ -25,7 +27,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { SupervisorGuard } from '../../common/guards/supervisor.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { UserRole } from '../../users/enums/user-role.enum';
-import { SupervisorDocumentosService } from '../services/supervisor-documentos.service';
+
 @Controller('supervisor/revision')
 @UseGuards(JwtAuthGuard, RolesGuard, SupervisorGuard)
 @Roles(UserRole.SUPERVISOR, UserRole.ADMIN)
@@ -40,6 +42,9 @@ export class SupervisorRevisionController {
     const user = (req as any).user;
     const userId = user?.id || user?.userId || user?.sub || user?.user?.id;
 
+    this.logger.log(`👤 Usuario ID extraído: ${userId}`);
+    this.logger.log(`👤 Usuario completo:`, user);
+
     if (!userId) {
       throw new HttpException(
         { success: false, message: 'No se pudo identificar al usuario' },
@@ -52,6 +57,7 @@ export class SupervisorRevisionController {
   // ===============================
   // REVISAR DOCUMENTO (con archivos - paz y salvo)
   // ===============================
+
   @Post(':documentoId')
   @UseInterceptors(
     FileFieldsInterceptor([
@@ -62,24 +68,45 @@ export class SupervisorRevisionController {
   async revisarDocumento(
     @Param('documentoId') documentoId: string,
     @Body(new ValidationPipe({ transform: true })) dto: RevisarDocumentoDto,
-    @UploadedFile() files: {
+    @UploadedFiles() files: {
       archivoAprobacion?: Express.Multer.File[];
       pazSalvo?: Express.Multer.File[];
     },
     @Req() req: Request,
   ) {
+    this.logger.log(`📝 ===== INICIO REVISIÓN DOCUMENTO =====`);
+    this.logger.log(`📝 Documento ID recibido: "${documentoId}" (tipo: ${typeof documentoId})`);
+    this.logger.log(`📝 ¿DocumentoId es array?: ${Array.isArray(documentoId)}`);
+
+    // Si es array, tomar el primer elemento
+    let idReal = documentoId;
+    if (Array.isArray(documentoId)) {
+      idReal = documentoId[0];
+      this.logger.warn(`⚠️ documentoId era un array, usando el primer elemento: ${idReal}`);
+    }
+
+    this.logger.log(`📝 DTO recibido:`, JSON.stringify(dto, null, 2));
+    this.logger.log(`📝 Archivos:`, {
+      archivoAprobacion: files?.archivoAprobacion?.length || 0,
+      pazSalvo: files?.pazSalvo?.length || 0
+    });
+
     const userId = this.getUserIdFromRequest(req);
-    const archivoAprobacion = files.archivoAprobacion?.[0];
-    const pazSalvo = files.pazSalvo?.[0];
+    this.logger.log(`👤 UserId: ${userId}`);
+
+    const archivoAprobacion = files?.archivoAprobacion?.[0];
+    const pazSalvo = files?.pazSalvo?.[0];
 
     try {
       const result = await this.supervisorRevisionService.revisarDocumento(
-        documentoId,
+        idReal,
         userId,
         dto,
         archivoAprobacion,
         pazSalvo,
       );
+
+      this.logger.log(`📝 ===== FIN REVISIÓN DOCUMENTO (ÉXITO) =====`);
 
       return {
         success: true,
@@ -87,10 +114,18 @@ export class SupervisorRevisionController {
         data: result,
       };
     } catch (error) {
-      this.logger.error(`Error revisando documento: ${error.message}`);
+      this.logger.error(`❌ Error revisando documento: ${error.message}`);
+      this.logger.error(error.stack);
+
+      // Devolver el error con más detalles
       throw new HttpException(
-        { success: false, message: error.message || 'Error al revisar' },
-        error instanceof HttpException ? error.getStatus() : HttpStatus.BAD_REQUEST,
+        {
+          success: false,
+          message: error.message || 'Error al revisar',
+          error: error.toString(),
+          stack: error.stack
+        },
+        error instanceof HttpException ? error.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
   }
@@ -178,6 +213,4 @@ export class SupervisorRevisionController {
       );
     }
   }
-
-
 }
