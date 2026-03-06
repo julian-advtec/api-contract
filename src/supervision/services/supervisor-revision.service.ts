@@ -32,9 +32,9 @@ export class SupervisorRevisionService {
     @InjectRepository(User)
     private userRepository: Repository<User>,
   ) { }
-  
 
-  public async revisarDocumento( // Asegurar que sea public
+
+  public async revisarDocumento(
     documentoId: string,
     supervisorId: string,
     revisarDto: RevisarDocumentoDto,
@@ -68,7 +68,7 @@ export class SupervisorRevisionService {
         throw new BadRequestException(`Estado inválido: ${revisarDto.estado}. Estados permitidos: ${estadosValidos.join(', ')}`);
       }
 
-      // PASO 1: Buscar el documento en revisión - SIN FILTRAR POR ESTADO PRIMERO
+      // PASO 1: Buscar el documento en revisión - AHORA PERMITIENDO OBSERVADO
       this.logger.log(`🔍 PASO 1: Buscando documento ${documentoId} para supervisor ${supervisorId}`);
 
       // Primero buscar cualquier registro para este documento y supervisor
@@ -92,10 +92,16 @@ export class SupervisorRevisionService {
         throw new ForbiddenException('No tienes este documento asignado. Debes tomarlo primero desde la lista de pendientes.');
       }
 
-      // Verificar si está en EN_REVISION
-      if (cualquierRegistro.estado !== SupervisorEstado.EN_REVISION) {
-        this.logger.error(`❌ PASO 1 - El documento está en estado ${cualquierRegistro.estado}, no en EN_REVISION`);
-        throw new ForbiddenException(`El documento está en estado ${cualquierRegistro.estado}, no puede ser modificado. Solo documentos en EN_REVISION pueden ser editados.`);
+      // ✅ MODIFICACIÓN: Verificar si está en EN_REVISION O OBSERVADO
+      if (cualquierRegistro.estado !== SupervisorEstado.EN_REVISION &&
+        cualquierRegistro.estado !== SupervisorEstado.OBSERVADO) {
+        this.logger.error(`❌ PASO 1 - El documento está en estado ${cualquierRegistro.estado}, no puede ser modificado`);
+        throw new ForbiddenException(`El documento está en estado ${cualquierRegistro.estado}, no puede ser modificado. Solo documentos en EN_REVISION u OBSERVADO pueden ser editados.`);
+      }
+
+      // ✅ LOG ESPECIAL PARA DOCUMENTOS OBSERVADOS
+      if (cualquierRegistro.estado === SupervisorEstado.OBSERVADO) {
+        this.logger.log(`⚠️ Documento en estado OBSERVADO - Se permite modificación como corrección`);
       }
 
       const supervisorDoc = cualquierRegistro;
@@ -193,6 +199,12 @@ export class SupervisorRevisionService {
           documento.comentarios = revisarDto.observacion || 'Devuelto por supervisor';
           documento.correcciones = revisarDto.correcciones?.trim() || '';
           break;
+      }
+
+      // ✅ LÓGICA ADICIONAL: Si el documento estaba en OBSERVADO y ahora se aprueba
+      if (estadoAnterior === SupervisorEstado.OBSERVADO && revisarDto.estado === SupervisorEstado.APROBADO) {
+        this.logger.log(`📝 Documento corregido de OBSERVADO a APROBADO`);
+        documento.comentarios = (documento.comentarios || '') + ' [Corrección aplicada al documento observado]';
       }
 
       this.logger.log(`📝 Estado final del documento principal: ${documento.estado}`);
@@ -387,6 +399,7 @@ export class SupervisorRevisionService {
       this.logger.error(`Error agregando al historial: ${error.message}`);
     }
   }
+
 
   /**
    * ✅ GUARDAR ARCHIVO DEL SUPERVISOR

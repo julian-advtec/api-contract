@@ -2,10 +2,19 @@ import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, Not, IsNull, And } from 'typeorm';
 
-import { SupervisorDocumento, SupervisorEstado } from '../entities/supervisor.entity';
+import { SupervisorDocumento } from '../entities/supervisor.entity';
 import { Documento } from '../../radicacion/entities/documento.entity';
 import { User } from '../../users/entities/user.entity';
 import { PeriodoEstadisticasSupervisor } from '../dto/supervisor-estadisticas-query.dto';
+import { In } from 'typeorm';
+
+// Importa TODOS los enums que usas en el array estadosRechazo
+import { SupervisorEstado } from '../entities/supervisor.entity';           // ya lo tienes, pero asegúrate
+import { AuditorEstado } from '../../auditor//entities/auditor-documento.entity';     // ajusta la ruta real
+import { TesoreriaEstado } from '../../tesoreria/entities/tesoreria-documento.entity'; // ajusta ruta
+import { AsesorGerenciaEstado } from '../../asesor-gerencia/entities//asesor-gerencia-estado.enum'; // ajusta
+import { RendicionCuentasEstado } from '../../rendicion-cuentas/entities/rendicion-cuentas-estado.enum'; // ajusta
+import { ContabilidadEstado } from '../../contabilidad/entities/contabilidad-documento.entity'; // ajusta
 
 @Injectable()
 export class SupervisorEstadisticasService {
@@ -64,160 +73,248 @@ export class SupervisorEstadisticasService {
     }));
   }
 
-async obtenerEstadisticasSupervisor(
-  supervisorId: string,
-  periodo: string = 'ano'
-): Promise<any> {
-  const ahoraLocal = new Date();
-  ahoraLocal.setMilliseconds(0);
+  async obtenerEstadisticasSupervisor(
+    supervisorId: string,
+    periodo: string = 'ano'
+  ): Promise<any> {
+    const ahoraLocal = new Date();
+    ahoraLocal.setMilliseconds(0);
 
-  let desdeLocal = new Date(ahoraLocal);
+    let desdeLocal = new Date(ahoraLocal);
 
-  const periodoLower = periodo.trim().toLowerCase();
+    const periodoLower = periodo.trim().toLowerCase();
 
-  switch (periodoLower) {
-    case 'hoy':
-      desdeLocal.setHours(0, 0, 0, 0);
-      break;
+    switch (periodoLower) {
+      case 'hoy':
+        desdeLocal.setHours(0, 0, 0, 0);
+        break;
+      case 'semana':
+        desdeLocal.setDate(ahoraLocal.getDate() - 7);
+        desdeLocal.setHours(0, 0, 0, 0);
+        break;
+      case 'mes':
+        desdeLocal.setMonth(ahoraLocal.getMonth() - 1);
+        desdeLocal.setHours(0, 0, 0, 0);
+        break;
+      case 'trimestre':
+        desdeLocal.setMonth(ahoraLocal.getMonth() - 3);
+        desdeLocal.setHours(0, 0, 0, 0);
+        break;
+      case 'ano':
+      default:
+        desdeLocal = new Date(ahoraLocal.getFullYear(), 0, 1, 0, 0, 0, 0);
+        break;
+    }
 
-    case 'semana':
-      desdeLocal.setDate(ahoraLocal.getDate() - 7);
-      desdeLocal.setHours(0, 0, 0, 0);
-      break;
+    const hastaLocal = new Date(ahoraLocal);
 
-    case 'mes':
-      desdeLocal.setMonth(ahoraLocal.getMonth() - 1);
-      desdeLocal.setHours(0, 0, 0, 0);
-      break;
+    try {
+      // ────────────────────────────────────────────────────────────────
+      // Conteos ESPECÍFICOS del supervisor (sin cambios)
+      // ────────────────────────────────────────────────────────────────
+      const [aprobados, observados, rechazadosSupervisor, enRevision] = await Promise.all([
+        this.supervisorRepository.count({
+          where: {
+            supervisor: { id: supervisorId },
+            estado: SupervisorEstado.APROBADO,
+            fechaAprobacion: Between(desdeLocal, hastaLocal),
+          },
+        }),
 
-    case 'trimestre':
-      desdeLocal.setMonth(ahoraLocal.getMonth() - 3);
-      desdeLocal.setHours(0, 0, 0, 0);
-      break;
+        this.supervisorRepository.count({
+          where: {
+            supervisor: { id: supervisorId },
+            estado: SupervisorEstado.OBSERVADO,
+            fechaAprobacion: Between(desdeLocal, hastaLocal),
+          },
+        }),
 
-    case 'ano':
-    default:
-      desdeLocal = new Date(ahoraLocal.getFullYear(), 0, 1, 0, 0, 0, 0);
-      break;
-  }
+        this.supervisorRepository.count({
+          where: {
+            supervisor: { id: supervisorId },
+            estado: SupervisorEstado.RECHAZADO,
+            fechaAprobacion: Between(desdeLocal, hastaLocal),
+          },
+        }),
 
-  const hastaLocal = new Date(ahoraLocal);
+        this.supervisorRepository.count({
+          where: {
+            supervisor: { id: supervisorId },
+            estado: SupervisorEstado.EN_REVISION,
+            fechaCreacion: Between(desdeLocal, hastaLocal),
+          },
+        }),
+      ]);
 
-  try {
-    const [aprobados, observados, rechazados, enRevision] = await Promise.all([
-      this.supervisorRepository.count({
+      // ────────────────────────────────────────────────────────────────
+      // Rechazados GLOBALES: cualquier área posterior al radicador
+      // ────────────────────────────────────────────────────────────────
+      // ────────────────────────────────────────────────────────────────
+      // Rechazados GLOBALES: usar los strings EXACTOS de la columna estado
+      // ────────────────────────────────────────────────────────────────
+      const estadosRechazo = [
+        // Supervisor
+        'RECHAZADO',                    // SupervisorEstado.RECHAZADO
+        'RECHAZADO_SUPERVISOR',         // ← este es el real en tu BD
+        'DEVUELTO',
+
+        // Auditor
+        'RECHAZADO',                    // o 'RECHAZADO_AUDITOR' si existe
+
+        // Tesorería
+        'RECHAZADO_TESORERIA',
+
+        // Asesor Gerencia
+        'RECHAZADO_ASESOR_GERENCIA',
+
+        // Rendición de Cuentas
+        'RECHAZADO_RENDICION_CUENTAS',  // ← este es el que falta y es clave
+
+        // Contabilidad
+        'RECHAZADO',
+        // 'GLOSADO' si aplica
+      ];
+
+      const rechazadosTotales = await this.documentoRepository.count({
+        where: {
+          estado: And(
+            In(estadosRechazo),
+            Not('RADICADO')
+          ),
+          fechaActualizacion: Between(desdeLocal, hastaLocal),
+        },
+      });
+
+      // Log obligatorio para confirmar qué está pasando
+      this.logger.log(`Período: ${periodoLower} | Estados buscados: ${estadosRechazo.join(', ')}`);
+      this.logger.log(`Rechazados totales encontrados: ${rechazadosTotales}`);
+
+      
+
+      // Log de depuración (puedes comentarlo después de probar)
+      this.logger.log(`Período: ${periodoLower} | Rechazados totales encontrados: ${rechazadosTotales}`);
+
+      // Total procesados ahora incluye rechazos globales
+      const totalProcesados = aprobados + observados + rechazadosTotales;
+
+      const eficiencia = totalProcesados > 0
+        ? Math.round((aprobados / totalProcesados) * 100)
+        : 0;
+
+      // ────────────────────────────────────────────────────────────────
+      // Tiempo promedio (solo aprobados por supervisor)
+      // ────────────────────────────────────────────────────────────────
+      const aprobadosConFechas = await this.supervisorRepository.find({
         where: {
           supervisor: { id: supervisorId },
           estado: SupervisorEstado.APROBADO,
           fechaAprobacion: Between(desdeLocal, hastaLocal),
         },
-      }),
+        select: ['fechaCreacion', 'fechaAprobacion'],
+      });
 
-      this.supervisorRepository.count({
+      let tiempoPromedioHoras = 0;
+      if (aprobadosConFechas.length > 0) {
+        const sumaHoras = aprobadosConFechas.reduce((acc, doc) => {
+          if (doc.fechaCreacion && doc.fechaAprobacion) {
+            const diffMs = doc.fechaAprobacion.getTime() - doc.fechaCreacion.getTime();
+            const horas = diffMs / (1000 * 60 * 60);
+            return acc + (horas > 0 ? horas : 0);
+          }
+          return acc;
+        }, 0);
+        tiempoPromedioHoras = Math.round((sumaHoras / aprobadosConFechas.length) * 10) / 10;
+      }
+
+      // ────────────────────────────────────────────────────────────────
+      // Distribución actualizada
+      // ────────────────────────────────────────────────────────────────
+      const distribucion = [
+        {
+          estado: 'Aprobados',
+          cantidad: aprobados,
+          porcentaje: totalProcesados ? Math.round((aprobados / totalProcesados) * 100) : 0,
+          color: '#4CAF50',
+        },
+        {
+          estado: 'Observados',
+          cantidad: observados,
+          porcentaje: totalProcesados ? Math.round((observados / totalProcesados) * 100) : 0,
+          color: '#FF9800',
+        },
+        {
+          estado: 'Rechazados',
+          cantidad: rechazadosTotales,
+          porcentaje: totalProcesados ? Math.round((rechazadosTotales / totalProcesados) * 100) : 0,
+          color: '#F44336',
+        },
+        {
+          estado: 'En Revisión',
+          cantidad: enRevision,
+          porcentaje: totalProcesados ? Math.round((enRevision / totalProcesados) * 100) : 0,
+          color: '#2196F3',
+        },
+      ].filter(item => item.cantidad > 0);
+
+      // ────────────────────────────────────────────────────────────────
+      // Últimos procesados
+      // ────────────────────────────────────────────────────────────────
+      const ultimosProcesadosRaw = await this.supervisorRepository.find({
         where: {
           supervisor: { id: supervisorId },
-          estado: SupervisorEstado.OBSERVADO,
-          fechaAprobacion: Between(desdeLocal, hastaLocal),
+          fechaActualizacion: Between(desdeLocal, hastaLocal),
         },
-      }),
+        relations: ['documento'],
+        order: { fechaActualizacion: 'DESC' },
+        take: 10,
+      });
 
-      this.supervisorRepository.count({
-        where: {
-          supervisor: { id: supervisorId },
-          estado: SupervisorEstado.RECHAZADO,
-          fechaAprobacion: Between(desdeLocal, hastaLocal),
-        },
-      }),
+      const ultimosProcesados = ultimosProcesadosRaw.map(item => ({
+        id: item.id,
+        numeroRadicado: item.documento?.numeroRadicado || 'N/A',
+        contratista: item.documento?.nombreContratista || 'N/A',
+        fecha: item.fechaAprobacion || item.fechaActualizacion || item.fechaCreacion,
+        estado: item.estado,
+      }));
 
-      this.supervisorRepository.count({
-        where: {
-          supervisor: { id: supervisorId },
-          estado: SupervisorEstado.EN_REVISION,
-          fechaCreacion: Between(desdeLocal, hastaLocal),
-        },
-      }),
-    ]);
+      const totalDocumentosRadicados = await this.documentoRepository.count();
 
-    const totalProcesados = aprobados + observados + rechazados;
-    const eficiencia = totalProcesados > 0 ? Math.round((aprobados / totalProcesados) * 100) : 0;
-
-    const aprobadosConFechas = await this.supervisorRepository.find({
-      where: {
-        supervisor: { id: supervisorId },
-        estado: SupervisorEstado.APROBADO,
-        fechaAprobacion: Between(desdeLocal, hastaLocal),
-      },
-      select: ['fechaCreacion', 'fechaAprobacion'],
-    });
-
-    let tiempoPromedioHoras = 0;
-    if (aprobadosConFechas.length > 0) {
-      const sumaHoras = aprobadosConFechas.reduce((acc, doc) => {
-        if (doc.fechaCreacion && doc.fechaAprobacion) {
-          const diffMs = doc.fechaAprobacion.getTime() - doc.fechaCreacion.getTime();
-          const horas = diffMs / (1000 * 60 * 60);
-          return acc + (horas > 0 ? horas : 0);
-        }
-        return acc;
-      }, 0);
-      tiempoPromedioHoras = Math.round((sumaHoras / aprobadosConFechas.length) * 10) / 10;
-    }
-
-    const distribucion = [
-      { estado: 'Aprobados',   cantidad: aprobados,   porcentaje: totalProcesados ? Math.round((aprobados   / totalProcesados) * 100) : 0, color: '#4CAF50' },
-      { estado: 'Observados',  cantidad: observados,  porcentaje: totalProcesados ? Math.round((observados  / totalProcesados) * 100) : 0, color: '#FF9800' },
-      { estado: 'Rechazados',  cantidad: rechazados,  porcentaje: totalProcesados ? Math.round((rechazados  / totalProcesados) * 100) : 0, color: '#F44336' },
-      { estado: 'En Revisión', cantidad: enRevision,  porcentaje: totalProcesados ? Math.round((enRevision  / totalProcesados) * 100) : 0, color: '#2196F3' },
-    ].filter(item => item.cantidad > 0);
-
-    const ultimosProcesadosRaw = await this.supervisorRepository.find({
-      where: {
-        supervisor: { id: supervisorId },
-        fechaActualizacion: Between(desdeLocal, hastaLocal),
-      },
-      relations: ['documento'],
-      order: { fechaActualizacion: 'DESC' },
-      take: 10,
-    });
-
-    const ultimosProcesados = ultimosProcesadosRaw.map(item => ({
-      id: item.id,
-      numeroRadicado: item.documento?.numeroRadicado || 'N/A',
-      contratista: item.documento?.nombreContratista || 'N/A',
-      fecha: item.fechaAprobacion || item.fechaActualizacion || item.fechaCreacion,
-      estado: item.estado,
-    }));
-
-    const totalDocumentosRadicados = await this.documentoRepository.count();
-
-    const resultado = {
-      totalDocumentosRadicados,
-      enRevision,
-      aprobados,
-      observados,
-      rechazados,
-      tiempoPromedioHoras,
-      eficiencia,
-      distribucion,
-      ultimosProcesados,
-      totales: {
+      // ────────────────────────────────────────────────────────────────
+      // Resultado final
+      // ────────────────────────────────────────────────────────────────
+      const resultado = {
+        totalDocumentosRadicados,
         enRevision,
         aprobados,
         observados,
-        rechazados,
-        total: totalProcesados,
-      },
-      fechaConsulta: new Date().toISOString(),
-      desde: desdeLocal.toISOString(),
-      hasta: hastaLocal.toISOString(),
-    };
+        rechazados: rechazadosTotales,
+        rechazadosSupervisor,
+        rechazadosOtrasAreas: rechazadosTotales - rechazadosSupervisor,
+        tiempoPromedioHoras,
+        eficiencia,
+        distribucion,
+        ultimosProcesados,
+        totales: {
+          enRevision,
+          aprobados,
+          observados,
+          rechazados: rechazadosTotales,
+          total: totalProcesados,
+        },
+        fechaConsulta: new Date().toISOString(),
+        desde: desdeLocal.toISOString(),
+        hasta: hastaLocal.toISOString(),
+      };
 
-    return resultado;
-  } catch (error) {
-    this.logger.error('[Supervisor Estadísticas] Error al calcular:', error);
-    throw new InternalServerErrorException('Error al obtener estadísticas de supervisión');
+      // Log final para depuración
+      this.logger.log(`Estadísticas supervisor generadas → Rechazados: ${rechazadosTotales}, Eficiencia: ${eficiencia}%`);
+
+      return resultado;
+    } catch (error) {
+      this.logger.error('[Supervisor Estadísticas] Error al calcular:', error);
+      throw new InternalServerErrorException('Error al obtener estadísticas de supervisión');
+    }
   }
-}
 
   async verificarInconsistencias(): Promise<any> {
     try {
