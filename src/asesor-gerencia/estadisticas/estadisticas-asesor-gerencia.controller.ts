@@ -1,4 +1,4 @@
-// estadisticas-asesor-gerencia.controller.ts
+// src/asesor-gerencia/controllers/estadisticas-asesor-gerencia.controller.ts
 import { Controller, Get, Query, Req, Logger } from '@nestjs/common';
 import { EstadisticasAsesorGerenciaService } from './estadisticas-asesor-gerencia.service';
 import { EstadisticasQueryDto } from './dto/estadisticas-query.dto';

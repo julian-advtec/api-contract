@@ -1,9 +1,10 @@
-// estadisticas-asesor-gerencia.service.ts
+// src/asesor-gerencia/services/estadisticas-asesor-gerencia.service.ts
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EstadisticasQueryDto, PeriodoStats } from './dto/estadisticas-query.dto';
 import { AsesorGerenciaDocumento } from '../entities/asesor-gerencia-documento.entity';
+import { AsesorGerenciaEstado } from '../entities/asesor-gerencia-estado.enum';
 
 @Injectable()
 export class EstadisticasAsesorGerenciaService {
@@ -18,7 +19,7 @@ export class EstadisticasAsesorGerenciaService {
         const { desde, hasta } = this.calcularRangoFechas(query);
 
         try {
-            // Conteo agrupado
+            // Conteo agrupado usando los enums reales
             const conteosRaw = await this.documentoRepo
                 .createQueryBuilder('d')
                 .select('d.estado', 'estado')
@@ -35,52 +36,76 @@ export class EstadisticasAsesorGerenciaService {
 
             this.logger.debug(`Conteos obtenidos: ${conteos.length} grupos`);
 
-            // Pendientes
+            // Obtener pendientes (EN_REVISION)
             const pendientes = await this.documentoRepo
                 .createQueryBuilder('d')
                 .leftJoinAndSelect('d.documento', 'doc')
                 .leftJoinAndSelect('d.asesor', 'a')
-                .where("CAST(d.estado AS TEXT) LIKE :estado", { estado: '%PENDIENTE%' })
+                .where('d.estado = :estado', { estado: AsesorGerenciaEstado.EN_REVISION })
                 .andWhere('d.fechaCreacion BETWEEN :desde AND :hasta', { desde, hasta })
                 .orderBy('d.fechaCreacion', 'DESC')
-                .limit(10)
                 .getMany();
 
-            // Procesados
+            // Obtener procesados (COMPLETADO_ASESOR_GERENCIA, OBSERVADO_ASESOR_GERENCIA, RECHAZADO_ASESOR_GERENCIA)
             const procesados = await this.documentoRepo
                 .createQueryBuilder('d')
                 .leftJoinAndSelect('d.documento', 'doc')
                 .leftJoinAndSelect('d.asesor', 'a')
-                .where(
-                    "CAST(d.estado AS TEXT) LIKE :aprobado OR CAST(d.estado AS TEXT) LIKE :observado OR CAST(d.estado AS TEXT) LIKE :rechazado",
-                    {
-                        aprobado: '%APROBADO%',
-                        observado: '%OBSERVADO%',
-                        rechazado: '%RECHAZADO%',
-                    },
-                )
+                .where('d.estado IN (:...estados)', { 
+                    estados: [
+                        AsesorGerenciaEstado.COMPLETADO_ASESOR_GERENCIA,
+                        AsesorGerenciaEstado.OBSERVADO_ASESOR_GERENCIA,
+                        AsesorGerenciaEstado.RECHAZADO_ASESOR_GERENCIA
+                    ] 
+                })
                 .andWhere('d.fechaCreacion BETWEEN :desde AND :hasta', { desde, hasta })
                 .orderBy('d.fechaActualizacion', 'DESC')
-                .limit(10)
                 .getMany();
+
+            this.logger.debug(`Pendientes encontrados: ${pendientes.length}`);
+            this.logger.debug(`Procesados encontrados: ${procesados.length}`);
+
+            // Crear actividad reciente combinando pendientes y procesados
+            const todosLosProcesos = [...pendientes, ...procesados]
+                .sort((a, b) => {
+                    const fechaA = a.fechaActualizacion || a.fechaCreacion;
+                    const fechaB = b.fechaActualizacion || b.fechaCreacion;
+                    return new Date(fechaB).getTime() - new Date(fechaA).getTime();
+                })
+                .slice(0, 10);
+
+            const actividadReciente = todosLosProcesos.map(p => ({
+                id: p.id,
+                tipo: this.normalizarTipo(p.estado),
+                numeroRadicado: p.documento?.numeroRadicado || '—',
+                contratista: p.documento?.nombreContratista || '—',
+                monto: 0,
+                fecha: p.fechaActualizacion || p.fechaCreacion,
+                asesor: p.asesor?.fullName || p.asesor?.username || 'Sistema',
+            }));
 
             return {
                 documentos: {
-                    pendientes: this.obtenerConteo(conteos, 'PENDIENTE'),
-                    aprobados: this.obtenerConteo(conteos, 'APROBADO') + this.obtenerConteo(conteos, 'COMPLETADO'),
-                    observados: this.obtenerConteo(conteos, 'OBSERVADO'),
-                    rechazados: this.obtenerConteo(conteos, 'RECHAZADO'),
-                    total: conteos.reduce((sum, c) => sum + Number(c.cantidad || 0), 0),
+                    pendientes: this.obtenerConteo(conteos, AsesorGerenciaEstado.EN_REVISION) || pendientes.length,
+                    aprobados: this.obtenerConteo(conteos, AsesorGerenciaEstado.COMPLETADO_ASESOR_GERENCIA) || 
+                               procesados.filter(p => p.estado === AsesorGerenciaEstado.COMPLETADO_ASESOR_GERENCIA).length,
+                    observados: this.obtenerConteo(conteos, AsesorGerenciaEstado.OBSERVADO_ASESOR_GERENCIA) || 
+                                procesados.filter(p => p.estado === AsesorGerenciaEstado.OBSERVADO_ASESOR_GERENCIA).length,
+                    rechazados: this.obtenerConteo(conteos, AsesorGerenciaEstado.RECHAZADO_ASESOR_GERENCIA) || 
+                                procesados.filter(p => p.estado === AsesorGerenciaEstado.RECHAZADO_ASESOR_GERENCIA).length,
+                    total: conteos.reduce((sum, c) => sum + Number(c.cantidad || 0), 0) || 
+                           (pendientes.length + procesados.length),
                 },
                 montos: {
                     pendiente: 0,
                     aprobado: 0,
                     observado: 0,
                     rechazado: 0,
+                    completado: 0,
                     total: 0,
                 },
                 distribucion: this.calcularDistribucion(conteos),
-                actividadReciente: this.mapearActividad(procesados.slice(0, 5)),
+                actividadReciente,
                 pendientes: this.mapearDocumentos(pendientes),
                 procesados: this.mapearDocumentos(procesados),
                 fechaCalculo: new Date(),
@@ -88,8 +113,8 @@ export class EstadisticasAsesorGerenciaService {
                 hasta,
             };
         } catch (error) {
-            this.logger.error('Error al calcular estadísticas', error);
-            throw new BadRequestException('No se pudieron calcular las estadísticas');
+            this.logger.error('Error grave al calcular estadísticas', error);
+            throw new BadRequestException('No se pudieron calcular las estadísticas. Contacte soporte.');
         }
     }
 
@@ -123,71 +148,61 @@ export class EstadisticasAsesorGerenciaService {
         return { desde, hasta };
     }
 
-    private obtenerConteo(conteos: any[], estadoBuscado: string): number {
-        const normalized = estadoBuscado.toUpperCase();
-        const match = conteos.find((c) =>
-            c.estado && String(c.estado).toUpperCase().includes(normalized)
-        );
+    private obtenerConteo(conteos: any[], estadoBuscado: AsesorGerenciaEstado): number {
+        const match = conteos.find((c) => c.estado === estadoBuscado);
         return match ? Number(match.cantidad) || 0 : 0;
     }
 
     private calcularDistribucion(conteos: any[]) {
         const colores: Record<string, string> = {
-            PENDIENTE: '#FFA726',
-            APROBADO: '#66BB6A',
-            OBSERVADO: '#FFB74D',
-            RECHAZADO: '#EF5350',
-            COMPLETADO: '#4CAF50',
-            SIN_ESTADO: '#B0BEC5',
+            [AsesorGerenciaEstado.EN_REVISION]: '#FFA726',
+            [AsesorGerenciaEstado.COMPLETADO_ASESOR_GERENCIA]: '#4CAF50',
+            [AsesorGerenciaEstado.OBSERVADO_ASESOR_GERENCIA]: '#FFB74D',
+            [AsesorGerenciaEstado.RECHAZADO_ASESOR_GERENCIA]: '#EF5350',
+            [AsesorGerenciaEstado.DISPONIBLE]: '#9C27B0',
+            'SIN_ESTADO': '#B0BEC5',
         };
 
         return conteos
-            .filter((c) => c.estado || c.cantidad > 0)
-            .map((c) => {
-                const estadoNorm = String(c.estado || 'SIN_ESTADO').trim().toUpperCase();
-                return {
-                    estado: estadoNorm,
-                    cantidad: Number(c.cantidad) || 0,
-                    monto: 0,
-                    color: colores[estadoNorm] || '#78909C',
-                };
-            });
+            .filter((c) => c.estado && c.cantidad > 0)
+            .map((c) => ({
+                estado: c.estado,
+                cantidad: Number(c.cantidad) || 0,
+                monto: 0,
+                color: colores[c.estado] || '#78909C',
+            }));
     }
 
-    private mapearDocumentos(docs: any[]) {
+    private mapearDocumentos(docs: AsesorGerenciaDocumento[]) {
         return docs.map((d) => ({
             id: d.id,
             numeroRadicado: d.documento?.numeroRadicado || '—',
             contratista: d.documento?.nombreContratista || '—',
             contrato: d.documento?.numeroContrato || '—',
-            monto: d.documento?.valorTotal || 0,
-            estado: d.estado || 'SIN_ESTADO',
+            monto: 0,
+            estado: d.estado,
             fechaAsignacion: d.fechaCreacion,
             fechaProcesamiento: d.fechaActualizacion,
-            asesorAsignado: d.asesor?.nombreCompleto || '—',
-            tieneDocumento: !!d.documentoFirmadoPath,
+            asesorAsignado: d.asesor?.fullName || d.asesor?.username || '—',
+            tieneComprobante: !!d.comprobanteFirmadoPath,
             tieneFirma: !!d.firmaAplicada,
         }));
     }
 
-    private mapearActividad(docs: any[]) {
-        return docs.map((d) => ({
-            id: d.id,
-            tipo: this.normalizarTipo(d.estado),
-            numeroRadicado: d.documento?.numeroRadicado || '—',
-            contratista: d.documento?.nombreContratista || '—',
-            monto: d.documento?.valorTotal || 0,
-            fecha: d.fechaActualizacion || d.fechaCreacion,
-            asesor: d.asesor?.nombreCompleto || 'Sistema',
-        }));
-    }
-
-    private normalizarTipo(estado: string | null): string {
+    private normalizarTipo(estado: AsesorGerenciaEstado | null): string {
         if (!estado) return 'PENDIENTE';
-        const upper = estado.toUpperCase();
-        if (upper.includes('APROBADO') || upper.includes('COMPLETADO')) return 'APROBADO';
-        if (upper.includes('OBSERVADO')) return 'OBSERVADO';
-        if (upper.includes('RECHAZADO')) return 'RECHAZADO';
-        return upper || 'PENDIENTE';
+        
+        switch (estado) {
+            case AsesorGerenciaEstado.COMPLETADO_ASESOR_GERENCIA:
+                return 'COMPLETADO';
+            case AsesorGerenciaEstado.OBSERVADO_ASESOR_GERENCIA:
+                return 'OBSERVADO';
+            case AsesorGerenciaEstado.RECHAZADO_ASESOR_GERENCIA:
+                return 'RECHAZADO';
+            case AsesorGerenciaEstado.EN_REVISION:
+                return 'EN_REVISION';
+            default:
+                return estado;
+        }
     }
 }

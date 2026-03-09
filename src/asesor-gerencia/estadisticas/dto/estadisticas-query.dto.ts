@@ -1,6 +1,5 @@
-// dto/estadisticas-query.dto.ts
-import { IsEnum, IsOptional, IsBoolean } from 'class-validator';
-import { Type } from 'class-transformer';
+// src/asesor-gerencia/dto/estadisticas-query.dto.ts
+import { IsOptional, IsEnum, IsString } from 'class-validator';
 
 export enum PeriodoStats {
   HOY = 'hoy',
@@ -10,12 +9,11 @@ export enum PeriodoStats {
 }
 
 export class EstadisticasQueryDto {
+  @IsOptional()
   @IsEnum(PeriodoStats)
-  @IsOptional()
-  periodo?: PeriodoStats = PeriodoStats.MES;
+  periodo?: PeriodoStats;
 
-  @IsBoolean()
   @IsOptional()
-  @Type(() => Boolean)
-  soloMios?: boolean = false;
+  @IsString()
+  soloMios?: string;
 }

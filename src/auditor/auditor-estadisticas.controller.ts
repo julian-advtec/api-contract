@@ -12,12 +12,12 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 
-import { AuditorEstadisticasService } from '../services/auditor-estadisticas.service';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { AuditorGuard } from '../../common/guards/auditor.guard';
-import { Roles } from '../../auth/decorators/roles.decorator';
-import { UserRole } from '../../users/enums/user-role.enum';
+import { AuditorEstadisticasService } from './auditor-estadisticas.service';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { AuditorGuard } from '../common/guards/auditor.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from '../users/enums/user-role.enum';
 
 @Controller('auditor/estadisticas')
 @UseGuards(JwtAuthGuard, RolesGuard, AuditorGuard)
@@ -60,7 +60,10 @@ export class AuditorEstadisticasController {
       return {
         ok: true,
         timestamp: new Date().toISOString(),
-        data: resultado,
+        data: {
+          success: true,
+          data: resultado,
+        },
       };
     } catch (error) {
       console.error('[ERROR en controlador POST estadisticas]', error);
@@ -92,27 +95,23 @@ export class AuditorEstadisticasController {
   @Get('rechazados')
   async obtenerRechazados(
     @Req() req: Request,
+    @Query('soloMios') soloMios?: string,
     @Query('desde') desde?: string,
     @Query('hasta') hasta?: string,
-    @Query('soloMios') soloMios?: string,
   ) {
     const userId = this.getUserIdFromRequest(req);
+    
+    const filtros: any = {
+      soloMios: soloMios === 'true',
+    };
+
+    if (desde && hasta) {
+      filtros.desde = new Date(desde);
+      filtros.hasta = new Date(hasta);
+    }
 
     try {
-      const filtros: any = {
-        soloMios: soloMios === 'true',
-      };
-
-      if (desde && hasta) {
-        filtros.desde = new Date(desde);
-        filtros.hasta = new Date(hasta);
-      }
-
-      const rechazados = await this.auditorEstadisticasService.obtenerDocumentosRechazados(
-        userId,
-        filtros
-      );
-
+      const rechazados = await this.auditorEstadisticasService.obtenerDocumentosRechazados(userId, filtros);
       return {
         success: true,
         count: rechazados.length,
@@ -123,5 +122,20 @@ export class AuditorEstadisticasController {
       throw new InternalServerErrorException('Error al obtener documentos rechazados');
     }
   }
-}
 
+  @Get('diagnostico/inconsistencias')
+  async verificarInconsistencias(@Req() req: Request) {
+    const userId = this.getUserIdFromRequest(req);
+
+    try {
+      const resultado = await this.auditorEstadisticasService.verificarInconsistencias();
+      return {
+        success: true,
+        data: resultado,
+      };
+    } catch (error) {
+      console.error('[ERROR en inconsistencias]', error);
+      throw new InternalServerErrorException('Error al verificar inconsistencias');
+    }
+  }
+}

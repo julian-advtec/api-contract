@@ -1,6 +1,5 @@
 // src/rendicion-cuentas/dto/estadisticas-query.dto.ts
-import { IsEnum, IsOptional, IsBoolean, IsDateString } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsOptional, IsEnum, IsString } from 'class-validator';
 
 export enum PeriodoStats {
   HOY = 'hoy',
@@ -10,20 +9,11 @@ export enum PeriodoStats {
 }
 
 export class EstadisticasQueryDto {
+  @IsOptional()
   @IsEnum(PeriodoStats)
-  @IsOptional()
-  periodo?: PeriodoStats = PeriodoStats.MES;
-
-  @IsBoolean()
-  @IsOptional()
-  @Type(() => Boolean)
-  soloMios?: boolean = false;
+  periodo?: PeriodoStats;
 
   @IsOptional()
-  @IsDateString()
-  fechaInicio?: string;
-
-  @IsOptional()
-  @IsDateString()
-  fechaFin?: string;
+  @IsString()
+  soloMios?: string;
 }

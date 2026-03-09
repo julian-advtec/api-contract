@@ -34,6 +34,7 @@ export class ContabilidadStatsController {
     @ApiQuery({ name: 'estado', required: false, enum: ContabilidadEstado })
     @ApiQuery({ name: 'tipoCausacion', required: false, enum: TipoCausacion })
     @ApiQuery({ name: 'tieneGlosa', required: false, type: Boolean })
+    @ApiQuery({ name: 'periodo', required: false, enum: ['hoy', 'semana', 'mes', 'trimestre', 'ano'] })
     async getEstadisticasGenerales(
         @GetUser() user: JwtUser,
         @Query('fechaInicio') fechaInicio?: Date,
@@ -42,14 +43,16 @@ export class ContabilidadStatsController {
         @Query('estado') estado?: ContabilidadEstado,
         @Query('tipoCausacion') tipoCausacion?: TipoCausacion,
         @Query('tieneGlosa') tieneGlosa?: boolean,
-    ): Promise<{ success: boolean; data: EstadisticasContabilidad }> {
+        @Query('periodo') periodo?: string,
+    ): Promise<any> {
         const filtros: FiltrosEstadisticas = {
             fechaInicio,
             fechaFin,
             contadorId,
             estado,
             tipoCausacion,
-            tieneGlosa: tieneGlosa !== undefined ? JSON.parse(tieneGlosa.toString()) : undefined
+            tieneGlosa: tieneGlosa !== undefined ? JSON.parse(tieneGlosa.toString()) : undefined,
+            periodo
         };
 
         const data = await this.statsService.getEstadisticasGenerales(
@@ -58,9 +61,14 @@ export class ContabilidadStatsController {
             filtros
         );
 
+        // Envolver en la estructura que espera el frontend
         return {
-            success: true,
-            data
+            ok: true,
+            timestamp: new Date().toISOString(),
+            data: {
+                success: true,
+                data
+            }
         };
     }
 
@@ -132,25 +140,11 @@ export class ContabilidadStatsController {
     @Get('resumen-rapido')
     @ApiOperation({ summary: 'Obtener resumen rápido para dashboard' })
     async getResumenRapido(@GetUser() user: JwtUser) {
-        const estadisticas = await this.statsService.getEstadisticasGenerales(user.id, user.role, {
-            fechaInicio: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) // últimos 30 días
-        });
-
-        // Extraer solo lo necesario para un resumen rápido
-        const resumen = {
-            totalDocumentos: estadisticas.resumen.totalDocumentos,
-            completados: estadisticas.resumen.documentosCompletados,
-            enRevision: estadisticas.resumen.documentosEnRevision,
-            tasaCompletitud: estadisticas.resumen.totalDocumentos > 0 ?
-                (estadisticas.resumen.documentosCompletados / estadisticas.resumen.totalDocumentos) * 100 : 0,
-            tiempoPromedio: estadisticas.tiempos.promedioRevision,
-            conGlosa: estadisticas.glosas.conGlosa,
-            documentosRecientes: estadisticas.documentosRecientes.slice(0, 5)
-        };
+        const data = await this.statsService.getResumenRapido(user.id, user.role);
 
         return {
             success: true,
-            data: resumen
+            data
         };
     }
 }

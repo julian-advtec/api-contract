@@ -193,24 +193,33 @@ export class AsesorGerenciaController {
     }
   }
 
-@Get('documentos/:documentoId/comprobante-firmado')
-@Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA)
-async verComprobanteFirmado(
-  @Param('documentoId', ParseUUIDPipe) documentoId: string,
-  @Res() res: Response,
-) {
-  try {
-    const { rutaAbsoluta, nombreArchivo } = await this.service.obtenerRutaComprobanteFirmado(documentoId);
-    this.logger.log(`Sirviendo comprobante firmado: ${rutaAbsoluta}`);
+  @Get('documentos/:documentoId/comprobante-firmado')
+  @Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA)
+  async verComprobanteFirmado(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @Res() res: Response,
+  ) {
+    try {
+      const { rutaAbsoluta, nombreArchivo } = await this.service.obtenerRutaComprobanteFirmado(documentoId);
+      this.logger.log(`Sirviendo comprobante firmado: ${rutaAbsoluta}`);
 
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${nombreArchivo}"`);
-    res.sendFile(rutaAbsoluta);
-  } catch (error) {
-    this.logger.error(`Error sirviendo comprobante firmado ${documentoId}: ${error.message}`);
-    res.status(error instanceof NotFoundException ? 404 : 500).json({
-      message: error.message || 'Comprobante firmado no encontrado'
-    });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${nombreArchivo}"`);
+      res.sendFile(rutaAbsoluta);
+    } catch (error) {
+      this.logger.error(`Error sirviendo comprobante firmado ${documentoId}: ${error.message}`);
+      res.status(error instanceof NotFoundException ? 404 : 500).json({
+        message: error.message || 'Comprobante firmado no encontrado'
+      });
+    }
   }
-}
+
+  @Get('todos-documentos')
+  @Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA)
+  async getTodosDocumentos(@GetUser() user: JwtUser) {
+    this.logger.log(`[TODOS-DOCUMENTOS] Solicitado por ${user.username} (${user.role})`);
+    const documentos = await this.service.obtenerTodosDocumentos(user.id);
+    return { success: true, data: documentos };
+  }
+  
 }

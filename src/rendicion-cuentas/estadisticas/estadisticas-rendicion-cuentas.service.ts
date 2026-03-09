@@ -1,483 +1,318 @@
+// src/rendicion-cuentas/services/estadisticas-rendicion-cuentas.service.ts
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, In } from 'typeorm';
 import { EstadisticasQueryDto, PeriodoStats } from './dto/estadisticas-query.dto';
 import { RendicionCuentasDocumento } from '../entities/rendicion-cuentas-documento.entity';
-import { RendicionCuentasHistorial } from '../entities/rendicion-cuentas-historial.entity';
 import { RendicionCuentasEstado } from '../entities/rendicion-cuentas-estado.enum';
-import { User } from '../../users/entities/user.entity';
-import { EstadisticasRendicionCuentas, DistribucionEstado, DocumentoItem, ActividadReciente } from './interfaces/estadisticas.interface';
 
 @Injectable()
 export class EstadisticasRendicionCuentasService {
-  private readonly logger = new Logger(EstadisticasRendicionCuentasService.name);
-
-private readonly coloresPorEstado: Record<string, string> = {
-  [RendicionCuentasEstado.PENDIENTE]: '#FFC107',              // amarillo
-  [RendicionCuentasEstado.EN_REVISION]: '#2196F3',            // azul
-  [RendicionCuentasEstado.APROBADO]: '#4CAF50',               // verde
-  [RendicionCuentasEstado.OBSERVADO]: '#FF9800',              // naranja
-  [RendicionCuentasEstado.RECHAZADO]: '#F44336',              // rojo
-  [RendicionCuentasEstado.COMPLETADO]: '#9E9E9E',             // gris
-  [RendicionCuentasEstado.ESPERA_APROBACION_GERENCIA]: '#9C27B0',   // morado claro
-  [RendicionCuentasEstado.APROBADO_POR_GERENCIA]: '#673AB7',        // morado fuerte
-};
-
-
-  constructor(
-    @InjectRepository(RendicionCuentasDocumento)
-    private documentoRepo: Repository<RendicionCuentasDocumento>,
-    @InjectRepository(RendicionCuentasHistorial)
-    private historialRepo: Repository<RendicionCuentasHistorial>,
-    @InjectRepository(User)
-    private userRepo: Repository<User>,
-  ) {}
-
- async obtenerEstadisticas(
-    query: EstadisticasQueryDto,
-    usuario: any
-  ): Promise<EstadisticasRendicionCuentas> {
-    const { desde, hasta } = this.calcularRangoFechas(query);
-
-    try {
-      this.logger.log(`Calculando estadísticas desde ${desde} hasta ${hasta} para usuario ${usuario?.id || 'N/A'}`);
-
-      const documentos = await this.documentoRepo.find({
-        where: {
-          fechaCreacion: Between(desde, hasta),
-        },
-        relations: ['documento', 'responsable'],
-      });
-
-      const resumen = this.calcularResumen(documentos);
-      const distribucion = this.calcularDistribucion(documentos);
-      const documentosPendientes = await this.obtenerDocumentosPendientes(desde, hasta);
-      const documentosProcesados = await this.obtenerDocumentosProcesados(desde, hasta);
-      const actividadReciente = await this.obtenerActividadReciente(desde, hasta);
-      const tiempos = await this.calcularTiemposRespuesta(desde, hasta);
-      const metricas = this.calcularMetricasDesempeno(documentos, tiempos);
-      const cumplimiento = await this.calcularCumplimientoObjetivos(desde, hasta, usuario);
-      const tendencias = await this.obtenerTendencias(query.periodo || PeriodoStats.MES);
-      const misMetricas = await this.calcularMisMetricas(usuario.id, desde, hasta);
-
-      return {
-        desde,
-        hasta,
-        fechaCalculo: new Date(),
-        resumen,
-        rendimiento: {  // ← AÑADIDO AQUÍ para coincidir con la interfaz
-          tiempoPromedioHoras: tiempos.promedioHoras,
-          tasaAprobacion: metricas.tasaAprobacion,
-          tasaObservacion: metricas.tasaObservacion,
-          tasaRechazo: metricas.tasaRechazo,
-        },
-        metricas,
-        distribucion,
-        documentosPendientes,
-        documentosProcesados,
-        actividadReciente,
-        tiempos,
-        cumplimiento,
-        tendencias,
-        misMetricas,
-      };
-    } catch (error) {
-      this.logger.error(`Error al calcular estadísticas: ${error.message}`, error.stack);
-      throw new BadRequestException('No se pudieron calcular las estadísticas');
-    }
-  }
-
-  private calcularRangoFechas(query: EstadisticasQueryDto): { desde: Date; hasta: Date } {
-    const hasta = new Date();
-    let desde = new Date();
-
-    if (query.fechaInicio && query.fechaFin) {
-      return {
-        desde: new Date(query.fechaInicio),
-        hasta: new Date(query.fechaFin),
-      };
-    }
-
-    switch (query.periodo) {
-      case PeriodoStats.HOY:
-        desde.setHours(0, 0, 0, 0);
-        break;
-      case PeriodoStats.SEMANA:
-        desde.setDate(desde.getDate() - 7);
-        desde.setHours(0, 0, 0, 0);
-        break;
-      case PeriodoStats.MES:
-        desde.setMonth(desde.getMonth() - 1);
-        desde.setHours(0, 0, 0, 0);
-        break;
-      case PeriodoStats.TRIMESTRE:
-        desde.setMonth(desde.getMonth() - 3);
-        desde.setHours(0, 0, 0, 0);
-        break;
-      default:
-        desde.setMonth(desde.getMonth() - 1);
-    }
-
-    return { desde, hasta };
-  }
-
-private calcularResumen(documentos: RendicionCuentasDocumento[]): any {
-  const conteo = new Map<RendicionCuentasEstado | string, number>();
-
-  documentos.forEach(doc => {
-    const estado = doc.estado;
-    conteo.set(estado, (conteo.get(estado) || 0) + 1);
-  });
-
-  const total = documentos.length;
-
-  return {
-    pendientes: conteo.get(RendicionCuentasEstado.PENDIENTE) || 0,
-    enRevision: conteo.get(RendicionCuentasEstado.EN_REVISION) || 0,
-    aprobados: conteo.get(RendicionCuentasEstado.APROBADO) || 0,
-    observados: conteo.get(RendicionCuentasEstado.OBSERVADO) || 0,
-    rechazados: conteo.get(RendicionCuentasEstado.RECHAZADO) || 0,
-    completados: conteo.get(RendicionCuentasEstado.COMPLETADO) || 0,
+    private readonly logger = new Logger(EstadisticasRendicionCuentasService.name);
     
-    // Nuevos estados agregados al enum → ahora se cuentan sin error
-    esperaAprobacionGerencia: conteo.get(RendicionCuentasEstado.ESPERA_APROBACION_GERENCIA) || 0,
-    aprobadoPorGerencia: conteo.get(RendicionCuentasEstado.APROBADO_POR_GERENCIA) || 0,
-    
-    total,
-  };
-}
-
-  private calcularDistribucion(documentos: RendicionCuentasDocumento[]): DistribucionEstado[] {
-    const conteo = new Map<string, number>();
-    
-    documentos.forEach(doc => {
-      const estado = doc.estado;
-      conteo.set(estado, (conteo.get(estado) || 0) + 1);
-    });
-
-    const total = documentos.length;
-    const distribucion: DistribucionEstado[] = [];
-
-    conteo.forEach((cantidad, estado) => {
-      distribucion.push({
-        estado,
-        cantidad,
-        porcentaje: total > 0 ? Math.round((cantidad / total) * 1000) / 10 : 0,
-        color: this.coloresPorEstado[estado] || '#9E9E9E',
-      });
-    });
-
-    return distribucion.sort((a, b) => b.cantidad - a.cantidad);
-  }
-
-  private async obtenerDocumentosPendientes(desde: Date, hasta: Date): Promise<DocumentoItem[]> {
-    const documentos = await this.documentoRepo.find({
-      where: {
-        estado: In([RendicionCuentasEstado.PENDIENTE, RendicionCuentasEstado.EN_REVISION]),
-        fechaCreacion: Between(desde, hasta),
-      },
-      relations: ['documento', 'responsable'],
-      order: { fechaCreacion: 'DESC' },
-      take: 20,
-    });
-
-    return documentos.map(d => this.mapearADocumentoItem(d));
-  }
-
-  private async obtenerDocumentosProcesados(desde: Date, hasta: Date): Promise<DocumentoItem[]> {
-    const documentos = await this.documentoRepo.find({
-      where: {
-        estado: In([RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO]),
-        fechaDecision: Between(desde, hasta),
-      },
-      relations: ['documento', 'responsable'],
-      order: { fechaDecision: 'DESC' },
-      take: 20,
-    });
-
-    return documentos.map(d => this.mapearADocumentoItem(d));
-  }
-
-private mapearADocumentoItem(doc: RendicionCuentasDocumento): DocumentoItem {
-  const getNombreResponsable = (user: User | null): string => {
-    if (!user) return '—';
-
-    return (
-      user.fullName ||                  // ← existe en tu entidad User
-      user.username ||
-      user.email?.split('@')[0] ||
-      `Usuario-${user.id}`
-    );
-  };
-
-  return {
-    id: doc.id,
-    numeroRadicado: doc.documento?.numeroRadicado || '—',
-    contratista: doc.documento?.nombreContratista || '—',
-    contrato: doc.documento?.numeroContrato || '—',
-    estado: doc.estado,
-    fechaAsignacion: doc.fechaAsignacion || doc.fechaCreacion,
-    fechaDecision: doc.fechaDecision,
-    responsableAsignado: getNombreResponsable(doc.responsable),  // ← ahora compila
-    observaciones: doc.observaciones,
-  };
-}
-
-  private async obtenerActividadReciente(desde: Date, hasta: Date): Promise<ActividadReciente[]> {
-    const historial = await this.historialRepo.find({
-      where: { fechaCreacion: Between(desde, hasta) },
-      relations: ['documento', 'documento.documento', 'usuario'],
-      order: { fechaCreacion: 'DESC' },
-      take: 15,
-    });
-
-    const getNombreUsuario = (user: any): string => {
-      if (!user) return 'Sistema';
-      return user.fullName || user.nombreCompleto || user.nombre || user.name || user.username || user.email || 'Usuario';
+    private readonly coloresPorEstado: Record<string, string> = {
+        [RendicionCuentasEstado.PENDIENTE]: '#FFC107',
+        [RendicionCuentasEstado.EN_REVISION]: '#2196F3',
+        [RendicionCuentasEstado.APROBADO]: '#4CAF50',
+        [RendicionCuentasEstado.OBSERVADO]: '#FF9800',
+        [RendicionCuentasEstado.RECHAZADO]: '#F44336',
+        [RendicionCuentasEstado.COMPLETADO]: '#9E9E9E',
+        [RendicionCuentasEstado.ESPERA_APROBACION_GERENCIA]: '#9C27B0',
+        [RendicionCuentasEstado.APROBADO_POR_GERENCIA]: '#673AB7',
     };
 
-    return historial.map(h => ({
-      id: h.id,
-      tipo: this.mapearAccionATipo(h.accion),
-      numeroRadicado: h.documento?.documento?.numeroRadicado || '—',
-      contratista: h.documento?.documento?.nombreContratista || '—',
-      fecha: h.fechaCreacion,
-      responsable: getNombreUsuario(h.usuario),
-      estado: h.estadoNuevo,
-    }));
-  }
+    constructor(
+        @InjectRepository(RendicionCuentasDocumento)
+        private documentoRepo: Repository<RendicionCuentasDocumento>,
+    ) { }
 
-  private mapearAccionATipo(accion: string): 'APROBADO' | 'OBSERVADO' | 'RECHAZADO' | 'INICIADO' | 'ASIGNADO' {
-    if (['APROBAR', 'APROBADO'].includes(accion)) return 'APROBADO';
-    if (['OBSERVAR', 'OBSERVADO'].includes(accion)) return 'OBSERVADO';
-    if (['RECHAZAR', 'RECHAZADO'].includes(accion)) return 'RECHAZADO';
-    if (accion === 'INICIAR_REVISION') return 'INICIADO';
-    if (accion === 'ASIGNAR') return 'ASIGNADO';
-    return 'INICIADO';
-  }
+    async obtenerEstadisticas(query: EstadisticasQueryDto, usuario: any) {
+        const { desde, hasta } = this.calcularRangoFechas(query);
 
-  private async calcularTiemposRespuesta(desde: Date, hasta: Date): Promise<any> {
-    const documentosConDecision = await this.documentoRepo.find({
-      where: {
-        estado: In([RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO]),
-        fechaDecision: Between(desde, hasta),
-        fechaInicioRevision: Between(desde, hasta),
-      },
-    });
+        try {
+            this.logger.log(`Calculando estadísticas desde ${desde} hasta ${hasta} para usuario ${usuario?.id || 'N/A'}`);
 
-    if (documentosConDecision.length === 0) {
-      return { promedioHoras: 0, minimoHoras: 0, maximoHoras: 0, promedioDias: 0 };
+            // Conteo agrupado usando los enums reales
+            const conteosRaw = await this.documentoRepo
+                .createQueryBuilder('d')
+                .select('d.estado', 'estado')
+                .addSelect('COUNT(d.id)', 'cantidad')
+                .where('d.fechaCreacion BETWEEN :desde AND :hasta', { desde, hasta })
+                .groupBy('d.estado')
+                .getRawMany();
+
+            const conteos = conteosRaw.map(row => ({
+                ...row,
+                estado: row.estado ?? 'SIN_ESTADO',
+            }));
+
+            this.logger.debug(`Conteos obtenidos: ${conteos.length} grupos`);
+
+            // Obtener pendientes (PENDIENTE y EN_REVISION)
+            const pendientes = await this.documentoRepo
+                .createQueryBuilder('d')
+                .leftJoinAndSelect('d.documento', 'doc')
+                .leftJoinAndSelect('d.responsable', 'r')
+                .where('d.estado IN (:...estados)', {
+                    estados: [RendicionCuentasEstado.PENDIENTE, RendicionCuentasEstado.EN_REVISION]
+                })
+                .andWhere('d.fechaCreacion BETWEEN :desde AND :hasta', { desde, hasta })
+                .orderBy('d.fechaCreacion', 'DESC')
+                .getMany();
+
+            // Obtener procesados (APROBADO, OBSERVADO, RECHAZADO, COMPLETADO, APROBADO_POR_GERENCIA)
+            const procesados = await this.documentoRepo
+                .createQueryBuilder('d')
+                .leftJoinAndSelect('d.documento', 'doc')
+                .leftJoinAndSelect('d.responsable', 'r')
+                .where('d.estado IN (:...estados)', {
+                    estados: [
+                        RendicionCuentasEstado.APROBADO,
+                        RendicionCuentasEstado.OBSERVADO,
+                        RendicionCuentasEstado.RECHAZADO,
+                        RendicionCuentasEstado.COMPLETADO,
+                        RendicionCuentasEstado.APROBADO_POR_GERENCIA
+                    ]
+                })
+                .andWhere('d.fechaCreacion BETWEEN :desde AND :hasta', { desde, hasta })
+                .orderBy('d.fechaActualizacion', 'DESC')
+                .getMany();
+
+            this.logger.debug(`Pendientes encontrados: ${pendientes.length}`);
+            this.logger.debug(`Procesados encontrados: ${procesados.length}`);
+
+            // Crear actividad reciente combinando pendientes y procesados
+            const todosLosProcesos = [...pendientes, ...procesados]
+                .sort((a, b) => {
+                    const fechaA = a.fechaActualizacion || a.fechaCreacion;
+                    const fechaB = b.fechaActualizacion || b.fechaCreacion;
+                    return new Date(fechaB).getTime() - new Date(fechaA).getTime();
+                })
+                .slice(0, 10);
+
+            const actividadReciente = todosLosProcesos.map(p => ({
+                id: p.id,
+                tipo: this.normalizarTipo(p.estado),
+                numeroRadicado: p.documento?.numeroRadicado || '—',
+                contratista: p.documento?.nombreContratista || '—',
+                fecha: p.fechaActualizacion || p.fechaCreacion,
+                responsable: p.responsable?.fullName || p.responsable?.username || 'Sistema',
+            }));
+
+            // Calcular resumen
+            const resumen = {
+                pendientes: this.obtenerConteo(conteos, RendicionCuentasEstado.PENDIENTE) || 
+                            pendientes.filter(p => p.estado === RendicionCuentasEstado.PENDIENTE).length,
+                enRevision: this.obtenerConteo(conteos, RendicionCuentasEstado.EN_REVISION) || 
+                            pendientes.filter(p => p.estado === RendicionCuentasEstado.EN_REVISION).length,
+                aprobados: this.obtenerConteo(conteos, RendicionCuentasEstado.APROBADO) || 
+                           procesados.filter(p => p.estado === RendicionCuentasEstado.APROBADO).length,
+                observados: this.obtenerConteo(conteos, RendicionCuentasEstado.OBSERVADO) || 
+                            procesados.filter(p => p.estado === RendicionCuentasEstado.OBSERVADO).length,
+                rechazados: this.obtenerConteo(conteos, RendicionCuentasEstado.RECHAZADO) || 
+                            procesados.filter(p => p.estado === RendicionCuentasEstado.RECHAZADO).length,
+                completados: this.obtenerConteo(conteos, RendicionCuentasEstado.COMPLETADO) || 
+                             procesados.filter(p => p.estado === RendicionCuentasEstado.COMPLETADO).length,
+                esperaAprobacionGerencia: this.obtenerConteo(conteos, RendicionCuentasEstado.ESPERA_APROBACION_GERENCIA) || 
+                                          procesados.filter(p => p.estado === RendicionCuentasEstado.ESPERA_APROBACION_GERENCIA).length,
+                aprobadoPorGerencia: this.obtenerConteo(conteos, RendicionCuentasEstado.APROBADO_POR_GERENCIA) || 
+                                     procesados.filter(p => p.estado === RendicionCuentasEstado.APROBADO_POR_GERENCIA).length,
+                total: pendientes.length + procesados.length,
+            };
+
+            // Calcular tiempos de respuesta
+            const tiempos = this.calcularTiemposPromedio([...pendientes, ...procesados]);
+
+            // Calcular rendimiento
+            const totalDocumentos = resumen.total;
+            const rendimiento = {
+                tiempoPromedioHoras: tiempos.promedioHoras,
+                tasaAprobacion: totalDocumentos > 0 ? 
+                    Math.round((resumen.aprobados / totalDocumentos) * 100) : 0,
+                tasaObservacion: totalDocumentos > 0 ? 
+                    Math.round((resumen.observados / totalDocumentos) * 100) : 0,
+                tasaRechazo: totalDocumentos > 0 ? 
+                    Math.round((resumen.rechazados / totalDocumentos) * 100) : 0,
+            };
+
+            // Calcular métricas
+            const metricas = {
+                documentosProcesados: resumen.aprobados + resumen.observados + resumen.rechazados + resumen.completados + resumen.aprobadoPorGerencia,
+                tiempoPromedioRespuesta: tiempos.promedioHoras,
+                tasaAprobacion: rendimiento.tasaAprobacion,
+                tasaObservacion: rendimiento.tasaObservacion,
+                tasaRechazo: rendimiento.tasaRechazo,
+                documentosPendientes: resumen.pendientes + resumen.enRevision,
+            };
+
+            // Calcular mis métricas si el usuario está autenticado
+            let misMetricas = null;
+            if (usuario?.id) {
+                const misDocs = [...pendientes, ...procesados].filter(d => d.responsable?.id === usuario.id);
+                const hoy = new Date();
+                const hace7Dias = new Date(hoy.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+                misMetricas = {
+                    pendientes: misDocs.filter(d => 
+                        d.estado === RendicionCuentasEstado.PENDIENTE || 
+                        d.estado === RendicionCuentasEstado.EN_REVISION
+                    ).length,
+                    procesadosHoy: misDocs.filter(d => 
+                        d.fechaActualizacion && 
+                        d.fechaActualizacion.toDateString() === hoy.toDateString() &&
+                        d.estado !== RendicionCuentasEstado.PENDIENTE && 
+                        d.estado !== RendicionCuentasEstado.EN_REVISION
+                    ).length,
+                    procesadosSemana: misDocs.filter(d => 
+                        d.fechaActualizacion && 
+                        d.fechaActualizacion >= hace7Dias &&
+                        d.estado !== RendicionCuentasEstado.PENDIENTE && 
+                        d.estado !== RendicionCuentasEstado.EN_REVISION
+                    ).length,
+                    promedioRespuesta: this.calcularPromedioRespuestaUsuario(misDocs),
+                };
+            }
+
+            return {
+                desde,
+                hasta,
+                fechaCalculo: new Date(),
+                resumen,
+                rendimiento,
+                metricas,
+                distribucion: this.calcularDistribucion(conteos),
+                documentosPendientes: this.mapearDocumentos(pendientes),
+                documentosProcesados: this.mapearDocumentos(procesados),
+                actividadReciente,
+                tiempos,
+                misMetricas,
+            };
+        } catch (error) {
+            this.logger.error('Error grave al calcular estadísticas', error);
+            throw new BadRequestException('No se pudieron calcular las estadísticas. Contacte soporte.');
+        }
     }
 
-    const tiempos: number[] = [];
+    private calcularRangoFechas(query: EstadisticasQueryDto) {
+        const hasta = new Date();
+        let desde = new Date();
 
-    documentosConDecision.forEach(doc => {
-      if (doc.fechaInicioRevision && doc.fechaDecision) {
-        const tiempoHoras = (doc.fechaDecision.getTime() - doc.fechaInicioRevision.getTime()) / (1000 * 60 * 60);
-        if (tiempoHoras > 0) tiempos.push(tiempoHoras);
-      }
-    });
-
-    if (tiempos.length === 0) {
-      return { promedioHoras: 0, minimoHoras: 0, maximoHoras: 0, promedioDias: 0 };
+        switch (query.periodo?.toLowerCase()) {
+            case 'hoy':
+            case PeriodoStats.HOY:
+                desde.setHours(0, 0, 0, 0);
+                break;
+            case 'semana':
+            case PeriodoStats.SEMANA:
+                desde.setDate(desde.getDate() - 7);
+                desde.setHours(0, 0, 0, 0);
+                break;
+            case 'mes':
+            case PeriodoStats.MES:
+                desde.setMonth(desde.getMonth() - 1);
+                desde.setHours(0, 0, 0, 0);
+                break;
+            case 'trimestre':
+            case PeriodoStats.TRIMESTRE:
+                desde.setMonth(desde.getMonth() - 3);
+                desde.setHours(0, 0, 0, 0);
+                break;
+            default:
+                desde.setMonth(desde.getMonth() - 1);
+        }
+        return { desde, hasta };
     }
 
-    const suma = tiempos.reduce((a, b) => a + b, 0);
-    const promedioHoras = suma / tiempos.length;
-
-    return {
-      promedioHoras: Math.round(promedioHoras * 10) / 10,
-      minimoHoras: Math.round(Math.min(...tiempos) * 10) / 10,
-      maximoHoras: Math.round(Math.max(...tiempos) * 10) / 10,
-      promedioDias: Math.round((promedioHoras / 24) * 10) / 10,
-    };
-  }
-
-  private calcularMetricasDesempeno(documentos: RendicionCuentasDocumento[], tiempos: any): any {
-    const totalDocumentos = documentos.length;
-    const procesados = documentos.filter(d => 
-      [RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO].includes(d.estado)
-    ).length;
-    
-    const aprobados = documentos.filter(d => d.estado === RendicionCuentasEstado.APROBADO).length;
-    const observados = documentos.filter(d => d.estado === RendicionCuentasEstado.OBSERVADO).length;
-    const rechazados = documentos.filter(d => d.estado === RendicionCuentasEstado.RECHAZADO).length;
-    
-    const pendientes = documentos.filter(d => 
-      [RendicionCuentasEstado.PENDIENTE, RendicionCuentasEstado.EN_REVISION].includes(d.estado)
-    ).length;
-
-    return {
-      documentosProcesados: procesados,
-      tiempoPromedioRespuesta: tiempos.promedioHoras,
-      tasaAprobacion: totalDocumentos > 0 ? Math.round((aprobados / totalDocumentos) * 1000) / 10 : 0,
-      tasaObservacion: totalDocumentos > 0 ? Math.round((observados / totalDocumentos) * 1000) / 10 : 0,
-      tasaRechazo: totalDocumentos > 0 ? Math.round((rechazados / totalDocumentos) * 1000) / 10 : 0,
-      documentosPendientes: pendientes,
-    };
-  }
-
-  private async calcularCumplimientoObjetivos(desde: Date, hasta: Date, usuario: any): Promise<any> {
-    const documentos = await this.documentoRepo.find({
-      where: { fechaCreacion: Between(desde, hasta) },
-    });
-
-    const procesados = documentos.filter(d => 
-      [RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO].includes(d.estado)
-    ).length;
-
-    const aprobados = documentos.filter(d => d.estado === RendicionCuentasEstado.APROBADO).length;
-
-    const objetivoDocumentos = 100;
-    const objetivotiempo = 24;
-    const objetivoCalidad = 80;
-
-    const cumplimientoDocumentos = procesados;
-    const tiempoActual = await this.calcularTiempoPromedio(desde, hasta);
-    const calidadActual = procesados > 0 ? (aprobados / procesados) * 100 : 0;
-
-    return {
-      periodo: { inicio: desde, fin: hasta },
-      documentos: {
-        objetivo: objetivoDocumentos,
-        actual: cumplimientoDocumentos,
-        cumplimiento: Math.min(100, Math.round((cumplimientoDocumentos / objetivoDocumentos) * 1000) / 10),
-        tendencia: this.calcularTendencia(cumplimientoDocumentos, objetivoDocumentos),
-      },
-      tiempoRespuesta: {
-        objetivo: objetivotiempo,
-        actual: tiempoActual,
-        cumplimiento: tiempoActual > 0 ? Math.min(100, Math.round((objetivotiempo / tiempoActual) * 1000) / 10) : 0,
-        tendencia: this.calcularTendencia(objetivotiempo, tiempoActual, true),
-      },
-      calidad: {
-        objetivo: objetivoCalidad,
-        actual: Math.round(calidadActual * 10) / 10,
-        cumplimiento: Math.min(100, Math.round((calidadActual / objetivoCalidad) * 1000) / 10),
-        tendencia: this.calcularTendencia(calidadActual, objetivoCalidad),
-      },
-    };
-  }
-
-  private calcularTendencia(actual: number, objetivo: number, inverso: boolean = false): 'positive' | 'negative' | 'neutral' {
-    const margen = objetivo * 0.1;
-    
-    if (inverso) {
-      if (actual < objetivo - margen) return 'positive';
-      if (actual > objetivo + margen) return 'negative';
-      return 'neutral';
-    } else {
-      if (actual > objetivo + margen) return 'positive';
-      if (actual < objetivo - margen) return 'negative';
-      return 'neutral';
-    }
-  }
-
-  private async calcularTiempoPromedio(desde: Date, hasta: Date): Promise<number> {
-    const documentos = await this.documentoRepo.find({
-      where: {
-        estado: In([RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO]),
-        fechaDecision: Between(desde, hasta),
-        fechaInicioRevision: Between(desde, hasta),
-      },
-    });
-
-    if (documentos.length === 0) return 0;
-
-    const tiempos: number[] = [];
-    
-    for (const doc of documentos) {
-      if (doc.fechaInicioRevision && doc.fechaDecision) {
-        const tiempo = (doc.fechaDecision.getTime() - doc.fechaInicioRevision.getTime()) / (1000 * 60 * 60);
-        if (tiempo > 0) tiempos.push(tiempo);
-      }
+    private obtenerConteo(conteos: any[], estadoBuscado: RendicionCuentasEstado): number {
+        const match = conteos.find((c) => c.estado === estadoBuscado);
+        return match ? Number(match.cantidad) || 0 : 0;
     }
 
-    if (tiempos.length === 0) return 0;
-
-    const suma = tiempos.reduce((a, b) => a + b, 0);
-    return Math.round((suma / tiempos.length) * 10) / 10;
-  }
-
-  private async obtenerTendencias(periodo: PeriodoStats): Promise<any[]> {
-    const tendencias = [];
-    const fechaFin = new Date();
-    const meses = periodo === PeriodoStats.TRIMESTRE ? 3 : 6;
-    
-    for (let i = 0; i < meses; i++) {
-      const fin = new Date(fechaFin);
-      fin.setMonth(fin.getMonth() - i);
-      
-      const inicio = new Date(fin);
-      inicio.setMonth(inicio.getMonth() - 1);
-      
-      const documentos = await this.documentoRepo.find({
-        where: { fechaCreacion: Between(inicio, fin) },
-      });
-
-      const procesados = documentos.filter(d => 
-        [RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO].includes(d.estado)
-      ).length;
-
-      const aprobados = documentos.filter(d => d.estado === RendicionCuentasEstado.APROBADO).length;
-      
-      const tiempoPromedio = await this.calcularTiempoPromedio(inicio, fin);
-
-      tendencias.unshift({
-        fecha: inicio,
-        documentosProcesados: procesados,
-        tiempoPromedio,
-        tasaAprobacion: documentos.length > 0 ? Math.round((aprobados / documentos.length) * 1000) / 10 : 0,
-      });
+    private calcularDistribucion(conteos: any[]) {
+        return conteos
+            .filter((c) => c.estado && c.cantidad > 0)
+            .map((c) => ({
+                estado: c.estado,
+                cantidad: Number(c.cantidad) || 0,
+                porcentaje: 0, // Se calculará en el frontend o después
+                color: this.coloresPorEstado[c.estado] || '#9E9E9E',
+            }));
     }
 
-    return tendencias;
-  }
-
-  private async calcularMisMetricas(userId: string, desde: Date, hasta: Date): Promise<any> {
-    const misDocumentos = await this.documentoRepo.find({
-      where: {
-        responsableId: userId,
-        fechaCreacion: Between(desde, hasta),
-      },
-    });
-
-    const pendientes = misDocumentos.filter(d => 
-      [RendicionCuentasEstado.PENDIENTE, RendicionCuentasEstado.EN_REVISION].includes(d.estado)
-    ).length;
-
-    const hoy = new Date();
-    const procesadosHoy = misDocumentos.filter(d => {
-      return d.fechaDecision && d.fechaDecision.toDateString() === hoy.toDateString() &&
-             [RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO].includes(d.estado);
-    }).length;
-
-    const haceUnaSemana = new Date();
-    haceUnaSemana.setDate(haceUnaSemana.getDate() - 7);
-    
-    const procesadosSemana = misDocumentos.filter(d => 
-      d.fechaDecision && d.fechaDecision >= haceUnaSemana &&
-      [RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO].includes(d.estado)
-    ).length;
-
-    const tiempos: number[] = [];
-    
-    for (const doc of misDocumentos) {
-      if (doc.fechaInicioRevision && doc.fechaDecision) {
-        const tiempo = (doc.fechaDecision.getTime() - doc.fechaInicioRevision.getTime()) / (1000 * 60 * 60);
-        if (tiempo > 0) tiempos.push(tiempo);
-      }
+    private mapearDocumentos(docs: any[]) {
+        return docs.map((d) => ({
+            id: d.id,
+            numeroRadicado: d.documento?.numeroRadicado || '—',
+            contratista: d.documento?.nombreContratista || '—',
+            contrato: d.documento?.numeroContrato || '—',
+            estado: d.estado,
+            fechaAsignacion: d.fechaCreacion,
+            fechaDecision: d.fechaDecision || d.fechaActualizacion,
+            responsableAsignado: d.responsable?.fullName || d.responsable?.username || '—',
+            observaciones: d.observaciones,
+        }));
     }
 
-    const promedioRespuesta = tiempos.length > 0 
-      ? Math.round((tiempos.reduce((a, b) => a + b, 0) / tiempos.length) * 10) / 10
-      : 0;
+    private calcularTiemposPromedio(documentos: any[]) {
+        const documentosConTiempo = documentos.filter(d =>
+            d.fechaInicioRevision && d.fechaDecision
+        );
 
-    return {
-      pendientes,
-      procesadosHoy,
-      procesadosSemana,
-      promedioRespuesta,
-    };
-  }
+        if (documentosConTiempo.length === 0) {
+            return { promedioHoras: 0, minimoHoras: 0, maximoHoras: 0, promedioDias: 0 };
+        }
+
+        const tiempos = documentosConTiempo.map(d => {
+            const diffMs = new Date(d.fechaDecision).getTime() - new Date(d.fechaInicioRevision).getTime();
+            return diffMs / (1000 * 60 * 60);
+        });
+
+        const suma = tiempos.reduce((a, b) => a + b, 0);
+        const promedioHoras = suma / tiempos.length;
+
+        return {
+            promedioHoras: Math.round(promedioHoras * 10) / 10,
+            minimoHoras: Math.round(Math.min(...tiempos) * 10) / 10,
+            maximoHoras: Math.round(Math.max(...tiempos) * 10) / 10,
+            promedioDias: Math.round((promedioHoras / 24) * 10) / 10,
+        };
+    }
+
+    private calcularPromedioRespuestaUsuario(documentos: any[]): number {
+        const documentosConTiempo = documentos.filter(d =>
+            d.fechaInicioRevision && d.fechaDecision
+        );
+
+        if (documentosConTiempo.length === 0) return 0;
+
+        const tiempos = documentosConTiempo.map(d => {
+            const diffMs = new Date(d.fechaDecision).getTime() - new Date(d.fechaInicioRevision).getTime();
+            return diffMs / (1000 * 60 * 60);
+        });
+
+        const suma = tiempos.reduce((a, b) => a + b, 0);
+        return Math.round((suma / tiempos.length) * 10) / 10;
+    }
+
+    private normalizarTipo(estado: RendicionCuentasEstado | null): string {
+        if (!estado) return 'PENDIENTE';
+        
+        switch (estado) {
+            case RendicionCuentasEstado.APROBADO:
+            case RendicionCuentasEstado.APROBADO_POR_GERENCIA:
+                return 'APROBADO';
+            case RendicionCuentasEstado.OBSERVADO:
+                return 'OBSERVADO';
+            case RendicionCuentasEstado.RECHAZADO:
+                return 'RECHAZADO';
+            case RendicionCuentasEstado.EN_REVISION:
+                return 'EN_REVISION';
+            case RendicionCuentasEstado.PENDIENTE:
+                return 'PENDIENTE';
+            case RendicionCuentasEstado.COMPLETADO:
+                return 'COMPLETADO';
+            default:
+                return estado;
+        }
+    }
 }

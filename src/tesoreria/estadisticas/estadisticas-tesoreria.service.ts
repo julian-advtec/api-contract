@@ -1,8 +1,9 @@
+// src/tesoreria/estadisticas/estadisticas-tesoreria.service.ts
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { EstadisticasQueryDto, PeriodoStats } from './dto/estadisticas-query.dto';
-import { TesoreriaDocumento } from '../entities/tesoreria-documento.entity';
+import { TesoreriaDocumento, TesoreriaEstado } from '../entities/tesoreria-documento.entity';
 
 @Injectable()
 export class EstadisticasTesoreriaService {
@@ -17,7 +18,7 @@ export class EstadisticasTesoreriaService {
         const { desde, hasta } = this.calcularRangoFechas(query);
 
         try {
-            // Conteo agrupado (sin monto)
+            // Conteo agrupado usando los enums reales
             const conteosRaw = await this.documentoRepo
                 .createQueryBuilder('d')
                 .select('d.estado', 'estado')
@@ -32,46 +33,68 @@ export class EstadisticasTesoreriaService {
                 monto: 0,
             }));
 
-            this.logger.debug(`Conteos obtenidos y normalizados: ${conteos.length} grupos`);
+            this.logger.debug(`Conteos obtenidos: ${conteos.length} grupos`);
 
-            
-
-            // Pendientes - FIX con CAST para LIKE en enum
+            // Obtener pendientes (solo EN_REVISION)
             const pendientes = await this.documentoRepo
                 .createQueryBuilder('d')
                 .leftJoinAndSelect('d.documento', 'doc')
                 .leftJoinAndSelect('d.tesorero', 't')
-                .where("CAST(d.estado AS TEXT) LIKE :estado", { estado: '%PENDIENTE%' })
+                .where('d.estado = :estado', { estado: TesoreriaEstado.EN_REVISION })
                 .andWhere('d.fechaCreacion BETWEEN :desde AND :hasta', { desde, hasta })
                 .orderBy('d.fechaCreacion', 'DESC')
-                .limit(10)
                 .getMany();
 
-            // Procesados - FIX con CAST para LIKE en enum
+            // Obtener procesados (COMPLETADO_TESORERIA, OBSERVADO_TESORERIA, RECHAZADO_TESORERIA)
             const procesados = await this.documentoRepo
                 .createQueryBuilder('d')
                 .leftJoinAndSelect('d.documento', 'doc')
                 .leftJoinAndSelect('d.tesorero', 't')
-                .where(
-                    "CAST(d.estado AS TEXT) LIKE :pagado OR CAST(d.estado AS TEXT) LIKE :observado OR CAST(d.estado AS TEXT) LIKE :rechazado",
-                    {
-                        pagado: '%PAGADO%',
-                        observado: '%OBSERVADO%',
-                        rechazado: '%RECHAZADO%',
-                    },
-                )
+                .where('d.estado IN (:...estados)', { 
+                    estados: [
+                        TesoreriaEstado.COMPLETADO_TESORERIA,
+                        TesoreriaEstado.OBSERVADO_TESORERIA,
+                        TesoreriaEstado.RECHAZADO_TESORERIA
+                    ] 
+                })
                 .andWhere('d.fechaCreacion BETWEEN :desde AND :hasta', { desde, hasta })
                 .orderBy('d.fechaActualizacion', 'DESC')
-                .limit(10)
                 .getMany();
+
+            this.logger.debug(`Pendientes encontrados: ${pendientes.length}`);
+            this.logger.debug(`Procesados encontrados: ${procesados.length}`);
+
+            // Crear actividad reciente combinando pendientes y procesados
+            const todosLosProcesos = [...pendientes, ...procesados]
+                .sort((a, b) => {
+                    const fechaA = a.fechaActualizacion || a.fechaCreacion;
+                    const fechaB = b.fechaActualizacion || b.fechaCreacion;
+                    return new Date(fechaB).getTime() - new Date(fechaA).getTime();
+                })
+                .slice(0, 10);
+
+            const actividadReciente = todosLosProcesos.map(p => ({
+                id: p.id,
+                tipo: this.normalizarTipo(p.estado),
+                numeroRadicado: p.documento?.numeroRadicado || '—',
+                contratista: p.documento?.nombreContratista || '—',
+                monto: 0,
+                fecha: p.fechaActualizacion || p.fechaCreacion,
+                tesorero: p.tesorero?.fullName || p.tesorero?.username || 'Sistema',
+            }));
 
             return {
                 documentos: {
-                    pendientes: this.obtenerConteo(conteos, 'PENDIENTE'),
-                    pagados: this.obtenerConteo(conteos, 'PAGADO') + this.obtenerConteo(conteos, 'COMPLETADO'),
-                    observados: this.obtenerConteo(conteos, 'OBSERVADO'),
-                    rechazados: this.obtenerConteo(conteos, 'RECHAZADO'),
-                    total: conteos.reduce((sum, c) => sum + Number(c.cantidad || 0), 0),
+                    pendientes: this.obtenerConteo(conteos, TesoreriaEstado.EN_REVISION) || pendientes.length,
+                    pagados: this.obtenerConteo(conteos, TesoreriaEstado.COMPLETADO_TESORERIA) || 
+                             procesados.filter(p => p.estado === TesoreriaEstado.COMPLETADO_TESORERIA).length,
+                    observados: this.obtenerConteo(conteos, TesoreriaEstado.OBSERVADO_TESORERIA) || 
+                                procesados.filter(p => p.estado === TesoreriaEstado.OBSERVADO_TESORERIA).length,
+                    rechazados: this.obtenerConteo(conteos, TesoreriaEstado.RECHAZADO_TESORERIA) || 
+                                procesados.filter(p => p.estado === TesoreriaEstado.RECHAZADO_TESORERIA).length,
+                    enProceso: 0, // No hay estado EN_PROCESO en el enum
+                    total: conteos.reduce((sum, c) => sum + Number(c.cantidad || 0), 0) || 
+                           (pendientes.length + procesados.length),
                 },
                 montos: {
                     pendiente: 0,
@@ -81,7 +104,7 @@ export class EstadisticasTesoreriaService {
                     total: 0,
                 },
                 distribucion: this.calcularDistribucion(conteos),
-                actividadReciente: this.mapearActividad(procesados.slice(0, 5)),
+                actividadReciente,
                 pendientes: this.mapearDocumentos(pendientes),
                 procesados: this.mapearDocumentos(procesados),
                 fechaCalculo: new Date(),
@@ -124,75 +147,61 @@ export class EstadisticasTesoreriaService {
         return { desde, hasta };
     }
 
-    private obtenerConteo(conteos: any[], estadoBuscado: string): number {
-        const normalized = estadoBuscado.toUpperCase();
-        const match = conteos.find((c) =>
-            c.estado && String(c.estado).toUpperCase().includes(normalized)
-        );
+    private obtenerConteo(conteos: any[], estadoBuscado: TesoreriaEstado): number {
+        const match = conteos.find((c) => c.estado === estadoBuscado);
         return match ? Number(match.cantidad) || 0 : 0;
-    }
-
-    private obtenerMonto(conteos: any[], estadoBuscado: string): number {
-        return 0; // Temporal
     }
 
     private calcularDistribucion(conteos: any[]) {
         const colores: Record<string, string> = {
-            PENDIENTE: '#FFA726',
-            PAGADO: '#66BB6A',
-            OBSERVADO: '#FFB74D',
-            RECHAZADO: '#EF5350',
-            COMPLETADO: '#4CAF50',
-            SIN_ESTADO: '#B0BEC5',
+            [TesoreriaEstado.EN_REVISION]: '#FFA726',
+            [TesoreriaEstado.COMPLETADO_TESORERIA]: '#4CAF50',
+            [TesoreriaEstado.OBSERVADO_TESORERIA]: '#FFB74D',
+            [TesoreriaEstado.RECHAZADO_TESORERIA]: '#EF5350',
+            [TesoreriaEstado.DISPONIBLE]: '#42A5F5',
+            'SIN_ESTADO': '#B0BEC5',
         };
 
         return conteos
-            .filter((c) => c.estado || c.cantidad > 0)
-            .map((c) => {
-                const estadoNorm = String(c.estado || 'SIN_ESTADO').trim().toUpperCase();
-                return {
-                    estado: estadoNorm,
-                    cantidad: Number(c.cantidad) || 0,
-                    monto: 0,
-                    color: colores[estadoNorm] || '#78909C',
-                };
-            });
+            .filter((c) => c.estado && c.cantidad > 0)
+            .map((c) => ({
+                estado: c.estado,
+                cantidad: Number(c.cantidad) || 0,
+                monto: 0,
+                color: colores[c.estado] || '#78909C',
+            }));
     }
 
-    private mapearDocumentos(docs: any[]) {
+    private mapearDocumentos(docs: TesoreriaDocumento[]) {
         return docs.map((d) => ({
             id: d.id,
             numeroRadicado: d.documento?.numeroRadicado || '—',
             contratista: d.documento?.nombreContratista || '—',
             contrato: d.documento?.numeroContrato || '—',
             monto: 0,
-            estado: d.estado || 'SIN_ESTADO',
+            estado: d.estado,
             fechaAsignacion: d.fechaCreacion,
             fechaProcesamiento: d.fechaActualizacion,
-            tesoreroAsignado: d.tesorero?.nombreCompleto || '—',
+            tesoreroAsignado: d.tesorero?.fullName || d.tesorero?.username || '—',
             tieneComprobante: !!d.pagoRealizadoPath,
             tieneFirma: !!d.firmaAplicada,
         }));
     }
 
-    private mapearActividad(docs: any[]) {
-        return docs.map((d) => ({
-            id: d.id,
-            tipo: this.normalizarTipo(d.estado),
-            numeroRadicado: d.documento?.numeroRadicado || '—',
-            contratista: d.documento?.nombreContratista || '—',
-            monto: 0,
-            fecha: d.fechaActualizacion || d.fechaCreacion,
-            tesorero: d.tesorero?.nombreCompleto || 'Sistema',
-        }));
-    }
-
-    private normalizarTipo(estado: string | null): string {
+    private normalizarTipo(estado: TesoreriaEstado | null): string {
         if (!estado) return 'PENDIENTE';
-        const upper = estado.toUpperCase();
-        if (upper.includes('PAGADO') || upper.includes('COMPLETADO')) return 'PAGADO';
-        if (upper.includes('OBSERVADO')) return 'OBSERVADO';
-        if (upper.includes('RECHAZADO')) return 'RECHAZADO';
-        return upper || 'PENDIENTE';
+        
+        switch (estado) {
+            case TesoreriaEstado.COMPLETADO_TESORERIA:
+                return 'COMPLETADO';
+            case TesoreriaEstado.OBSERVADO_TESORERIA:
+                return 'OBSERVADO';
+            case TesoreriaEstado.RECHAZADO_TESORERIA:
+                return 'RECHAZADO';
+            case TesoreriaEstado.EN_REVISION:
+                return 'EN_REVISION';
+            default:
+                return estado;
+        }
     }
 }
