@@ -1,5 +1,7 @@
 export enum UserRole {
+  
   ADMIN = 'admin',
+  JURIDICA = 'juridica',
   RADICADOR = 'radicador',
   SUPERVISOR = 'supervisor',
   AUDITOR_CUENTAS = 'auditor_cuentas',
