@@ -17,7 +17,7 @@ export class LoadDocumentoMiddleware implements NestMiddleware {
 
     if (documentoId) {
       const doc = await this.documentoRepo.findOne({
-        where: { id: documentoId },
+     where: { id: Array.isArray(documentoId) ? documentoId[0] : documentoId },
         select: ['id', 'rutaCarpetaRadicado', 'numeroRadicado'],
       });
 
