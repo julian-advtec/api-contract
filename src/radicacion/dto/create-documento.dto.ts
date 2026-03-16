@@ -4,7 +4,9 @@ import { Transform, Type } from 'class-transformer';
 
 export class CreateDocumentoDto {
     @IsString()
-    @Matches(/^R\d{4}-\d{4}$/)
+    @Matches(/^R\d{4}-\d{4,8}$/, {  // ✅ ACTUALIZADO: permite 4-8 dígitos
+        message: 'El número de radicado debe tener formato RAAAA-NNNN (ej: R2025-0001) donde NNNN puede ser de 4 a 8 dígitos'
+    })
     numeroRadicado: string;
 
     @IsString()

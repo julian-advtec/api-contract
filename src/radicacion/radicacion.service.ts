@@ -187,10 +187,11 @@ export class RadicacionService {
                 throw new BadRequestException('Debe adjuntar exactamente 3 documentos');
             }
 
-            const radicadoRegex = /^R\d{4}-\d{4}$/;
+            // ✅ ACTUALIZADO: Permite de 4 a 8 dígitos después del guion
+            const radicadoRegex = /^R\d{4}-\d{4,8}$/;
             if (!radicadoRegex.test(createDocumentoDto.numeroRadicado)) {
                 throw new BadRequestException(
-                    'Formato de radicado inválido. Debe ser RAAAA-NNNN (ej: R2025-0001)'
+                    'Formato de radicado inválido. Debe ser RAAAA-NNNN (ej: R2025-0001) donde NNNN puede ser de 4 a 8 dígitos'
                 );
             }
 
@@ -319,20 +320,17 @@ export class RadicacionService {
         }
     }
 
-    // ✅ NUEVO MÉTODO: Verificar y marcar automáticamente primer radicado del año
     private async verificarYMarcarPrimerRadicadoAno(
         numeroRadicado: string
     ): Promise<boolean> {
         try {
             const ano = numeroRadicado.substring(1, 5);
 
-            // Contar cuántos documentos ya existen para este año
             const count = await this.documentoRepository
                 .createQueryBuilder('documento')
                 .where('documento.numeroRadicado LIKE :ano', { ano: `R${ano}-%` })
                 .getCount();
 
-            // Si es el primer documento del año, marcarlo automáticamente
             return count === 0;
 
         } catch (error) {
@@ -421,14 +419,10 @@ Ruta servidor R2-D2: ${rutaCarpeta}
     private async asignarDocumentoASupervisores(documento: Documento): Promise<void> {
         try {
             this.logger.log(`🔄 Asignando documento ${documento.numeroRadicado} a supervisores...`);
-
-            // Llamar al servicio de supervisor para asignar el documento
             await this.supervisorService.asignarDocumentoASupervisoresAutomaticamente(documento.id);
-
             this.logger.log(`✅ Documento asignado a supervisores automáticamente`);
         } catch (error) {
             this.logger.error(`❌ Error asignando documento a supervisores: ${error.message}`);
-            // No lanzamos el error para no interrumpir el flujo principal
         }
     }
 
@@ -439,7 +433,6 @@ Ruta servidor R2-D2: ${rutaCarpeta}
             `📋 Usuario ${user.username} (${role}) solicitando TODAS las radicaciones`,
         );
 
-        // ADMIN y RADICADOR → TODO
         if (role === 'admin' || role === 'radicador') {
             return this.documentoRepository.find({
                 relations: ['radicador', 'usuarioAsignado'],
@@ -447,7 +440,6 @@ Ruta servidor R2-D2: ${rutaCarpeta}
             });
         }
 
-        // Usar el servicio de estados para obtener documentos por rol
         return await this.estadosService.obtenerDocumentosAsignados(user);
     }
 
@@ -640,7 +632,6 @@ Ruta servidor R2-D2: ${rutaCarpeta}
             `📋 Usuario ${user.username} (${role}) listando MIS documentos`,
         );
 
-        // Usar el servicio de estados para obtener documentos asignados
         return await this.estadosService.obtenerDocumentosAsignados(user);
     }
 
@@ -658,12 +649,10 @@ Ruta servidor R2-D2: ${rutaCarpeta}
             throw new NotFoundException('Documento no encontrado');
         }
 
-        // Verificar permisos
         if (user.role !== UserRole.ADMIN && documento.usuarioAsignado?.id !== user.id) {
             throw new ForbiddenException('No tienes permisos para actualizar este documento');
         }
 
-        // Actualizar campos
         Object.assign(documento, updates);
         documento.fechaActualizacion = new Date();
         documento.ultimoAcceso = new Date();
@@ -716,7 +705,6 @@ Ruta servidor R2-D2: ${rutaCarpeta}
             .leftJoinAndSelect('documento.radicador', 'radicador')
             .leftJoinAndSelect('documento.usuarioAsignado', 'usuarioAsignado');
 
-        // Aplicar filtros
         if (criterios.numeroRadicado) {
             query.andWhere('documento.numeroRadicado LIKE :numeroRadicado', {
                 numeroRadicado: `%${criterios.numeroRadicado}%`
@@ -749,7 +737,6 @@ Ruta servidor R2-D2: ${rutaCarpeta}
             query.andWhere('documento.fechaRadicacion <= :fechaHasta', { fechaHasta });
         }
 
-        // Restricciones por rol
         if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPERVISOR) {
             if (user.role === UserRole.RADICADOR) {
                 query.andWhere('documento.radicador.id = :userId', { userId: user.id });
@@ -781,12 +768,10 @@ Ruta servidor R2-D2: ${rutaCarpeta}
             throw new NotFoundException('Documento no encontrado');
         }
 
-        // Verificar permisos
         if (user.role !== UserRole.ADMIN && documento.usuarioAsignado?.id !== user.id) {
             throw new ForbiddenException('No tienes permisos para actualizar este documento');
         }
 
-        // Actualizar campos permitidos
         if (campos.estado) {
             documento.estado = campos.estado;
         }
@@ -833,7 +818,6 @@ Ruta servidor R2-D2: ${rutaCarpeta}
                 documentoContratista
             });
 
-        // Restricciones por rol
         if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPERVISOR) {
             if (user.role === UserRole.RADICADOR) {
                 query.andWhere('documento.radicador.id = :userId', { userId: user.id });
@@ -858,7 +842,6 @@ Ruta servidor R2-D2: ${rutaCarpeta}
                 estadosFinales: ['FINALIZADO', 'DEVUELTO']
             });
 
-        // Restricciones por rol
         if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPERVISOR) {
             if (user.role === UserRole.RADICADOR) {
                 query.andWhere('documento.radicador.id = :userId', { userId: user.id });
@@ -902,7 +885,6 @@ Ruta servidor R2-D2: ${rutaCarpeta}
             documento.ultimoAcceso = new Date();
             documento.ultimoUsuario = usuario.fullName || usuario.username;
 
-            // Agregar al historial
             const historial = documento.historialEstados || [];
             historial.push({
                 fecha: new Date(),
@@ -916,14 +898,12 @@ Ruta servidor R2-D2: ${rutaCarpeta}
 
             const documentoActualizado = await this.documentoRepository.save(documento);
 
-            // ✅✅✅ NOTIFICAR AL SUPERVISOR SI EL ESTADO REQUIERE SUPERVISIÓN
             if (nuevoEstado === 'RADICADO' || nuevoEstado === 'SUPERVISADO') {
                 try {
                     await this.supervisorService.onDocumentoCambiaEstado(documentoId, nuevoEstado);
                     this.logger.log(`✅ Notificación enviada a supervisor sobre cambio de estado`);
                 } catch (error) {
                     this.logger.error(`⚠️ Error notificando cambio de estado a supervisor: ${error.message}`);
-                    // No fallar la operación principal por esto
                 }
             }
 
