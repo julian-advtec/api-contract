@@ -389,16 +389,28 @@ export class RadicacionService {
         }
     }
 
-    private crearArchivoRegistroEnServidor(rutaCarpeta: string, user: User, accion: string): void {
-        try {
-            const rutaArchivo = path.join(rutaCarpeta, 'registro_accesos.txt');
-            const fecha = new Date().toLocaleString('es-CO', {
-                timeZone: 'America/Bogota',
-                dateStyle: 'full',
-                timeStyle: 'long'
-            });
+private crearArchivoRegistroEnServidor(rutaCarpeta: string, user: User, accion: string): void {
+    try {
+        const rutaArchivo = path.join(rutaCarpeta, 'registro_accesos.txt');
+        const fecha = new Date().toLocaleString('es-CO', {
+            timeZone: 'America/Bogota',
+            dateStyle: 'full',
+            timeStyle: 'long'
+        });
 
-            const contenido = `=== REGISTRO DE ACCESOS - CONTRATOS ===
+        // ✅ VERIFICAR SI EL ARCHIVO YA EXISTE
+        let contenidoExistente = '';
+        let esPrimerRegistro = true;
+
+        if (fs.existsSync(rutaArchivo)) {
+            // Leer contenido existente
+            contenidoExistente = fs.readFileSync(rutaArchivo, 'utf8');
+            esPrimerRegistro = false;
+        }
+
+        // ✅ CONSTRUIR EL NUEVO REGISTRO
+        const nuevoRegistro = esPrimerRegistro 
+            ? `=== REGISTRO DE ACCESOS - CONTRATOS ===
 Fecha: ${fecha}
 Usuario: ${user.fullName || user.username} (${user.username})
 Rol: ${user.role}
@@ -407,14 +419,56 @@ Ruta servidor R2-D2: ${rutaCarpeta}
 
 --- HISTORIAL DE ACCESOS ---
 [${fecha}] ${user.fullName || user.username} (${user.username}) - ${user.role} - ${accion}
-`;
+`
+            : `[${fecha}] ${user.fullName || user.username} (${user.username}) - ${user.role} - ${accion}\n`;
 
-            fs.writeFileSync(rutaArchivo, contenido, 'utf8');
-            this.logger.log(`✅ Archivo de registro creado en servidor R2-D2: ${rutaArchivo}`);
-        } catch (error) {
-            this.logger.error(`❌ Error creando archivo de registro: ${error.message}`);
+        // ✅ SI ES EL PRIMER REGISTRO, ESCRIBIR COMPLETO
+        // ✅ SI YA EXISTE, SOLO AGREGAR LA NUEVA LÍNEA AL FINAL
+        if (esPrimerRegistro) {
+            fs.writeFileSync(rutaArchivo, nuevoRegistro, 'utf8');
+            this.logger.log(`✅ Archivo de registro CREADO en: ${rutaArchivo}`);
+        } else {
+            // Usar flag 'a' para APPEND (agregar al final)
+            fs.writeFileSync(rutaArchivo, nuevoRegistro, { 
+                encoding: 'utf8',
+                flag: 'a'  // ✅ IMPORTANTE: 'a' = append mode
+            });
+            this.logger.log(`✅ Registro AGREGADO al archivo: ${rutaArchivo}`);
         }
+        
+        // También crear/modificar el archivo de detalles
+        this.actualizarArchivoDetalles(rutaCarpeta, user);
+        
+    } catch (error) {
+        this.logger.error(`❌ Error creando archivo de registro: ${error.message}`);
     }
+}
+
+/**
+ * Método auxiliar para mantener actualizado el archivo de detalles
+ */
+private actualizarArchivoDetalles(rutaCarpeta: string, user: User): void {
+    try {
+        const rutaDetalles = path.join(rutaCarpeta, 'detalles_radicacion.txt');
+        
+        // Leer detalles existentes si los hay
+        let detallesExistentes = '';
+        if (fs.existsSync(rutaDetalles)) {
+            detallesExistentes = fs.readFileSync(rutaDetalles, 'utf8');
+        }
+
+        // Agregar nueva entrada
+        const fecha = new Date().toLocaleString('es-CO');
+        const nuevaEntrada = `\n[${fecha}] Acceso de ${user.fullName || user.username} (${user.role})`;
+
+        fs.writeFileSync(rutaDetalles, detallesExistentes + nuevaEntrada, { 
+            flag: 'a' 
+        });
+        
+    } catch (error) {
+        this.logger.error(`❌ Error actualizando detalles: ${error.message}`);
+    }
+}
 
     private async asignarDocumentoASupervisores(documento: Documento): Promise<void> {
         try {

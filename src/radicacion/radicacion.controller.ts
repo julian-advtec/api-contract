@@ -468,6 +468,14 @@ export class RadicacionController {
       this.logger.log(`📄 DTO recibido:`, JSON.stringify(createDocumentoDto, null, 2));
       this.logger.log(`📁 Archivos recibidos: ${files?.length || 0}`);
 
+      // ✅ VALIDACIÓN DEL FORMATO DE RADICADO - CORREGIDA
+      const radicadoRegex = /^R\d{4}-\d{4,8}$/;  // ✅ AHORA PERMITE 4-8 DÍGITOS
+      if (!radicadoRegex.test(createDocumentoDto.numeroRadicado)) {
+        throw new BadRequestException(
+          'Formato de radicado inválido. Debe ser RAAAA-NNNN (ej: R2025-0001) donde NNNN puede ser de 4 a 8 dígitos'
+        );
+      }
+
       // 2. VALIDACIÓN BÁSICA
       if (!files || files.length !== 3) {
         throw new BadRequestException('Debe adjuntar exactamente 3 documentos');
