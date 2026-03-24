@@ -36,7 +36,6 @@ export class BitacoraSistemaService {
       path.join(this.logsBasePath, 'usuarios'),
       path.join(this.logsBasePath, 'modulos'),
       path.join(this.logsBasePath, 'errores'),
-      path.join(this.logsBasePath, 'roles'),
     ];
 
     directorios.forEach(dir => {

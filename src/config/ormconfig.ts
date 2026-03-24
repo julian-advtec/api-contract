@@ -13,6 +13,7 @@ import { Signature } from '../signatures/entities/signature.entity';
 import { AsesorGerenciaDocumento } from '../asesor-gerencia/entities/asesor-gerencia-documento.entity';
 import { RendicionCuentasDocumento } from 'src/rendicion-cuentas/entities/rendicion-cuentas-documento.entity';
 import { RendicionCuentasHistorial } from 'src/rendicion-cuentas/entities/rendicion-cuentas-historial.entity';
+import { DocumentoContratista } from 'src/contratista/entities/documento-contratista.entity';
 
 export const ormconfig: DataSourceOptions = {
   type: 'postgres',
@@ -33,7 +34,8 @@ export const ormconfig: DataSourceOptions = {
     Signature,
     AsesorGerenciaDocumento,
     RendicionCuentasDocumento,
-    RendicionCuentasHistorial
+    RendicionCuentasHistorial,
+    DocumentoContratista,
   ],
 
   synchronize: process.env.NODE_ENV !== 'production',

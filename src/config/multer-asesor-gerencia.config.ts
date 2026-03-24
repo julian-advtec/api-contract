@@ -24,4 +24,5 @@ export const multerAsesorGerenciaConfig: MulterOptions = {
       cb(new Error(`Tipo de archivo no permitido para aprobación gerencial: ${file.mimetype}`), false);
     }
   },
+  
 };

@@ -9,37 +9,39 @@ import { AuthModule } from './auth/auth.module';
 import { RadicacionModule } from './radicacion/radicacion.module';
 import { SupervisionModule } from './supervision/supervisor.module';
 import { EstadosModule } from './estados/estados.module';
-import { AppDataSource } from './config/ormconfig'; // ✅ Cambiado a AppDataSource
-import { ContratistaModule } from './contratista/contratista.module';
+import { AppDataSource } from './config/ormconfig';
+import { ContratistasModule } from './contratista/contratista.module';
 import { AuditorModule } from './auditor/auditor.module';
 import { ContabilidadModule } from './contabilidad/contabilidad.module';
 import { TesoreriaModule } from './tesoreria/tesoreria.module';
 import { SignaturesModule } from './signatures/signatures.module';
 import { AsesorGerenciaModule } from './asesor-gerencia/asesor-gerencia.module';
 import { RendicionCuentasModule } from './rendicion-cuentas/rendicion-cuentas.module';
+import { StorageModule } from './common/storage/storage.module'; // ✅ Importar StorageModule
+import storageConfig from './common/storage/storage.config'; // ✅ Importar configuración de storage
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      load: [storageConfig], // ✅ Cargar configuración de storage
     }),
-    TypeOrmModule.forRoot(AppDataSource.options), // ✅ Usar .options
+    TypeOrmModule.forRoot(AppDataSource.options),
+    StorageModule.forRoot(), // ✅ IMPORTANTE: Agregar StorageModule
     UsersModule,
     AuthModule,
     RadicacionModule,
     SupervisionModule,
     EstadosModule,
-    ContratistaModule,
+    ContratistasModule,
     AuditorModule,
     ContabilidadModule,
     TesoreriaModule,
     SignaturesModule,
     AsesorGerenciaModule,
     RendicionCuentasModule
-    
-
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule { }
+export class AppModule {}

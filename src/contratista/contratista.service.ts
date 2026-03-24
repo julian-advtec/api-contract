@@ -1,442 +1,656 @@
-import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+// src/contratista/contratista.service.ts
+import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike, Between } from 'typeorm';
+import { Repository, ILike } from 'typeorm';
 import { Contratista } from './entities/contratista.entity';
-import { CreateContratistaDto } from './dto/create-contratista.dto';
+import { DocumentoContratista, TipoDocumento } from './entities/documento-contratista.entity';
+import type { IStorageService } from '../common/storage/storage.interface';
+import * as path from 'path';
+import * as fs from 'fs';
 
-// ✅ Interfaz para las estadísticas
-interface EstadisticasContratista {
-    total: number;
-    ultimoMes: number;
-    porTipoDocumento: Array<{ tipo: string; cantidad: number }>;
+export interface EstadisticasContratista {
+  total: number;
+  ultimoMes: number;
+  porTipoDocumento: Array<{ tipo: string; cantidad: number }>;
 }
 
 @Injectable()
 export class ContratistaService {
-    private readonly logger = new Logger(ContratistaService.name);
+  private readonly logger = new Logger(ContratistaService.name);
+  private readonly baseStoragePath: string;
 
-    constructor(
-        @InjectRepository(Contratista)
-        private readonly contratistaRepository: Repository<Contratista>,
-    ) { }
+  constructor(
+    @InjectRepository(Contratista)
+    private readonly contratistaRepository: Repository<Contratista>,
+    @InjectRepository(DocumentoContratista)
+    private readonly documentoRepository: Repository<DocumentoContratista>,
+    @Inject('IStorageService')
+    private readonly storageService: IStorageService,
+  ) {
+    // Usar ruta local para desarrollo
+    this.baseStoragePath = path.join(process.cwd(), 'uploads', 'contratistas');
+    this.crearDirectorioBase();
+  }
 
-    /**
-     * ✅ NUEVO: Buscar contratistas de manera combinada por cualquier campo
-     */
-    async buscarCombinado(tipo: 'nombre' | 'documento' | 'contrato', termino: string): Promise<Contratista[]> {
-        try {
-            this.logger.log(`🔍 Buscando contratistas por ${tipo}: "${termino}"`);
+  private crearDirectorioBase(): void {
+    try {
+      if (!fs.existsSync(this.baseStoragePath)) {
+        fs.mkdirSync(this.baseStoragePath, { recursive: true });
+        this.logger.log(`📁 Directorio base creado: ${this.baseStoragePath}`);
+      }
+    } catch (error) {
+      this.logger.error(`❌ Error creando directorio base: ${error.message}`);
+    }
+  }
 
-            // Validar que haya término
-            if (!termino || termino.trim().length < 1) {
-                return [];
-            }
+  async buscarCombinado(tipo: 'nombre' | 'documento' | 'contrato', termino: string): Promise<Contratista[]> {
+    try {
+      this.logger.log(`🔍 Buscando contratistas por ${tipo}: "${termino}"`);
 
-            const terminoLower = termino.toLowerCase().trim();
-            let whereClause: any[] = [];
+      if (!termino || termino.trim().length < 1) {
+        return [];
+      }
 
-            switch (tipo) {
-                case 'nombre':
-                    whereClause = [{ nombreCompleto: ILike(`%${terminoLower}%`) }];
-                    break;
-                case 'documento':
-                    whereClause = [{ documentoIdentidad: ILike(`%${terminoLower}%`) }];
-                    break;
-                case 'contrato':
-                    whereClause = [{ numeroContrato: ILike(`%${terminoLower}%`) }];
-                    break;
-                default:
-                    // Búsqueda general
-                    whereClause = [
-                        { nombreCompleto: ILike(`%${terminoLower}%`) },
-                        { documentoIdentidad: ILike(`%${terminoLower}%`) },
-                        { numeroContrato: ILike(`%${terminoLower}%`) }
-                    ];
-            }
+      const terminoLower = termino.toLowerCase().trim();
+      let whereClause: any[] = [];
 
-            const contratistas = await this.contratistaRepository.find({
-                where: whereClause,
-                order: { nombreCompleto: 'ASC' },
-                take: 20
-            });
+      switch (tipo) {
+        case 'nombre':
+          whereClause = [{ nombreCompleto: ILike(`%${terminoLower}%`) }];
+          break;
+        case 'documento':
+          whereClause = [{ documentoIdentidad: ILike(`%${terminoLower}%`) }];
+          break;
+        case 'contrato':
+          whereClause = [{ numeroContrato: ILike(`%${terminoLower}%`) }];
+          break;
+        default:
+          whereClause = [
+            { nombreCompleto: ILike(`%${terminoLower}%`) },
+            { documentoIdentidad: ILike(`%${terminoLower}%`) },
+            { numeroContrato: ILike(`%${terminoLower}%`) }
+          ];
+      }
 
-            this.logger.log(`✅ Encontrados ${contratistas.length} contratistas por ${tipo}`);
-            return contratistas;
+      const contratistas = await this.contratistaRepository.find({
+        where: whereClause,
+        order: { nombreCompleto: 'ASC' },
+        relations: ['documentos'],
+        take: 20
+      });
 
-        } catch (error) {
-            this.logger.error(`❌ Error en búsqueda combinada (${tipo}):`, error.message);
-            throw error;
+      this.logger.log(`✅ Encontrados ${contratistas.length} contratistas`);
+      return contratistas;
+
+    } catch (error) {
+      this.logger.error(`❌ Error en búsqueda combinada:`, error.message);
+      throw error;
+    }
+  }
+
+  async buscarAvanzado(filtros: {
+    nombre?: string;
+    documento?: string;
+    contrato?: string;
+    fechaDesde?: Date;
+    fechaHasta?: Date;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ contratistas: Contratista[]; total: number }> {
+    try {
+      this.logger.log('🔍 Búsqueda avanzada de contratistas');
+
+      const query = this.contratistaRepository.createQueryBuilder('c')
+        .leftJoinAndSelect('c.documentos', 'documentos');
+
+      if (filtros.nombre) {
+        query.andWhere('c.nombreCompleto ILIKE :nombre', { nombre: `%${filtros.nombre}%` });
+      }
+
+      if (filtros.documento) {
+        query.andWhere('c.documentoIdentidad ILIKE :documento', { documento: `%${filtros.documento}%` });
+      }
+
+      if (filtros.contrato) {
+        query.andWhere('c.numeroContrato ILIKE :contrato', { contrato: `%${filtros.contrato}%` });
+      }
+
+      if (filtros.fechaDesde) {
+        query.andWhere('c.createdAt >= :fechaDesde', { fechaDesde: filtros.fechaDesde });
+      }
+
+      if (filtros.fechaHasta) {
+        const fechaHasta = new Date(filtros.fechaHasta);
+        fechaHasta.setHours(23, 59, 59, 999);
+        query.andWhere('c.createdAt <= :fechaHasta', { fechaHasta });
+      }
+
+      const total = await query.getCount();
+
+      if (filtros.limit) {
+        query.take(filtros.limit);
+      }
+      if (filtros.offset) {
+        query.skip(filtros.offset);
+      }
+
+      query.orderBy('c.nombreCompleto', 'ASC');
+
+      const contratistas = await query.getMany();
+
+      this.logger.log(`✅ Búsqueda avanzada: ${contratistas.length} de ${total} resultados`);
+      return { contratistas, total };
+
+    } catch (error) {
+      this.logger.error('❌ Error en búsqueda avanzada:', error.message);
+      throw error;
+    }
+  }
+
+  async obtenerTodos(options?: { limit?: number; offset?: number }): Promise<Contratista[]> {
+    try {
+      const queryOptions: any = {
+        order: { nombreCompleto: 'ASC' },
+        relations: ['documentos']
+      };
+
+      if (options?.limit) {
+        queryOptions.take = options.limit;
+      }
+      if (options?.offset) {
+        queryOptions.skip = options.offset;
+      }
+
+      return await this.contratistaRepository.find(queryOptions);
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo todos los contratistas: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async buscarPorTermino(termino: string): Promise<Contratista[]> {
+    try {
+      if (!termino || termino.trim() === '') {
+        return await this.obtenerTodos();
+      }
+
+      const terminoLower = termino.toLowerCase().trim();
+
+      return await this.contratistaRepository.find({
+        where: [
+          { documentoIdentidad: ILike(`%${terminoLower}%`) },
+          { nombreCompleto: ILike(`%${terminoLower}%`) },
+          { numeroContrato: ILike(`%${terminoLower}%`) },
+        ],
+        relations: ['documentos'],
+        order: { nombreCompleto: 'ASC' },
+        take: 20,
+      });
+    } catch (error) {
+      this.logger.error(`❌ Error buscando por término: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async crear(data: {
+    documentoIdentidad: string;
+    nombreCompleto: string;
+    numeroContrato?: string;
+    email?: string;
+    telefono?: string;
+    direccion?: string;
+    cargo?: string;
+    tipoContratista?: string;
+    estado?: string;
+    observaciones?: string;
+  }): Promise<Contratista> {
+    try {
+      if (!data.documentoIdentidad || !data.nombreCompleto) {
+        throw new BadRequestException('Documento de identidad y nombre completo son requeridos');
+      }
+
+      if (data.documentoIdentidad.length < 3) {
+        throw new BadRequestException('El documento debe tener al menos 3 caracteres');
+      }
+
+      const existente = await this.contratistaRepository.findOne({
+        where: { documentoIdentidad: data.documentoIdentidad },
+      });
+
+      if (existente) {
+        throw new ConflictException(`Ya existe un contratista con el documento ${data.documentoIdentidad}`);
+      }
+
+      const contratista = new Contratista();
+      contratista.documentoIdentidad = data.documentoIdentidad.trim();
+      contratista.nombreCompleto = data.nombreCompleto.trim();
+      contratista.numeroContrato = data.numeroContrato?.trim() || null;
+      contratista.email = data.email?.trim() || null;
+      contratista.telefono = data.telefono?.trim() || null;
+      contratista.direccion = data.direccion?.trim() || null;
+      contratista.cargo = data.cargo?.trim() || null;
+      contratista.tipoContratista = data.tipoContratista?.trim() || null;
+      contratista.estado = data.estado || 'ACTIVO';
+      contratista.observaciones = data.observaciones?.trim() || null;
+
+      const saved = await this.contratistaRepository.save(contratista);
+      this.logger.log(`✅ Contratista creado: ${saved.id} - ${saved.nombreCompleto}`);
+
+      // Crear directorio para este contratista
+      const contratistaDir = path.join(this.baseStoragePath, saved.id);
+      if (!fs.existsSync(contratistaDir)) {
+        fs.mkdirSync(contratistaDir, { recursive: true });
+        this.logger.log(`📁 Directorio creado: ${contratistaDir}`);
+      }
+
+      return saved;
+    } catch (error) {
+      this.logger.error(`❌ Error creando contratista: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async actualizar(
+    id: string,
+    data: Partial<{
+      documentoIdentidad: string;
+      nombreCompleto: string;
+      numeroContrato?: string;
+      email?: string;
+      telefono?: string;
+      direccion?: string;
+      cargo?: string;
+      tipoContratista?: string;
+      estado?: string;
+      observaciones?: string;
+    }>
+  ): Promise<Contratista> {
+    try {
+      const contratista = await this.buscarPorId(id);
+
+      if (data.documentoIdentidad && data.documentoIdentidad !== contratista.documentoIdentidad) {
+        const existente = await this.contratistaRepository.findOne({
+          where: { documentoIdentidad: data.documentoIdentidad },
+        });
+
+        if (existente && existente.id !== id) {
+          throw new ConflictException(`Ya existe otro contratista con el documento ${data.documentoIdentidad}`);
         }
+      }
+
+      if (data.documentoIdentidad) contratista.documentoIdentidad = data.documentoIdentidad;
+      if (data.nombreCompleto) contratista.nombreCompleto = data.nombreCompleto;
+      if (data.numeroContrato !== undefined) contratista.numeroContrato = data.numeroContrato || null;
+      if (data.email !== undefined) contratista.email = data.email || null;
+      if (data.telefono !== undefined) contratista.telefono = data.telefono || null;
+      if (data.direccion !== undefined) contratista.direccion = data.direccion || null;
+      if (data.cargo !== undefined) contratista.cargo = data.cargo || null;
+      if (data.tipoContratista !== undefined) contratista.tipoContratista = data.tipoContratista || null;
+      if (data.estado !== undefined) contratista.estado = data.estado;
+      if (data.observaciones !== undefined) contratista.observaciones = data.observaciones || null;
+
+      const updated = await this.contratistaRepository.save(contratista);
+      this.logger.log(`✅ Contratista actualizado: ${updated.id}`);
+
+      return updated;
+    } catch (error) {
+      this.logger.error(`❌ Error actualizando contratista: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async crearConDocumentos(
+    data: {
+      documentoIdentidad: string;
+      nombreCompleto: string;
+      numeroContrato?: string;
+      email?: string;
+      telefono?: string;
+      direccion?: string;
+      cargo?: string;
+      tipoContratista?: string;
+      estado?: string;
+      observaciones?: string;
+    },
+    documentos?: Array<{ tipo: TipoDocumento; archivo: Express.Multer.File }>,
+    usuario?: string
+  ): Promise<{ contratista: Contratista; documentos: DocumentoContratista[] }> {
+    try {
+      const contratista = await this.crear(data);
+
+      const documentosSubidos: DocumentoContratista[] = [];
+
+      if (documentos && documentos.length > 0) {
+        for (const doc of documentos) {
+          try {
+            const docSubido = await this.subirDocumentoLocal(
+              contratista.id,
+              doc.tipo,
+              doc.archivo,
+              usuario || 'sistema'
+            );
+            documentosSubidos.push(docSubido);
+          } catch (error) {
+            this.logger.error(`Error subiendo documento ${doc.tipo}: ${error.message}`);
+          }
+        }
+      }
+
+      return {
+        contratista,
+        documentos: documentosSubidos
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error creando contratista con documentos: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async subirDocumentoLocal(
+    contratistaId: string,
+    tipo: TipoDocumento,
+    archivo: Express.Multer.File,
+    usuario: string
+  ): Promise<DocumentoContratista> {
+    try {
+      const contratista = await this.buscarPorId(contratistaId);
+
+      const extension = path.extname(archivo.originalname).toLowerCase();
+      const nombreUnico = `${tipo}_${Date.now()}${extension}`;
+      const contratistaDir = path.join(this.baseStoragePath, contratistaId);
+      
+      // Asegurar que el directorio existe
+      if (!fs.existsSync(contratistaDir)) {
+        fs.mkdirSync(contratistaDir, { recursive: true });
+        this.logger.log(`📁 Directorio creado: ${contratistaDir}`);
+      }
+
+      const fullPath = path.join(contratistaDir, nombreUnico);
+      const relativePath = `contratistas/${contratistaId}/${nombreUnico}`;
+
+      // Guardar archivo físicamente
+      fs.writeFileSync(fullPath, archivo.buffer);
+      this.logger.log(`✅ Archivo guardado localmente: ${fullPath} (${archivo.buffer.length} bytes)`);
+
+      const documento = new DocumentoContratista();
+      documento.contratistaId = contratistaId;
+      documento.tipo = tipo;
+      documento.nombreArchivo = archivo.originalname;
+      documento.rutaArchivo = relativePath;
+      documento.tipoMime = archivo.mimetype;
+      documento.tamanoBytes = archivo.size;
+      documento.subidoPor = usuario;
+
+      const saved = await this.documentoRepository.save(documento);
+      this.logger.log(`✅ Documento subido: ${tipo} para contratista ${contratistaId}`);
+
+      return saved;
+    } catch (error) {
+      this.logger.error(`❌ Error subiendo documento: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async subirDocumento(
+    contratistaId: string,
+    tipo: TipoDocumento,
+    archivo: Express.Multer.File,
+    usuario: string
+  ): Promise<DocumentoContratista> {
+    return this.subirDocumentoLocal(contratistaId, tipo, archivo, usuario);
+  }
+
+  async obtenerDocumentos(contratistaId: string): Promise<DocumentoContratista[]> {
+    try {
+      return await this.documentoRepository.find({
+        where: { contratistaId },
+        order: { fechaSubida: 'DESC' }
+      });
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo documentos: ${error.message}`);
+      return [];
+    }
+  }
+
+  async obtenerDocumentoPorId(documentoId: string, contratistaId: string): Promise<DocumentoContratista> {
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId, contratistaId }
+    });
+
+    if (!documento) {
+      throw new NotFoundException('Documento no encontrado');
     }
 
-    /**
-     * ✅ NUEVO: Búsqueda unificada que acepta múltiples criterios
-     */
-    async buscarAvanzado(filtros: {
-        nombre?: string;
-        documento?: string;
-        contrato?: string;
-        fechaDesde?: Date;
-        fechaHasta?: Date;
-        limit?: number;
-        offset?: number;
-    }): Promise<{ contratistas: Contratista[]; total: number }> {
-        try {
-            this.logger.log('🔍 Búsqueda avanzada de contratistas');
+    return documento;
+  }
 
-            const query = this.contratistaRepository.createQueryBuilder('c');
-
-            // Aplicar filtros
-            if (filtros.nombre) {
-                query.andWhere('c.nombreCompleto ILIKE :nombre', { nombre: `%${filtros.nombre}%` });
-            }
-
-            if (filtros.documento) {
-                query.andWhere('c.documentoIdentidad ILIKE :documento', { documento: `%${filtros.documento}%` });
-            }
-
-            if (filtros.contrato) {
-                query.andWhere('c.numeroContrato ILIKE :contrato', { contrato: `%${filtros.contrato}%` });
-            }
-
-            if (filtros.fechaDesde) {
-                query.andWhere('c.createdAt >= :fechaDesde', { fechaDesde: filtros.fechaDesde });
-            }
-
-            if (filtros.fechaHasta) {
-                const fechaHasta = new Date(filtros.fechaHasta);
-                fechaHasta.setHours(23, 59, 59, 999);
-                query.andWhere('c.createdAt <= :fechaHasta', { fechaHasta });
-            }
-
-            // Contar total
-            const total = await query.getCount();
-
-            // Aplicar paginación
-            if (filtros.limit) {
-                query.take(filtros.limit);
-            }
-            if (filtros.offset) {
-                query.skip(filtros.offset);
-            }
-
-            // Ordenar
-            query.orderBy('c.nombreCompleto', 'ASC');
-
-            const contratistas = await query.getMany();
-
-            this.logger.log(`✅ Búsqueda avanzada: ${contratistas.length} de ${total} resultados`);
-            return { contratistas, total };
-
-        } catch (error) {
-            this.logger.error('❌ Error en búsqueda avanzada:', error.message);
-            throw error;
-        }
+  async descargarDocumento(documentoId: string, contratistaId: string): Promise<{ buffer: Buffer; nombre: string; mimeType: string }> {
+    const documento = await this.obtenerDocumentoPorId(documentoId, contratistaId);
+    
+    // Buscar archivo en el sistema local
+    const fullPath = path.join(this.baseStoragePath, contratistaId, path.basename(documento.rutaArchivo));
+    
+    if (!fs.existsSync(fullPath)) {
+      throw new NotFoundException(`Archivo no encontrado: ${documento.nombreArchivo}`);
     }
 
-    /**
-     * Obtener todos los contratistas con paginación
-     */
-    async obtenerTodos(options?: {
-        limit?: number;
-        offset?: number;
-    }): Promise<Contratista[]> {
-        try {
-            const queryOptions: any = {
-                order: {
-                    nombreCompleto: 'ASC',
-                }
-            };
+    const buffer = fs.readFileSync(fullPath);
 
-            if (options?.limit) {
-                queryOptions.take = options.limit;
-            }
-            if (options?.offset) {
-                queryOptions.skip = options.offset;
-            }
+    return {
+      buffer,
+      nombre: documento.nombreArchivo,
+      mimeType: documento.tipoMime || 'application/octet-stream',
+    };
+  }
 
-            return await this.contratistaRepository.find(queryOptions);
-        } catch (error) {
-            this.logger.error(`❌ Error obteniendo todos los contratistas: ${error.message}`);
-            throw error;
-        }
+  async eliminarDocumento(documentoId: string, contratistaId: string): Promise<void> {
+    try {
+      const documento = await this.obtenerDocumentoPorId(documentoId, contratistaId);
+      
+      // Eliminar archivo físico
+      const fullPath = path.join(this.baseStoragePath, contratistaId, path.basename(documento.rutaArchivo));
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+        this.logger.log(`🗑️ Archivo eliminado: ${fullPath}`);
+      }
+
+      await this.documentoRepository.delete(documentoId);
+      this.logger.log(`✅ Documento eliminado: ${documentoId}`);
+    } catch (error) {
+      this.logger.error(`❌ Error eliminando documento: ${error.message}`);
+      throw error;
     }
+  }
 
-    /**
-     * Busca contratistas por término (documento, nombre o número de contrato)
-     */
-    async buscarPorTermino(termino: string): Promise<Contratista[]> {
-        try {
-            if (!termino || termino.trim() === '') {
-                return await this.obtenerTodos();
-            }
+  async buscarPorId(id: string): Promise<Contratista> {
+    try {
+      const contratista = await this.contratistaRepository.findOne({
+        where: { id },
+        relations: ['documentos']
+      });
 
-            const terminoLower = termino.toLowerCase().trim();
+      if (!contratista) {
+        throw new NotFoundException(`Contratista con ID ${id} no encontrado`);
+      }
 
-            return await this.contratistaRepository.find({
-                where: [
-                    { documentoIdentidad: ILike(`%${terminoLower}%`) },
-                    { nombreCompleto: ILike(`%${terminoLower}%`) },
-                    { numeroContrato: ILike(`%${terminoLower}%`) },
-                ],
-                order: {
-                    nombreCompleto: 'ASC',
-                },
-                take: 20,
-            });
-        } catch (error) {
-            this.logger.error(`❌ Error buscando por término "${termino}": ${error.message}`);
-            throw error;
-        }
+      return contratista;
+    } catch (error) {
+      this.logger.error(`❌ Error buscando por ID: ${error.message}`);
+      throw error;
     }
+  }
 
-    /**
-     * Crea un nuevo contratista
-     */
-    async crear(data: { documentoIdentidad: string; nombreCompleto: string; numeroContrato?: string }): Promise<Contratista> {
-        try {
-            // Validar datos
-            if (!data.documentoIdentidad || !data.nombreCompleto) {
-                throw new BadRequestException('Documento de identidad y nombre completo son requeridos');
-            }
+  async buscarPorDocumento(documentoIdentidad: string): Promise<Contratista[]> {
+    try {
+      if (!documentoIdentidad || documentoIdentidad.trim().length < 1) {
+        return [];
+      }
 
-            // Validar formato del documento
-            if (data.documentoIdentidad.length < 3) {
-                throw new BadRequestException('El documento debe tener al menos 3 caracteres');
-            }
+      const documentoLower = documentoIdentidad.toLowerCase().trim();
 
-            // Validar que el documento no exista
-            const existente = await this.contratistaRepository.findOne({
-                where: { documentoIdentidad: data.documentoIdentidad },
-            });
-
-            if (existente) {
-                throw new ConflictException(
-                    `Ya existe un contratista con el documento ${data.documentoIdentidad}`,
-                );
-            }
-
-            // Crear nuevo contratista
-            const contratista = new Contratista();
-            contratista.documentoIdentidad = data.documentoIdentidad.trim();
-            contratista.nombreCompleto = data.nombreCompleto.trim();
-
-            // Manejar número de contrato opcional
-            if (data.numeroContrato && data.numeroContrato.trim()) {
-                contratista.numeroContrato = data.numeroContrato.trim();
-            }
-
-            const saved = await this.contratistaRepository.save(contratista);
-            this.logger.log(`✅ Contratista creado: ${saved.id} - ${saved.nombreCompleto}`);
-
-            return saved;
-        } catch (error) {
-            this.logger.error(`❌ Error creando contratista: ${error.message}`);
-            throw error;
-        }
+      return await this.contratistaRepository.find({
+        where: { documentoIdentidad: ILike(`%${documentoLower}%`) },
+        relations: ['documentos'],
+        order: { nombreCompleto: 'ASC' },
+        take: 20,
+      });
+    } catch (error) {
+      this.logger.error(`❌ Error buscando por documento: ${error.message}`);
+      return [];
     }
+  }
 
-    /**
-     * Busca un contratista por ID
-     */
-    async buscarPorId(id: string): Promise<Contratista> {
-        try {
-            const contratista = await this.contratistaRepository.findOne({
-                where: { id },
-            });
+  async buscarPorNombre(nombre: string): Promise<Contratista[]> {
+    try {
+      if (!nombre || nombre.trim().length < 1) {
+        return [];
+      }
 
-            if (!contratista) {
-                throw new NotFoundException(`Contratista con ID ${id} no encontrado`);
-            }
+      const nombreLower = nombre.toLowerCase().trim();
 
-            return contratista;
-        } catch (error) {
-            this.logger.error(`❌ Error buscando por ID ${id}: ${error.message}`);
-            throw error;
-        }
+      return await this.contratistaRepository.find({
+        where: { nombreCompleto: ILike(`%${nombreLower}%`) },
+        relations: ['documentos'],
+        order: { nombreCompleto: 'ASC' },
+        take: 20,
+      });
+    } catch (error) {
+      this.logger.error(`❌ Error buscando por nombre: ${error.message}`);
+      return [];
     }
+  }
 
-    /**
-     * Busca contratistas por documento de identidad
-     */
-    async buscarPorDocumento(documentoIdentidad: string): Promise<Contratista[]> {
-        try {
-            // ✅ CAMBIADO: De 2 a 1 carácter mínimo
-            if (!documentoIdentidad || documentoIdentidad.trim().length < 1) {
-                return [];
-            }
+  async buscarPorNumeroContrato(numeroContrato: string): Promise<Contratista[]> {
+    try {
+      if (!numeroContrato || numeroContrato.trim().length < 1) {
+        return [];
+      }
 
-            const documentoLower = documentoIdentidad.toLowerCase().trim();
+      const numeroContratoLower = numeroContrato.toLowerCase().trim();
 
-            // ✅ CAMBIADO: Usar ILike para búsqueda parcial
-            const contratistas = await this.contratistaRepository.find({
-                where: { documentoIdentidad: ILike(`%${documentoLower}%`) },
-                order: { nombreCompleto: 'ASC' },
-                take: 20,
-            });
-
-            if (contratistas.length === 0) {
-                this.logger.warn(`⚠️ No se encontraron contratistas con documento que contenga: ${documentoIdentidad}`);
-            }
-
-            return contratistas;
-        } catch (error) {
-            this.logger.error(`❌ Error buscando por documento ${documentoIdentidad}: ${error.message}`);
-            return [];
-        }
+      return await this.contratistaRepository.find({
+        where: { numeroContrato: ILike(`%${numeroContratoLower}%`) },
+        relations: ['documentos'],
+        order: { nombreCompleto: 'ASC' },
+        take: 20,
+      });
+    } catch (error) {
+      this.logger.error(`❌ Error buscando por contrato: ${error.message}`);
+      return [];
     }
+  }
 
-    /**
-     * Busca contratistas por número de contrato
-     * ✅ CAMBIADO: Ahora empieza con 1 carácter
-     */
-    async buscarPorNumeroContrato(numeroContrato: string): Promise<Contratista[]> {
-        try {
-            // ✅✅✅ CAMBIADO: De 2 a 1 carácter mínimo
-            if (!numeroContrato || numeroContrato.trim().length < 1) {
-                return [];
-            }
+  async obtenerContratistaCompleto(id: string): Promise<any> {
+    try {
+      const contratista = await this.buscarPorId(id);
+      const documentos = await this.obtenerDocumentos(id);
 
-            const numeroContratoLower = numeroContrato.toLowerCase().trim();
-
-            return await this.contratistaRepository.find({
-                where: { numeroContrato: ILike(`%${numeroContratoLower}%`) },
-                order: { nombreCompleto: 'ASC' },
-                take: 20,
-            });
-        } catch (error) {
-            this.logger.error(`❌ Error buscando por número de contrato "${numeroContrato}": ${error.message}`);
-            return [];
-        }
+      return {
+        ...contratista,
+        documentos
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo contratista completo: ${error.message}`);
+      throw error;
     }
+  }
 
-    /**
-     * ✅ NUEVO: Buscar por nombre (para autocomplete)
-     */
-    async buscarPorNombre(nombre: string): Promise<Contratista[]> {
-        try {
-            if (!nombre || nombre.trim().length < 1) {
-                return [];
-            }
-
-            const nombreLower = nombre.toLowerCase().trim();
-
-            return await this.contratistaRepository.find({
-                where: { nombreCompleto: ILike(`%${nombreLower}%`) },
-                order: { nombreCompleto: 'ASC' },
-                take: 20,
-            });
-        } catch (error) {
-            this.logger.error(`❌ Error buscando por nombre "${nombre}": ${error.message}`);
-            return [];
-        }
+  async existePorDocumento(documentoIdentidad: string): Promise<boolean> {
+    try {
+      const count = await this.contratistaRepository.count({
+        where: { documentoIdentidad },
+      });
+      return count > 0;
+    } catch (error) {
+      this.logger.error(`❌ Error verificando documento: ${error.message}`);
+      return false;
     }
+  }
 
-    /**
-     * Actualiza un contratista
-     */
-    async actualizar(
-        id: string,
-        data: Partial<{ documentoIdentidad: string; nombreCompleto: string; numeroContrato?: string }>,
-    ): Promise<Contratista> {
-        try {
-            const contratista = await this.buscarPorId(id);
+  async obtenerEstadisticas(): Promise<EstadisticasContratista> {
+    try {
+      const total = await this.contratistaRepository.count();
 
-            // Si se intenta cambiar el documento, verificar que no exista otro con el mismo
-            if (data.documentoIdentidad && data.documentoIdentidad !== contratista.documentoIdentidad) {
-                const existente = await this.contratistaRepository.findOne({
-                    where: { documentoIdentidad: data.documentoIdentidad },
-                });
+      const fechaLimite = new Date();
+      fechaLimite.setMonth(fechaLimite.getMonth() - 1);
 
-                if (existente && existente.id !== id) {
-                    throw new ConflictException(
-                        `Ya existe otro contratista con el documento ${data.documentoIdentidad}`,
-                    );
-                }
-            }
+      const ultimoMes = await this.contratistaRepository
+        .createQueryBuilder('contratista')
+        .where('contratista.createdAt >= :fechaLimite', { fechaLimite })
+        .getCount();
 
-            // Actualizar campos
-            if (data.documentoIdentidad) {
-                contratista.documentoIdentidad = data.documentoIdentidad;
-            }
-            if (data.nombreCompleto) {
-                contratista.nombreCompleto = data.nombreCompleto;
-            }
-            if (data.numeroContrato !== undefined) {
-                contratista.numeroContrato = data.numeroContrato || null;
-            }
-
-            const updated = await this.contratistaRepository.save(contratista);
-            this.logger.log(`✅ Contratista actualizado: ${updated.id}`);
-
-            return updated;
-        } catch (error) {
-            this.logger.error(`❌ Error actualizando contratista ${id}: ${error.message}`);
-            throw error;
-        }
+      return {
+        total,
+        ultimoMes,
+        porTipoDocumento: []
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo estadísticas: ${error.message}`);
+      return { total: 0, ultimoMes: 0, porTipoDocumento: [] };
     }
+  }
 
-    /**
-     * Verifica si existe un contratista por documento
-     */
-    async existePorDocumento(documentoIdentidad: string): Promise<boolean> {
-        try {
-            const count = await this.contratistaRepository.count({
-                where: { documentoIdentidad },
-            });
-            return count > 0;
-        } catch (error) {
-            this.logger.error(`❌ Error verificando documento ${documentoIdentidad}: ${error.message}`);
-            return false;
-        }
+  async obtenerRecientes(limit: number = 10): Promise<Contratista[]> {
+    try {
+      return await this.contratistaRepository.find({
+        relations: ['documentos'],
+        order: { createdAt: 'DESC' },
+        take: limit
+      });
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo contratistas recientes: ${error.message}`);
+      return [];
     }
+  }
 
-    /**
-     * Obtiene estadísticas básicas de contratistas
-     */
-    async obtenerEstadisticas(): Promise<EstadisticasContratista> {
-        try {
-            const total = await this.contratistaRepository.count();
+  buscarPorDocumentoExacto(documento: string): Observable<any> {
+  const headers = this.getAuthHeaders();
 
-            // Contratistas creados en el último mes
-            const fechaLimite = new Date();
-            fechaLimite.setMonth(fechaLimite.getMonth() - 1);
+  if (!headers.get('Authorization')) {
+    return of({ success: false, data: null });
+  }
 
-            const ultimoMes = await this.contratistaRepository
-                .createQueryBuilder('contratista')
-                .where('contratista.createdAt >= :fechaLimite', { fechaLimite })
-                .getCount();
+  if (!documento || documento.trim().length < 3) {
+    return of({ success: true, data: null });
+  }
 
-            // ✅ CORREGIDO: Tipo explícito para el array
-            const porTipoDocumento: Array<{ tipo: string; cantidad: number }> = [];
+  return this.http.get<any>(
+    `${this.apiUrl}/buscar-por-documento/${encodeURIComponent(documento.trim())}`,
+    { headers }
+  ).pipe(
+    map(response => {
+      if (response?.data?.data) {
+        return response.data.data;
+      }
+      return null;
+    }),
+    catchError(() => of(null))
+  );
+}
 
-            return { 
-                total, 
-                ultimoMes, 
-                porTipoDocumento 
-            };
-        } catch (error) {
-            this.logger.error(`❌ Error obteniendo estadísticas: ${error.message}`);
-            return {
-                total: 0,
-                ultimoMes: 0,
-                porTipoDocumento: []
-            };
-        }
-    }
+/**
+ * Buscar contratistas por documento (autocomplete)
+ */
+buscarPorDocumentoAutocomplete(documento: string): Observable<Contratista[]> {
+  const headers = this.getAuthHeaders();
 
-    /**
-     * ✅ NUEVO: Obtener contratistas recientes
-     */
-    async obtenerRecientes(limit: number = 10): Promise<Contratista[]> {
-        try {
-            return await this.contratistaRepository.find({
-                order: { createdAt: 'DESC' },
-                take: limit
-            });
-        } catch (error) {
-            this.logger.error(`❌ Error obteniendo contratistas recientes: ${error.message}`);
-            return [];
-        }
-    }
+  if (!headers.get('Authorization')) {
+    return of([]);
+  }
+
+  if (!documento || documento.trim().length < 1) {
+    return of([]);
+  }
+
+  return this.http.get<any>(
+    `${this.apiUrl}/autocomplete/documento?q=${encodeURIComponent(documento.trim())}`,
+    { headers }
+  ).pipe(
+    map(response => {
+      const contratistasData = this.extraerDatosAutocomplete(response);
+      return contratistasData.map(item => this.mapearContratista(item));
+    }),
+    catchError(() => of([]))
+  );
+}
 }
