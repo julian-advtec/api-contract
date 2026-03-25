@@ -603,54 +603,5 @@ export class ContratistaService {
     }
   }
 
-  buscarPorDocumentoExacto(documento: string): Observable<any> {
-  const headers = this.getAuthHeaders();
-
-  if (!headers.get('Authorization')) {
-    return of({ success: false, data: null });
-  }
-
-  if (!documento || documento.trim().length < 3) {
-    return of({ success: true, data: null });
-  }
-
-  return this.http.get<any>(
-    `${this.apiUrl}/buscar-por-documento/${encodeURIComponent(documento.trim())}`,
-    { headers }
-  ).pipe(
-    map(response => {
-      if (response?.data?.data) {
-        return response.data.data;
-      }
-      return null;
-    }),
-    catchError(() => of(null))
-  );
-}
-
-/**
- * Buscar contratistas por documento (autocomplete)
- */
-buscarPorDocumentoAutocomplete(documento: string): Observable<Contratista[]> {
-  const headers = this.getAuthHeaders();
-
-  if (!headers.get('Authorization')) {
-    return of([]);
-  }
-
-  if (!documento || documento.trim().length < 1) {
-    return of([]);
-  }
-
-  return this.http.get<any>(
-    `${this.apiUrl}/autocomplete/documento?q=${encodeURIComponent(documento.trim())}`,
-    { headers }
-  ).pipe(
-    map(response => {
-      const contratistasData = this.extraerDatosAutocomplete(response);
-      return contratistasData.map(item => this.mapearContratista(item));
-    }),
-    catchError(() => of([]))
-  );
-}
+  
 }

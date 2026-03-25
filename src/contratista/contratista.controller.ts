@@ -908,69 +908,69 @@ export class ContratistasController {
   /**
  * Buscar contratista por documento (NIT/CC) - para autocompletado en jurídica
  */
-@Get('buscar-por-documento/:documento')
-@Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)
-async buscarContratistaPorDocumento(@Param('documento') documento: string) {
-  try {
-    this.logger.log(`🔍 Buscando contratista por documento: "${documento}"`);
+  @Get('buscar-por-documento/:documento')
+  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)
+  async buscarContratistaPorDocumento(@Param('documento') documento: string) {
+    try {
+      this.logger.log(`🔍 Buscando contratista por documento: "${documento}"`);
 
-    if (!documento || documento.trim().length < 3) {
+      if (!documento || documento.trim().length < 3) {
+        return {
+          ok: true,
+          data: {
+            success: true,
+            data: null,
+            message: 'Documento debe tener al menos 3 caracteres'
+          }
+        };
+      }
+
+      const contratistas = await this.contratistaService.buscarPorDocumento(documento);
+
+      if (contratistas.length === 0) {
+        return {
+          ok: true,
+          data: {
+            success: true,
+            data: null,
+            message: 'No se encontró ningún contratista con ese documento'
+          }
+        };
+      }
+
+      // Tomar el primero (más relevante)
+      const contratista = contratistas[0];
+
       return {
         ok: true,
         data: {
           success: true,
-          data: null,
-          message: 'Documento debe tener al menos 3 caracteres'
+          data: {
+            id: contratista.id,
+            documentoIdentidad: contratista.documentoIdentidad,
+            nombreCompleto: contratista.nombreCompleto,
+            nombreRazonSocial: contratista.nombreCompleto,
+            numeroContrato: contratista.numeroContrato,
+            email: contratista.email,
+            telefono: contratista.telefono,
+            direccion: contratista.direccion,
+            cargo: contratista.cargo,
+            tipoContratista: contratista.tipoContratista,
+            estado: contratista.estado,
+            observaciones: contratista.observaciones
+          }
         }
       };
-    }
-
-    const contratistas = await this.contratistaService.buscarPorDocumento(documento);
-
-    if (contratistas.length === 0) {
+    } catch (error) {
+      this.logger.error(`❌ Error buscando contratista por documento: ${error.message}`);
       return {
         ok: true,
         data: {
-          success: true,
-          data: null,
-          message: 'No se encontró ningún contratista con ese documento'
+          success: false,
+          message: 'Error al buscar contratista',
+          data: null
         }
       };
     }
-
-    // Tomar el primero (más relevante)
-    const contratista = contratistas[0];
-
-    return {
-      ok: true,
-      data: {
-        success: true,
-        data: {
-          id: contratista.id,
-          documentoIdentidad: contratista.documentoIdentidad,
-          nombreCompleto: contratista.nombreCompleto,
-          nombreRazonSocial: contratista.nombreCompleto,
-          numeroContrato: contratista.numeroContrato,
-          email: contratista.email,
-          telefono: contratista.telefono,
-          direccion: contratista.direccion,
-          cargo: contratista.cargo,
-          tipoContratista: contratista.tipoContratista,
-          estado: contratista.estado,
-          observaciones: contratista.observaciones
-        }
-      }
-    };
-  } catch (error) {
-    this.logger.error(`❌ Error buscando contratista por documento: ${error.message}`);
-    return {
-      ok: true,
-      data: {
-        success: false,
-        message: 'Error al buscar contratista',
-        data: null
-      }
-    };
   }
-}
 }

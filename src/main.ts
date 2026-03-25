@@ -2,15 +2,13 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
-import { ValidationPipe } from '@nestjs/common';
-import { Logger } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import * as fs from 'fs';
 
-// Configurar el entorno del sistema antes de iniciar la aplicación
+// Configurar el entorno del sistema (SOLO WINDOWS)
 function setupSystemEnvironment() {
   const logger = new Logger('SystemSetup');
 
-  // Configurar rutas críticas para Windows
   const criticalPaths = [
     'C:\\Windows\\System32',
     'C:\\Windows\\SysWOW64',
@@ -27,55 +25,52 @@ function setupSystemEnvironment() {
   for (const criticalPath of criticalPaths) {
     if (fs.existsSync(criticalPath) && !pathParts.includes(criticalPath)) {
       pathParts.unshift(criticalPath);
-      logger.log(`✅ Ruta crítica agregada al PATH: ${criticalPath}`);
+      logger.log(`✅ Ruta agregada al PATH: ${criticalPath}`);
     }
   }
 
   process.env.PATH = pathParts.join(';');
-  logger.log('🔧 Entorno del sistema configurado');
+  logger.log('🔧 Entorno configurado (Windows)');
 }
 
 async function bootstrap() {
-  // Configurar entorno del sistema
-  setupSystemEnvironment();
+  // 🔥 SOLO ejecutar en Windows (evita error en Render/Linux)
+  if (process.platform === 'win32') {
+    setupSystemEnvironment();
+  }
 
-  const app = await NestFactory.create(AppModule, { cors: true });
+  const app = await NestFactory.create(AppModule);
 
-  // Prefijo global (todas las rutas comienzan con /api)
+  // Prefijo global
   app.setGlobalPrefix('api');
 
-  // CORS para permitir acceso desde Angular (frontend)
+  // 🌍 CORS UNIVERSAL (funciona en los 3 entornos)
   app.enableCors({
-    origin: [
-      'http://localhost:4200',           // Desarrollo local
-      'http://192.168.7.56:8091',        // Frontend en producción
-      'http://localhost:8091',            // Frontend local alternativo
-    ],
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    origin: true,
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'x-auditor-id'],
-    exposedHeaders: ['Content-Disposition'], // útil para descargas
   });
 
-  // 🧱 Validación global de DTOs (seguridad + consistencia)
+  // 🧱 Validaciones globales
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true, // elimina propiedades desconocidas
-      forbidNonWhitelisted: true, // lanza error si envían propiedades extra
-      transform: true, // transforma los tipos automáticamente
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
     }),
   );
 
-  // 🌐 Filtro global de errores
+  // 🌐 Manejo de errores
   app.useGlobalFilters(new HttpExceptionFilter());
 
-  // 💬 Interceptor global para respuestas consistentes
+  // 💬 Respuesta estándar
   app.useGlobalInterceptors(new ResponseInterceptor());
 
-  // 🚀 Levanta servidor USANDO EL PUERTO DEL .ENV
+  // 🚀 Puerto dinámico (Render usa variable PORT)
   const port = process.env.PORT || 3000;
+
   await app.listen(port);
-  console.log(`✅ Backend corriendo en: http://localhost:${port}/api`);
-  console.log(`📡 CORS permitido para: http://192.168.7.56:8091`);
+
+  console.log(`🚀 Backend corriendo en puerto: ${port}`);
+  console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'development'}`);
 }
 bootstrap();
