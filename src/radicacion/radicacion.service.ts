@@ -47,6 +47,7 @@ export class RadicacionService {
         private supervisorService: SupervisorService,
         private readonly contratistaService: ContratistaService,
         private readonly storageService: StorageService,
+        
     ) {
         this.logger.log(`📁 ======= CONFIGURACIÓN DE ALMACENAMIENTO =======`);
         const storageInfo = this.storageService.getStorageInfo();

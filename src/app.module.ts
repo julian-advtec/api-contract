@@ -17,17 +17,16 @@ import { TesoreriaModule } from './tesoreria/tesoreria.module';
 import { SignaturesModule } from './signatures/signatures.module';
 import { AsesorGerenciaModule } from './asesor-gerencia/asesor-gerencia.module';
 import { RendicionCuentasModule } from './rendicion-cuentas/rendicion-cuentas.module';
-import { StorageModule } from './common/storage/storage.module'; // ✅ Importar StorageModule
-import storageConfig from './common/storage/storage.config'; // ✅ Importar configuración de storage
+import { StorageModule } from './common/storage/storage.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [storageConfig], // ✅ Cargar configuración de storage
+      envFilePath: ['.env', '.env.development', '.env.production'],
     }),
     TypeOrmModule.forRoot(AppDataSource.options),
-    StorageModule.forRoot(), // ✅ IMPORTANTE: Agregar StorageModule
+    StorageModule,
     UsersModule,
     AuthModule,
     RadicacionModule,

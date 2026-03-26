@@ -1,10 +1,10 @@
 // src/contratista/contratista.service.ts
-import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException, Inject } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike } from 'typeorm';
 import { Contratista } from './entities/contratista.entity';
 import { DocumentoContratista, TipoDocumento } from './entities/documento-contratista.entity';
-import type { IStorageService } from '../common/storage/storage.interface';
+import { StorageService } from '../common/storage/storage.service';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -24,10 +24,8 @@ export class ContratistaService {
     private readonly contratistaRepository: Repository<Contratista>,
     @InjectRepository(DocumentoContratista)
     private readonly documentoRepository: Repository<DocumentoContratista>,
-    @Inject('IStorageService')
-    private readonly storageService: IStorageService,
+    private readonly storageService: StorageService,
   ) {
-    // Usar ruta local para desarrollo
     this.baseStoragePath = path.join(process.cwd(), 'uploads', 'contratistas');
     this.crearDirectorioBase();
   }
@@ -236,13 +234,6 @@ export class ContratistaService {
       const saved = await this.contratistaRepository.save(contratista);
       this.logger.log(`✅ Contratista creado: ${saved.id} - ${saved.nombreCompleto}`);
 
-      // Crear directorio para este contratista
-      const contratistaDir = path.join(this.baseStoragePath, saved.id);
-      if (!fs.existsSync(contratistaDir)) {
-        fs.mkdirSync(contratistaDir, { recursive: true });
-        this.logger.log(`📁 Directorio creado: ${contratistaDir}`);
-      }
-
       return saved;
     } catch (error) {
       this.logger.error(`❌ Error creando contratista: ${error.message}`);
@@ -323,7 +314,7 @@ export class ContratistaService {
       if (documentos && documentos.length > 0) {
         for (const doc of documentos) {
           try {
-            const docSubido = await this.subirDocumentoLocal(
+            const docSubido = await this.subirDocumento(
               contratista.id,
               doc.tipo,
               doc.archivo,
@@ -346,37 +337,32 @@ export class ContratistaService {
     }
   }
 
-  async subirDocumentoLocal(
+  async subirDocumento(
     contratistaId: string,
     tipo: TipoDocumento,
     archivo: Express.Multer.File,
     usuario: string
   ): Promise<DocumentoContratista> {
     try {
-      const contratista = await this.buscarPorId(contratistaId);
+      await this.buscarPorId(contratistaId);
 
       const extension = path.extname(archivo.originalname).toLowerCase();
       const nombreUnico = `${tipo}_${Date.now()}${extension}`;
-      const contratistaDir = path.join(this.baseStoragePath, contratistaId);
-      
-      // Asegurar que el directorio existe
-      if (!fs.existsSync(contratistaDir)) {
-        fs.mkdirSync(contratistaDir, { recursive: true });
-        this.logger.log(`📁 Directorio creado: ${contratistaDir}`);
-      }
-
-      const fullPath = path.join(contratistaDir, nombreUnico);
       const relativePath = `contratistas/${contratistaId}/${nombreUnico}`;
 
-      // Guardar archivo físicamente
-      fs.writeFileSync(fullPath, archivo.buffer);
-      this.logger.log(`✅ Archivo guardado localmente: ${fullPath} (${archivo.buffer.length} bytes)`);
+      const result = await this.storageService.uploadFile(
+        relativePath,
+        archivo.buffer,
+        archivo.mimetype
+      );
+
+      this.logger.log(`✅ Archivo subido a: ${result.provider} - ${result.path}`);
 
       const documento = new DocumentoContratista();
       documento.contratistaId = contratistaId;
       documento.tipo = tipo;
       documento.nombreArchivo = archivo.originalname;
-      documento.rutaArchivo = relativePath;
+      documento.rutaArchivo = result.path;
       documento.tipoMime = archivo.mimetype;
       documento.tamanoBytes = archivo.size;
       documento.subidoPor = usuario;
@@ -389,15 +375,6 @@ export class ContratistaService {
       this.logger.error(`❌ Error subiendo documento: ${error.message}`);
       throw error;
     }
-  }
-
-  async subirDocumento(
-    contratistaId: string,
-    tipo: TipoDocumento,
-    archivo: Express.Multer.File,
-    usuario: string
-  ): Promise<DocumentoContratista> {
-    return this.subirDocumentoLocal(contratistaId, tipo, archivo, usuario);
   }
 
   async obtenerDocumentos(contratistaId: string): Promise<DocumentoContratista[]> {
@@ -426,15 +403,23 @@ export class ContratistaService {
 
   async descargarDocumento(documentoId: string, contratistaId: string): Promise<{ buffer: Buffer; nombre: string; mimeType: string }> {
     const documento = await this.obtenerDocumentoPorId(documentoId, contratistaId);
-    
-    // Buscar archivo en el sistema local
-    const fullPath = path.join(this.baseStoragePath, contratistaId, path.basename(documento.rutaArchivo));
-    
-    if (!fs.existsSync(fullPath)) {
+
+    const existe = await this.storageService.fileExists(documento.rutaArchivo);
+
+    if (!existe) {
       throw new NotFoundException(`Archivo no encontrado: ${documento.nombreArchivo}`);
     }
 
-    const buffer = fs.readFileSync(fullPath);
+    const url = this.storageService.getFileUrl(documento.rutaArchivo);
+    let buffer: Buffer;
+
+    if (url.startsWith('http')) {
+      const response = await fetch(url);
+      const arrayBuffer = await response.arrayBuffer();
+      buffer = Buffer.from(arrayBuffer);
+    } else {
+      buffer = fs.readFileSync(documento.rutaArchivo);
+    }
 
     return {
       buffer,
@@ -446,15 +431,10 @@ export class ContratistaService {
   async eliminarDocumento(documentoId: string, contratistaId: string): Promise<void> {
     try {
       const documento = await this.obtenerDocumentoPorId(documentoId, contratistaId);
-      
-      // Eliminar archivo físico
-      const fullPath = path.join(this.baseStoragePath, contratistaId, path.basename(documento.rutaArchivo));
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
-        this.logger.log(`🗑️ Archivo eliminado: ${fullPath}`);
-      }
 
+      await this.storageService.deleteFile(documento.rutaArchivo);
       await this.documentoRepository.delete(documentoId);
+
       this.logger.log(`✅ Documento eliminado: ${documentoId}`);
     } catch (error) {
       this.logger.error(`❌ Error eliminando documento: ${error.message}`);
@@ -589,7 +569,6 @@ export class ContratistaService {
       return { total: 0, ultimoMes: 0, porTipoDocumento: [] };
     }
   }
-  
 
   async obtenerRecientes(limit: number = 10): Promise<Contratista[]> {
     try {
@@ -603,6 +582,4 @@ export class ContratistaService {
       return [];
     }
   }
-
-  
 }
