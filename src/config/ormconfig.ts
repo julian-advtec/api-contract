@@ -55,7 +55,7 @@ export const ormconfig: DataSourceOptions = {
     DocumentoContratista,
   ],
 
-  synchronize: true,
+  synchronize: !isProduction,
   logging: !isProduction,
 };
 
