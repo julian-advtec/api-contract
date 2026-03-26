@@ -1,4 +1,3 @@
-// src/radicacion/radicacion.module.ts
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { RadicacionController } from './radicacion.controller';
@@ -9,16 +8,15 @@ import { User } from '../users/entities/user.entity';
 import { RegistroAcceso } from './entities/registro-acceso.entity';
 import { EstadosModule } from '../estados/estados.module';
 import { SupervisionModule } from '../supervision/supervisor.module';
-import { ContratistasModule } from '../contratista/contratista.module'; // ✅ Cambiado a ContratistasModule
-
-// Nuevos imports para estadísticas del radicador
+import { ContratistasModule } from '../contratista/contratista.module';
 import { EstadisticasRadicadorController } from './estadisticas/estadisticas-radicador.controller';
 import { EstadisticasRadicadorService } from './estadisticas/estadisticas-radicador.service';
+import { StorageService } from '../common/storage/storage.service';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Documento, Contratista, User, RegistroAcceso]),
-    ContratistasModule, // ✅ Usar ContratistasModule
+    ContratistasModule,
     EstadosModule,
     forwardRef(() => SupervisionModule),
   ],
@@ -29,7 +27,8 @@ import { EstadisticasRadicadorService } from './estadisticas/estadisticas-radica
   providers: [
     RadicacionService,
     EstadisticasRadicadorService,
+    StorageService,
   ],
-  exports: [RadicacionService],
+  exports: [RadicacionService, StorageService],
 })
 export class RadicacionModule {}

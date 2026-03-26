@@ -26,6 +26,7 @@ import { promisify } from 'util';
 import { EstadosService } from '../estados/estados.service';
 import { SupervisorService } from '../supervision/services/supervisor.service';
 import { ContratistaService } from '../contratista/contratista.service';
+import { StorageService } from '../common/storage/storage.service';
 
 const execAsync = promisify(exec);
 
@@ -45,13 +46,26 @@ export class RadicacionService {
         @Inject(forwardRef(() => SupervisorService))
         private supervisorService: SupervisorService,
         private readonly contratistaService: ContratistaService,
+        private readonly storageService: StorageService,
     ) {
-        this.logger.log(`📁 ======= CONFIGURACIÓN RUTA SERVIDOR =======`);
-        this.logger.log(`🌐 Ruta configurada: ${this.basePath}`);
-        this.verificarYConfigurarRutaServidor();
+        this.logger.log(`📁 ======= CONFIGURACIÓN DE ALMACENAMIENTO =======`);
+        const storageInfo = this.storageService.getStorageInfo();
+        this.logger.log(`📦 Tipo de almacenamiento: ${storageInfo.type.toUpperCase()}`);
+        
+        if (storageInfo.type === 'supabase') {
+            this.logger.log(`☁️ Bucket Supabase: ${storageInfo.bucket}`);
+        } else {
+            this.logger.log(`💾 Ruta local: ${storageInfo.localPath}`);
+            this.verificarYConfigurarRutaServidor();
+        }
     }
 
     private verificarYConfigurarRutaServidor(): void {
+        if (this.storageService.isUsingSupabase()) {
+            this.logger.log('☁️ Usando Supabase, no se requiere verificar servidor local');
+            return;
+        }
+
         try {
             this.logger.log(`🔍 Verificando acceso al servidor R2-D2...`);
 
@@ -114,6 +128,10 @@ export class RadicacionService {
     }
 
     private verificarPermisosEscritura(): void {
+        if (this.storageService.isUsingSupabase()) {
+            return;
+        }
+
         try {
             const testFile = path.join(this.basePath, 'test-escritura-' + Date.now() + '.txt');
             const testContent = `Test de escritura: ${new Date().toISOString()}\n`;
@@ -187,7 +205,6 @@ export class RadicacionService {
                 throw new BadRequestException('Debe adjuntar exactamente 3 documentos');
             }
 
-            // ✅ ACTUALIZADO: Permite de 4 a 8 dígitos después del guion
             const radicadoRegex = /^R\d{4}-\d{4,8}$/;
             if (!radicadoRegex.test(createDocumentoDto.numeroRadicado)) {
                 throw new BadRequestException(
@@ -212,24 +229,17 @@ export class RadicacionService {
             }
 
             const anoRadicado = createDocumentoDto.numeroRadicado.substring(1, 5);
-            const rutaCarpetaRadicado = path.join(
-                this.basePath,
+            
+            const relativePath = path.join(
                 createDocumentoDto.documentoContratista,
                 anoRadicado,
                 createDocumentoDto.numeroContrato,
                 createDocumentoDto.numeroRadicado,
             );
 
-            this.logger.log(`📂 Creando carpeta: ${rutaCarpetaRadicado}`);
-            this.crearCarpetasEnServidor(rutaCarpetaRadicado);
-
+            this.logger.log(`📂 Path relativo: ${relativePath}`);
+            
             const nombresArchivos: string[] = [];
-            const descripciones = [
-                createDocumentoDto.descripcionCuentaCobro || 'Cuenta de Cobro',
-                createDocumentoDto.descripcionSeguridadSocial || 'Seguridad Social',
-                createDocumentoDto.descripcionInformeActividades || 'Informe de Actividades',
-            ];
-
             const tiposArchivo = ['cuenta_cobro', 'seguridad_social', 'informe_actividades'];
 
             for (let i = 0; i < files.length; i++) {
@@ -246,15 +256,23 @@ export class RadicacionService {
                     extension
                 );
 
-                const rutaCompleta = path.join(rutaCarpetaRadicado, nombreArchivo);
-                fs.writeFileSync(rutaCompleta, file.buffer);
+                const fileRelativePath = path.join(relativePath, nombreArchivo);
+                
+                this.logger.log(`📤 Subiendo archivo: ${fileRelativePath}`);
+                
+                const result = await this.storageService.uploadFile(
+                    fileRelativePath,
+                    file.buffer,
+                    file.mimetype
+                );
 
-                if (!fs.existsSync(rutaCompleta)) {
-                    throw new Error(`No se pudo guardar: ${nombreArchivo}`);
-                }
-
-                nombresArchivos.push(nombreArchivo);
+                this.logger.log(`✅ Archivo subido a: ${result.provider} - ${result.path}`);
+                nombresArchivos.push(result.path);
             }
+
+            const rutaCarpetaRadicado = this.storageService.isUsingSupabase() 
+                ? relativePath
+                : path.join(this.basePath, relativePath);
 
             this.crearArchivoRegistroEnServidor(rutaCarpetaRadicado, usuarioCompleto, 'CREACION');
 
@@ -303,6 +321,7 @@ export class RadicacionService {
 
             this.logger.log(`✅ Creado OK - ID: ${savedDocumento.id}`);
             this.logger.log(`   Primer radicado: ${savedDocumento.primerRadicadoDelAno ? 'SÍ' : 'NO'}`);
+            this.logger.log(`   Tipo almacenamiento: ${this.storageService.getStorageInfo().type}`);
 
             try {
                 await this.asignarDocumentoASupervisores(savedDocumento);
@@ -389,86 +408,85 @@ export class RadicacionService {
         }
     }
 
-private crearArchivoRegistroEnServidor(rutaCarpeta: string, user: User, accion: string): void {
-    try {
-        const rutaArchivo = path.join(rutaCarpeta, 'registro_accesos.txt');
-        const fecha = new Date().toLocaleString('es-CO', {
-            timeZone: 'America/Bogota',
-            dateStyle: 'full',
-            timeStyle: 'long'
-        });
+    private crearArchivoRegistroEnServidor(rutaCarpeta: string, user: User, accion: string): void {
+        try {
+            if (this.storageService.isUsingSupabase()) {
+                this.logger.log('☁️ Usando Supabase, no se crean archivos de registro locales');
+                return;
+            }
 
-        // ✅ VERIFICAR SI EL ARCHIVO YA EXISTE
-        let contenidoExistente = '';
-        let esPrimerRegistro = true;
+            if (!fs.existsSync(rutaCarpeta)) {
+                this.crearCarpetasEnServidor(rutaCarpeta);
+            }
 
-        if (fs.existsSync(rutaArchivo)) {
-            // Leer contenido existente
-            contenidoExistente = fs.readFileSync(rutaArchivo, 'utf8');
-            esPrimerRegistro = false;
-        }
+            const rutaArchivo = path.join(rutaCarpeta, 'registro_accesos.txt');
+            const fecha = new Date().toLocaleString('es-CO', {
+                timeZone: 'America/Bogota',
+                dateStyle: 'full',
+                timeStyle: 'long'
+            });
 
-        // ✅ CONSTRUIR EL NUEVO REGISTRO
-        const nuevoRegistro = esPrimerRegistro 
-            ? `=== REGISTRO DE ACCESOS - CONTRATOS ===
+            let esPrimerRegistro = true;
+
+            if (fs.existsSync(rutaArchivo)) {
+                esPrimerRegistro = false;
+            }
+
+            const nuevoRegistro = esPrimerRegistro 
+                ? `=== REGISTRO DE ACCESOS - CONTRATOS ===
 Fecha: ${fecha}
 Usuario: ${user.fullName || user.username} (${user.username})
 Rol: ${user.role}
 Acción: ${accion}
-Ruta servidor R2-D2: ${rutaCarpeta}
+Ruta servidor: ${rutaCarpeta}
 
 --- HISTORIAL DE ACCESOS ---
 [${fecha}] ${user.fullName || user.username} (${user.username}) - ${user.role} - ${accion}
 `
-            : `[${fecha}] ${user.fullName || user.username} (${user.username}) - ${user.role} - ${accion}\n`;
+                : `[${fecha}] ${user.fullName || user.username} (${user.username}) - ${user.role} - ${accion}\n`;
 
-        // ✅ SI ES EL PRIMER REGISTRO, ESCRIBIR COMPLETO
-        // ✅ SI YA EXISTE, SOLO AGREGAR LA NUEVA LÍNEA AL FINAL
-        if (esPrimerRegistro) {
-            fs.writeFileSync(rutaArchivo, nuevoRegistro, 'utf8');
-            this.logger.log(`✅ Archivo de registro CREADO en: ${rutaArchivo}`);
-        } else {
-            // Usar flag 'a' para APPEND (agregar al final)
-            fs.writeFileSync(rutaArchivo, nuevoRegistro, { 
-                encoding: 'utf8',
-                flag: 'a'  // ✅ IMPORTANTE: 'a' = append mode
+            if (esPrimerRegistro) {
+                fs.writeFileSync(rutaArchivo, nuevoRegistro, 'utf8');
+                this.logger.log(`✅ Archivo de registro CREADO en: ${rutaArchivo}`);
+            } else {
+                fs.writeFileSync(rutaArchivo, nuevoRegistro, { 
+                    encoding: 'utf8',
+                    flag: 'a'
+                });
+                this.logger.log(`✅ Registro AGREGADO al archivo: ${rutaArchivo}`);
+            }
+            
+            this.actualizarArchivoDetalles(rutaCarpeta, user);
+            
+        } catch (error) {
+            this.logger.error(`❌ Error creando archivo de registro: ${error.message}`);
+        }
+    }
+
+    private actualizarArchivoDetalles(rutaCarpeta: string, user: User): void {
+        try {
+            if (this.storageService.isUsingSupabase()) {
+                return;
+            }
+
+            const rutaDetalles = path.join(rutaCarpeta, 'detalles_radicacion.txt');
+            
+            let detallesExistentes = '';
+            if (fs.existsSync(rutaDetalles)) {
+                detallesExistentes = fs.readFileSync(rutaDetalles, 'utf8');
+            }
+
+            const fecha = new Date().toLocaleString('es-CO');
+            const nuevaEntrada = `\n[${fecha}] Acceso de ${user.fullName || user.username} (${user.role})`;
+
+            fs.writeFileSync(rutaDetalles, detallesExistentes + nuevaEntrada, { 
+                flag: 'a' 
             });
-            this.logger.log(`✅ Registro AGREGADO al archivo: ${rutaArchivo}`);
+            
+        } catch (error) {
+            this.logger.error(`❌ Error actualizando detalles: ${error.message}`);
         }
-        
-        // También crear/modificar el archivo de detalles
-        this.actualizarArchivoDetalles(rutaCarpeta, user);
-        
-    } catch (error) {
-        this.logger.error(`❌ Error creando archivo de registro: ${error.message}`);
     }
-}
-
-/**
- * Método auxiliar para mantener actualizado el archivo de detalles
- */
-private actualizarArchivoDetalles(rutaCarpeta: string, user: User): void {
-    try {
-        const rutaDetalles = path.join(rutaCarpeta, 'detalles_radicacion.txt');
-        
-        // Leer detalles existentes si los hay
-        let detallesExistentes = '';
-        if (fs.existsSync(rutaDetalles)) {
-            detallesExistentes = fs.readFileSync(rutaDetalles, 'utf8');
-        }
-
-        // Agregar nueva entrada
-        const fecha = new Date().toLocaleString('es-CO');
-        const nuevaEntrada = `\n[${fecha}] Acceso de ${user.fullName || user.username} (${user.role})`;
-
-        fs.writeFileSync(rutaDetalles, detallesExistentes + nuevaEntrada, { 
-            flag: 'a' 
-        });
-        
-    } catch (error) {
-        this.logger.error(`❌ Error actualizando detalles: ${error.message}`);
-    }
-}
 
     private async asignarDocumentoASupervisores(documento: Documento): Promise<void> {
         try {
@@ -605,12 +623,7 @@ private actualizarArchivoDetalles(rutaCarpeta: string, user: User): void {
                     throw new BadRequestException('Número de documento inválido (1-3)');
             }
 
-            const rutaCompleta = path.join(documento.rutaCarpetaRadicado, nombreArchivo);
-            if (!fs.existsSync(rutaCompleta)) {
-                throw new NotFoundException(`Archivo no encontrado en el servidor: ${nombreArchivo}`);
-            }
-
-            return rutaCompleta;
+            return this.storageService.getFileUrl(nombreArchivo);
         } catch (error) {
             this.logger.error(`❌ Error en obtenerRutaArchivo: ${error.message}`);
             throw error;
@@ -636,16 +649,7 @@ private actualizarArchivoDetalles(rutaCarpeta: string, user: User): void {
                 throw new BadRequestException('Número de documento inválido');
         }
 
-        const rutaCompleta = path.join(
-            documento.rutaCarpetaRadicado,
-            nombreArchivo,
-        );
-
-        if (!fs.existsSync(rutaCompleta)) {
-            throw new NotFoundException('Archivo no encontrado');
-        }
-
-        return rutaCompleta;
+        return this.storageService.getFileUrl(nombreArchivo);
     }
 
     async obtenerPorId(id: string): Promise<Documento> {
