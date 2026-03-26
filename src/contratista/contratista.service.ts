@@ -589,6 +589,7 @@ export class ContratistaService {
       return { total: 0, ultimoMes: 0, porTipoDocumento: [] };
     }
   }
+  
 
   async obtenerRecientes(limit: number = 10): Promise<Contratista[]> {
     try {
