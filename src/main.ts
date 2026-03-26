@@ -207,6 +207,7 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error(reason);
   }
   process.exit(1);
+  
 });
 
 process.on('SIGTERM', () => {
