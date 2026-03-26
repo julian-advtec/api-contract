@@ -57,19 +57,32 @@ function getCorsOrigins(): string[] {
 
   if (nodeEnv === 'production') {
     origins.push(
+      'https://advtec.netlify.app',
+      'https://api-contract.onrender.com',
       'http://192.168.7.56:8091',
-      'https://tu-dominio-produccion.com',
     );
+    
     const frontendUrl = process.env.FRONTEND_URL;
-    if (frontendUrl) {
+    if (frontendUrl && !origins.includes(frontendUrl)) {
       origins.push(frontendUrl);
+    }
+    
+    const extraOrigins = process.env.EXTRA_CORS_ORIGINS;
+    if (extraOrigins) {
+      extraOrigins.split(',').forEach(origin => {
+        const trimmedOrigin = origin.trim();
+        if (trimmedOrigin && !origins.includes(trimmedOrigin)) {
+          origins.push(trimmedOrigin);
+        }
+      });
     }
   } else {
     origins.push(
       'http://localhost:4200',
       'http://localhost:8091',
       'http://127.0.0.1:4200',
-      'http://127.0.0.1:8091'
+      'http://127.0.0.1:8091',
+      'http://192.168.7.56:8091',
     );
   }
 
@@ -123,18 +136,36 @@ async function bootstrap() {
     const isProduction = process.env.NODE_ENV === 'production';
     
     app.enableCors({
-      origin: isProduction ? corsOrigins : true,
+      origin: (origin: string, callback: (err: Error | null, allow?: boolean) => void) => {
+        if (!origin) {
+          return callback(null, true);
+        }
+        
+        if (!isProduction) {
+          return callback(null, true);
+        }
+        
+        if (corsOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          logger.warn(`❌ CORS bloqueado para origen: ${origin}`);
+          logger.warn(`📋 Orígenes permitidos: ${corsOrigins.join(', ')}`);
+          callback(new Error(`Origen ${origin} no permitido por CORS`));
+        }
+      },
       credentials: true,
       methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'x-auditor-id'],
+      allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'x-auditor-id', 'X-Requested-With'],
       exposedHeaders: ['Content-Disposition'],
+      preflightContinue: false,
+      optionsSuccessStatus: 204,
     });
     
+    logger.log(`🌐 CORS configurado con ${corsOrigins.length} orígenes permitidos`);
     if (isProduction) {
-      logger.log(`🌐 CORS configurado para ${corsOrigins.length} orígenes`);
-      corsOrigins.forEach(origin => logger.log(`   - ${origin}`));
+      corsOrigins.forEach(origin => logger.log(`   ✅ ${origin}`));
     } else {
-      logger.log('🌐 CORS configurado para todos los orígenes (modo desarrollo)');
+      logger.log('   🌍 Todos los orígenes permitidos en desarrollo');
     }
 
     app.useGlobalPipes(
@@ -170,6 +201,7 @@ async function bootstrap() {
       } else {
         logger.log('🗄️ Base de datos: Configuración individual');
       }
+      logger.log(`🌍 Frontend permitido: ${corsOrigins.join(', ')}`);
     }
     
     const storageType = process.env.STORAGE_TYPE || 'local';
@@ -207,7 +239,6 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error(reason);
   }
   process.exit(1);
-  
 });
 
 process.on('SIGTERM', () => {
