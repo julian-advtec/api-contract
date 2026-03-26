@@ -97,7 +97,7 @@ export class UsersService {
   async create(createUserDto: CreateUserDto, createdBy?: string): Promise<UserResponseDto> {
     try {
       console.log('Recibiendo datos para crear usuario:', createUserDto);
-      
+
       // Verificar username único
       const existingUser = await this.findByUsername(createUserDto.username);
       if (existingUser) {
@@ -133,9 +133,9 @@ export class UsersService {
 
       const user = this.usersRepository.create(userData);
       const savedUser = await this.usersRepository.save(user);
-      
+
       console.log('Usuario guardado:', savedUser);
-      
+
       // Asegurarnos de que savedUser sea un objeto User, no un array
       if (Array.isArray(savedUser)) {
         console.error('ERROR: savedUser es un array:', savedUser);
@@ -145,7 +145,7 @@ export class UsersService {
           throw new InternalServerErrorException('Error: No se pudo crear el usuario');
         }
       }
-      
+
       return new UserResponseDto(savedUser);
     } catch (error) {
       console.error('Error en create:', error);
@@ -162,7 +162,7 @@ export class UsersService {
   async update(id: string, updateUserDto: UpdateUserDto, updatedBy?: string): Promise<UserResponseDto> {
     try {
       console.log(`Actualizando usuario ${id}:`, updateUserDto);
-      
+
       const user = await this.findById(id);
       if (!user) {
         throw new NotFoundException('Usuario no encontrado');
@@ -216,9 +216,9 @@ export class UsersService {
       }
 
       const savedUser = await this.usersRepository.save(updatedUser);
-      
+
       console.log('Usuario actualizado:', savedUser);
-      
+
       // Asegurarnos de que savedUser sea un objeto User
       if (Array.isArray(savedUser)) {
         if (savedUser.length > 0) {
@@ -227,7 +227,7 @@ export class UsersService {
           throw new InternalServerErrorException('Error: No se pudo actualizar el usuario');
         }
       }
-      
+
       return new UserResponseDto(savedUser);
     } catch (error) {
       console.error('Error en update:', error);
@@ -258,7 +258,7 @@ export class UsersService {
       }
 
       const savedUser = await this.usersRepository.save(user);
-      
+
       if (Array.isArray(savedUser)) {
         if (savedUser.length > 0) {
           return new UserResponseDto(savedUser[0]);
@@ -266,7 +266,7 @@ export class UsersService {
           throw new InternalServerErrorException('Error: No se pudo cambiar el estado del usuario');
         }
       }
-      
+
       return new UserResponseDto(savedUser);
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -291,7 +291,7 @@ export class UsersService {
       }
 
       const savedUser = await this.usersRepository.save(user);
-      
+
       if (Array.isArray(savedUser)) {
         if (savedUser.length > 0) {
           return new UserResponseDto(savedUser[0]);
@@ -299,7 +299,7 @@ export class UsersService {
           throw new InternalServerErrorException('Error: No se pudo activar el usuario');
         }
       }
-      
+
       return new UserResponseDto(savedUser);
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -324,7 +324,7 @@ export class UsersService {
       }
 
       const savedUser = await this.usersRepository.save(user);
-      
+
       if (Array.isArray(savedUser)) {
         if (savedUser.length > 0) {
           return new UserResponseDto(savedUser[0]);
@@ -332,7 +332,7 @@ export class UsersService {
           throw new InternalServerErrorException('Error: No se pudo desactivar el usuario');
         }
       }
-      
+
       return new UserResponseDto(savedUser);
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -372,7 +372,7 @@ export class UsersService {
       }
 
       const savedUser = await this.usersRepository.save(user);
-      
+
       if (Array.isArray(savedUser)) {
         if (savedUser.length > 0) {
           return new UserResponseDto(savedUser[0]);
@@ -380,7 +380,7 @@ export class UsersService {
           throw new InternalServerErrorException('Error: No se pudo eliminar el usuario');
         }
       }
-      
+
       return new UserResponseDto(savedUser);
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -508,7 +508,7 @@ export class UsersService {
     }
   }
 
- async findById(id: string, relations: string[] = []): Promise<User | null> {
+  async findById(id: string, relations: string[] = []): Promise<User | null> {
     try {
       return await this.usersRepository.findOne({
         where: { id },
@@ -519,5 +519,4 @@ export class UsersService {
     }
   }
 
-  
 }

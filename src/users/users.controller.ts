@@ -119,13 +119,25 @@ export class UsersController {
   @Roles(UserRole.ADMIN)
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     const user = await this.usersService.findById(id, ['signature']);
-    
+
     // 👇 VERIFICAR SI EL USUARIO EXISTE
     if (!user) {
       throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
     }
-    
+
     return { data: new UserResponseDto(user) };
+  }
+
+  @Post('init-admin')
+  async createInitialAdmin() {
+    return this.usersService.create({
+      username: 'admin',
+      email: 'admin@admin.com',
+      fullName: 'Administrador',
+      password: 'Admin123*',
+      role: UserRole.ADMIN,
+      isActive: true
+    });
   }
 
 }
