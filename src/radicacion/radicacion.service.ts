@@ -47,86 +47,88 @@ export class RadicacionService {
         private supervisorService: SupervisorService,
         private readonly contratistaService: ContratistaService,
         private readonly storageService: StorageService,
-        
+
     ) {
         this.logger.log(`📁 ======= CONFIGURACIÓN DE ALMACENAMIENTO =======`);
         const storageInfo = this.storageService.getStorageInfo();
         this.logger.log(`📦 Tipo de almacenamiento: ${storageInfo.type.toUpperCase()}`);
-        
+
         if (storageInfo.type === 'supabase') {
             this.logger.log(`☁️ Bucket Supabase: ${storageInfo.bucket}`);
         } else {
-            this.logger.log(`💾 Ruta local: ${storageInfo.localPath}`);
+            // CORREGIDO: usar storageInfo.path en lugar de storageInfo.localPath
+            this.logger.log(`💾 Ruta local: ${storageInfo.path}`);
             this.verificarYConfigurarRutaServidor();
         }
     }
 
-    private verificarYConfigurarRutaServidor(): void {
-        if (this.storageService.isUsingSupabase()) {
-            this.logger.log('☁️ Usando Supabase, no se requiere verificar servidor local');
-            return;
-        }
 
-        try {
-            this.logger.log(`🔍 Verificando acceso al servidor R2-D2...`);
-
-            const rutasAProbar = [
-                '\\\\R2-D2\\api-contract',
-                '\\\\\\\\R2-D2\\\\\\\\api-contract',
-                '//R2-D2/api-contract',
-            ];
-
-            let rutaFuncional = null;
-
-            for (const rutaTest of rutasAProbar) {
-                try {
-                    this.logger.log(`🔍 Probando ruta: ${rutaTest}`);
-                    if (fs.existsSync(rutaTest)) {
-                        rutaFuncional = rutaTest;
-                        this.logger.log(`✅ Ruta accesible: ${rutaTest}`);
-                        break;
-                    } else {
-                        try {
-                            fs.mkdirSync(rutaTest, { recursive: true });
-                            if (fs.existsSync(rutaTest)) {
-                                rutaFuncional = rutaTest;
-                                this.logger.log(`✅ Directorio creado y accesible`);
-                                break;
-                            }
-                        } catch (mkdirError) {
-                            this.logger.log(`❌ No se pudo crear directorio: ${mkdirError.message}`);
-                        }
-                    }
-                } catch (error) {
-                    this.logger.log(`⚠️ Error accediendo a ruta ${rutaTest}: ${error.message}`);
-                }
-            }
-
-            if (rutaFuncional) {
-                this.basePath = rutaFuncional;
-                this.logger.log(`✅ Ruta servidor configurada: ${this.basePath}`);
-                this.verificarPermisosEscritura();
-            } else {
-                this.logger.error(`❌ No se pudo acceder a ninguna ruta del servidor`);
-                if (process.env.NODE_ENV === 'development') {
-                    const rutaLocal = path.join(process.cwd(), 'uploads-dev-server');
-                    this.basePath = rutaLocal;
-                    this.logger.warn(`⚠️ EN DESARROLLO: Usando ruta local: ${this.basePath}`);
-                    if (!fs.existsSync(this.basePath)) {
-                        fs.mkdirSync(this.basePath, { recursive: true });
-                        this.logger.log(`✅ Carpeta local creada`);
-                    }
-                } else {
-                    throw new InternalServerErrorException(
-                        `No se puede acceder al servidor de archivos R2-D2.`
-                    );
-                }
-            }
-        } catch (error) {
-            this.logger.error(`❌ Error configurando ruta servidor: ${error.message}`);
-            throw error;
-        }
+private verificarYConfigurarRutaServidor(): void {
+    if (this.storageService.isUsingSupabase()) {
+        this.logger.log('☁️ Usando Supabase, no se requiere verificar servidor local');
+        return;
     }
+
+    try {
+        this.logger.log(`🔍 Verificando acceso al servidor R2-D2...`);
+
+        const rutasAProbar = [
+            '\\\\R2-D2\\api-contract',
+            '\\\\\\\\R2-D2\\\\\\\\api-contract',
+            '//R2-D2/api-contract',
+        ];
+
+        let rutaFuncional = null;
+
+        for (const rutaTest of rutasAProbar) {
+            try {
+                this.logger.log(`🔍 Probando ruta: ${rutaTest}`);
+                if (fs.existsSync(rutaTest)) {
+                    rutaFuncional = rutaTest;
+                    this.logger.log(`✅ Ruta accesible: ${rutaTest}`);
+                    break;
+                } else {
+                    try {
+                        fs.mkdirSync(rutaTest, { recursive: true });
+                        if (fs.existsSync(rutaTest)) {
+                            rutaFuncional = rutaTest;
+                            this.logger.log(`✅ Directorio creado y accesible`);
+                            break;
+                        }
+                    } catch (mkdirError) {
+                        this.logger.log(`❌ No se pudo crear directorio: ${mkdirError.message}`);
+                    }
+                }
+            } catch (error) {
+                this.logger.log(`⚠️ Error accediendo a ruta ${rutaTest}: ${error.message}`);
+            }
+        }
+
+        if (rutaFuncional) {
+            this.basePath = rutaFuncional;
+            this.logger.log(`✅ Ruta servidor configurada: ${this.basePath}`);
+            this.verificarPermisosEscritura();
+        } else {
+            this.logger.error(`❌ No se pudo acceder a ninguna ruta del servidor`);
+            if (process.env.NODE_ENV === 'development') {
+                const rutaLocal = path.join(process.cwd(), 'uploads-dev-server');
+                this.basePath = rutaLocal;
+                this.logger.warn(`⚠️ EN DESARROLLO: Usando ruta local: ${this.basePath}`);
+                if (!fs.existsSync(this.basePath)) {
+                    fs.mkdirSync(this.basePath, { recursive: true });
+                    this.logger.log(`✅ Carpeta local creada`);
+                }
+            } else {
+                throw new InternalServerErrorException(
+                    `No se puede acceder al servidor de archivos R2-D2.`
+                );
+            }
+        }
+    } catch (error) {
+        this.logger.error(`❌ Error configurando ruta servidor: ${error.message}`);
+        throw error;
+    }
+}
 
     private verificarPermisosEscritura(): void {
         if (this.storageService.isUsingSupabase()) {
@@ -230,7 +232,7 @@ export class RadicacionService {
             }
 
             const anoRadicado = createDocumentoDto.numeroRadicado.substring(1, 5);
-            
+
             const relativePath = path.join(
                 createDocumentoDto.documentoContratista,
                 anoRadicado,
@@ -239,7 +241,7 @@ export class RadicacionService {
             );
 
             this.logger.log(`📂 Path relativo: ${relativePath}`);
-            
+
             const nombresArchivos: string[] = [];
             const tiposArchivo = ['cuenta_cobro', 'seguridad_social', 'informe_actividades'];
 
@@ -258,9 +260,9 @@ export class RadicacionService {
                 );
 
                 const fileRelativePath = path.join(relativePath, nombreArchivo);
-                
+
                 this.logger.log(`📤 Subiendo archivo: ${fileRelativePath}`);
-                
+
                 const result = await this.storageService.uploadFile(
                     fileRelativePath,
                     file.buffer,
@@ -271,7 +273,7 @@ export class RadicacionService {
                 nombresArchivos.push(result.path);
             }
 
-            const rutaCarpetaRadicado = this.storageService.isUsingSupabase() 
+            const rutaCarpetaRadicado = this.storageService.isUsingSupabase()
                 ? relativePath
                 : path.join(this.basePath, relativePath);
 
@@ -433,7 +435,7 @@ export class RadicacionService {
                 esPrimerRegistro = false;
             }
 
-            const nuevoRegistro = esPrimerRegistro 
+            const nuevoRegistro = esPrimerRegistro
                 ? `=== REGISTRO DE ACCESOS - CONTRATOS ===
 Fecha: ${fecha}
 Usuario: ${user.fullName || user.username} (${user.username})
@@ -450,15 +452,15 @@ Ruta servidor: ${rutaCarpeta}
                 fs.writeFileSync(rutaArchivo, nuevoRegistro, 'utf8');
                 this.logger.log(`✅ Archivo de registro CREADO en: ${rutaArchivo}`);
             } else {
-                fs.writeFileSync(rutaArchivo, nuevoRegistro, { 
+                fs.writeFileSync(rutaArchivo, nuevoRegistro, {
                     encoding: 'utf8',
                     flag: 'a'
                 });
                 this.logger.log(`✅ Registro AGREGADO al archivo: ${rutaArchivo}`);
             }
-            
+
             this.actualizarArchivoDetalles(rutaCarpeta, user);
-            
+
         } catch (error) {
             this.logger.error(`❌ Error creando archivo de registro: ${error.message}`);
         }
@@ -471,7 +473,7 @@ Ruta servidor: ${rutaCarpeta}
             }
 
             const rutaDetalles = path.join(rutaCarpeta, 'detalles_radicacion.txt');
-            
+
             let detallesExistentes = '';
             if (fs.existsSync(rutaDetalles)) {
                 detallesExistentes = fs.readFileSync(rutaDetalles, 'utf8');
@@ -480,10 +482,10 @@ Ruta servidor: ${rutaCarpeta}
             const fecha = new Date().toLocaleString('es-CO');
             const nuevaEntrada = `\n[${fecha}] Acceso de ${user.fullName || user.username} (${user.role})`;
 
-            fs.writeFileSync(rutaDetalles, detallesExistentes + nuevaEntrada, { 
-                flag: 'a' 
+            fs.writeFileSync(rutaDetalles, detallesExistentes + nuevaEntrada, {
+                flag: 'a'
             });
-            
+
         } catch (error) {
             this.logger.error(`❌ Error actualizando detalles: ${error.message}`);
         }

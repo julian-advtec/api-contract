@@ -1,260 +1,449 @@
 // src/common/storage/storage.service.ts
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { createClient } from '@supabase/supabase-js';
 
 @Injectable()
-export class StorageService {
+export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
-  private supabase: SupabaseClient | null = null;
-  private useSupabase = false;
-  private readonly localStoragePath: string;
-  private readonly fallbackToLocal: boolean;
+  private supabaseClient: any;
+  private storageType: string;
+  private localPath: string;
+  private isDevelopment: boolean;
+  private supabaseBucket: string;
 
   constructor(private configService: ConfigService) {
-    const supabaseUrl = this.configService.get<string>('SUPABASE_URL');
-    const supabaseKey = this.configService.get<string>('SUPABASE_KEY');
-    const storageType = this.configService.get<string>('STORAGE_TYPE', 'local');
-
-    this.localStoragePath = this.configService.get<string>('LOCAL_STORAGE_PATH', 'uploads');
-    this.fallbackToLocal = this.configService.get<string>('FALLBACK_TO_LOCAL', 'true') === 'true';
-
-    this.logger.log(`📦 ======= CONFIGURACIÓN DE ALMACENAMIENTO =======`);
-    this.logger.log(`   Tipo: ${storageType.toUpperCase()}`);
-    this.logger.log(`   Supabase URL: ${supabaseUrl ? '✅ Configurada' : '❌ No configurada'}`);
-    this.logger.log(`   Supabase Key: ${supabaseKey ? '✅ Configurada' : '❌ No configurada'}`);
-    this.logger.log(`   Local path: ${this.localStoragePath}`);
-    this.logger.log(`   Fallback: ${this.fallbackToLocal ? 'Habilitado' : 'Deshabilitado'}`);
-    this.logger.log(`==================================================`);
-
-    if (storageType === 'supabase' && supabaseUrl && supabaseKey) {
-      try {
-        this.supabase = createClient(supabaseUrl, supabaseKey);
-        this.useSupabase = true;
-        this.logger.log('☁️ Supabase activo para almacenamiento');
-        this.verificarConexionSupabase();
-      } catch (error) {
-        this.logger.error(`❌ Error inicializando Supabase: ${error.message}`);
-        this.useSupabase = false;
-        this.supabase = null;
-
-        if (this.fallbackToLocal) {
-          this.logger.warn('⚠️ Usando almacenamiento LOCAL como fallback');
-        }
-      }
-    } else {
-      this.logger.log('💾 Usando almacenamiento LOCAL');
+    this.isDevelopment = process.env.NODE_ENV === 'development' || 
+                         process.env.VSCODE_PID !== undefined ||
+                         !process.env.SUPABASE_URL;
+    
+    this.storageType = this.configService.get('storage.type') || this.detectStorageType();
+    this.localPath = this.configService.get('storage.local.basePath') || 
+                     process.env.LOCAL_STORAGE_PATH || 
+                     'uploads';
+    this.supabaseBucket = this.configService.get('storage.supabase.bucket') || 
+                          process.env.SUPABASE_BUCKET || 
+                          'documentos';
+    
+    // En desarrollo, forzar uso de local
+    if (this.isDevelopment && this.storageType === 'supabase') {
+      this.logger.warn('⚠️ Entorno de desarrollo detectado - Forzando almacenamiento LOCAL');
+      this.storageType = 'local';
     }
+    
+    this.logger.log(`📦 ======= CONFIGURACIÓN DE ALMACENAMIENTO =======`);
+    this.logger.log(`   Tipo: ${this.storageType.toUpperCase()}`);
+    
+    if (this.storageType === 'supabase') {
+      const supabaseUrl = this.configService.get('storage.supabase.url') || process.env.SUPABASE_URL;
+      const supabaseKey = this.configService.get('storage.supabase.key') || process.env.SUPABASE_KEY;
+      
+      if (supabaseUrl && supabaseKey) {
+        this.supabaseClient = createClient(supabaseUrl, supabaseKey);
+        this.logger.log(`   Supabase URL: ✅ Configurada`);
+        this.logger.log(`   Supabase Key: ✅ Configurada`);
+        this.logger.log(`   Bucket: ${this.supabaseBucket}`);
+      } else {
+        this.logger.warn('⚠️ Supabase configurado pero faltan credenciales - Cambiando a LOCAL');
+        this.storageType = 'local';
+      }
+    }
+    
+    if (this.storageType === 'local') {
+      this.logger.log(`   Local path: ${this.localPath}`);
+      this.ensureLocalDirectory();
+    }
+    
+    const fallbackEnabled = this.configService.get('storage.local.fallbackToLocal') || 
+                           process.env.FALLBACK_TO_LOCAL === 'true';
+    this.logger.log(`   Fallback: ${fallbackEnabled ? 'Habilitado' : 'Deshabilitado'}`);
+    this.logger.log(`==================================================`);
   }
 
-  private async verificarConexionSupabase(): Promise<void> {
-    if (!this.useSupabase || !this.supabase) return;
+  private detectStorageType(): string {
+    if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY && process.env.NODE_ENV === 'production') {
+      return 'supabase';
+    }
+    return 'local';
+  }
 
+  async onModuleInit() {
+    if (this.storageType === 'supabase') {
+      await this.verifySupabaseConnection();
+    } else {
+      this.logger.log(`💾 Usando almacenamiento LOCAL`);
+      this.logger.log(`📁 Ruta: ${this.localPath}`);
+    }
+  }
+  
+  private ensureLocalDirectory() {
     try {
-      const bucket = this.configService.get<string>('SUPABASE_BUCKET', 'documentos');
-      const { error } = await this.supabase.storage
-        .from(bucket)
-        .list('', { limit: 1 });
-
-      if (error) {
-        this.logger.error(`❌ Error de conexión con Supabase: ${error.message}`);
-        if (this.fallbackToLocal) {
-          this.logger.warn('⚠️ Activando fallback a almacenamiento LOCAL');
-          this.useSupabase = false;
-        } else {
-          throw error;
-        }
+      let normalizedPath = this.localPath;
+      if (process.platform === 'win32') {
+        normalizedPath = this.localPath.replace(/\\\\/g, '\\');
+      }
+      
+      if (!fs.existsSync(normalizedPath)) {
+        fs.mkdirSync(normalizedPath, { recursive: true });
+        this.logger.log(`📁 Directorio local creado: ${normalizedPath}`);
       } else {
-        this.logger.log('✅ Conexión con Supabase verificada exitosamente');
+        this.logger.log(`📁 Directorio local existente: ${normalizedPath}`);
+      }
+    } catch (error) {
+      this.logger.error(`❌ Error creando directorio local: ${error.message}`);
+      try {
+        const altPath = './uploads';
+        if (!fs.existsSync(altPath)) {
+          fs.mkdirSync(altPath, { recursive: true });
+          this.localPath = altPath;
+          this.logger.log(`📁 Usando directorio alternativo: ${altPath}`);
+        }
+      } catch (altError) {
+        this.logger.error(`❌ También falló el directorio alternativo: ${altError.message}`);
+      }
+    }
+  }
+  
+  private async verifySupabaseConnection() {
+    try {
+      if (this.storageType === 'supabase' && this.supabaseClient) {
+        const { data, error } = await this.supabaseClient
+          .storage
+          .getBucket(this.supabaseBucket);
+        
+        if (error) {
+          this.logger.error(`❌ Error verificando conexión Supabase: ${error.message}`);
+          if (process.env.FALLBACK_TO_LOCAL === 'true') {
+            this.logger.warn('⚠️ Fallback a almacenamiento LOCAL');
+            this.storageType = 'local';
+            this.ensureLocalDirectory();
+          }
+        } else {
+          this.logger.log(`✅ Conexión con Supabase verificada exitosamente`);
+        }
       }
     } catch (error) {
       this.logger.error(`❌ Error verificando Supabase: ${error.message}`);
-      if (this.fallbackToLocal) {
-        this.logger.warn('⚠️ Activando fallback a almacenamiento LOCAL');
-        this.useSupabase = false;
+      if (process.env.FALLBACK_TO_LOCAL === 'true') {
+        this.logger.warn('⚠️ Fallback a almacenamiento LOCAL');
+        this.storageType = 'local';
+        this.ensureLocalDirectory();
       }
     }
   }
-
-  async uploadFile(
-    relativePath: string,
-    file: Buffer,
-    mimetype: string
-  ): Promise<{ path: string; provider: string }> {
-    if (this.useSupabase && this.supabase) {
-      try {
-        const bucket = this.configService.get<string>('SUPABASE_BUCKET', 'documentos');
-
-        this.logger.log(`☁️ Subiendo archivo a Supabase: ${relativePath}`);
-
-        const { data, error } = await this.supabase.storage
-          .from(bucket)
-          .upload(relativePath, file, {
-            contentType: mimetype,
-            upsert: true,
-          });
-
-        if (error) {
-          this.logger.error(`❌ Error en Supabase upload: ${error.message}`);
-          throw error;
-        }
-
-        this.logger.log(`✅ Archivo subido a Supabase: ${data.path}`);
-
-        return {
-          path: relativePath,
-          provider: 'supabase',
-        };
-      } catch (error) {
-        this.logger.error(`❌ Supabase falló: ${error.message}`);
-
-        if (!this.fallbackToLocal) {
-          throw error;
-        }
-
-        this.logger.warn('⚠️ Activando fallback a almacenamiento LOCAL...');
-      }
-    }
-
-    const fullPath = this.buildLocalPath(relativePath);
-    this.logger.log(`💾 Guardando archivo localmente: ${fullPath}`);
-
-    try {
-      const dir = path.dirname(fullPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-
-      fs.writeFileSync(fullPath, file);
-
-      this.logger.log(`✅ Archivo guardado localmente: ${fullPath}`);
-
-      return {
-        path: fullPath,
-        provider: 'local',
+  
+  // Método para subir archivo (compatible con la interfaz existente)
+  async uploadFile(fileOrBuffer: any, folderPathOrBuffer?: any, fileNameOrMimeType?: any): Promise<any> {
+    // Soporte para diferentes formas de llamada:
+    // 1. uploadFile(file, folderPath, fileName)
+    // 2. uploadFile(filePath, buffer, mimeType)
+    // 3. uploadFile(buffer, folderPath, fileName)
+    
+    let file: any;
+    let folderPath: string;
+    let fileName: string;
+    let mimeType: string = 'application/octet-stream';
+    
+    // Detectar la forma de llamada
+    if (typeof folderPathOrBuffer === 'string' && folderPathOrBuffer.includes('/')) {
+      // Forma 1 o 3: uploadFile(file, folderPath, fileName)
+      file = fileOrBuffer;
+      folderPath = folderPathOrBuffer;
+      fileName = fileNameOrMimeType || file.originalname || `file_${Date.now()}`;
+      if (file.mimetype) mimeType = file.mimetype;
+    } else if (Buffer.isBuffer(fileOrBuffer) && typeof folderPathOrBuffer === 'string') {
+      // Forma 2: uploadFile(buffer, folderPath, mimeType)
+      file = {
+        buffer: fileOrBuffer,
+        originalname: fileNameOrMimeType || `file_${Date.now()}`,
+        mimetype: folderPathOrBuffer || 'application/octet-stream'
       };
-    } catch (error) {
-      this.logger.error(`❌ Error guardando archivo local: ${error.message}`);
-      throw error;
+      folderPath = '';
+      fileName = file.originalname;
+    } else if (typeof fileOrBuffer === 'string' && Buffer.isBuffer(folderPathOrBuffer)) {
+      // Forma alternativa: uploadFile(filePath, buffer, mimeType)
+      file = {
+        buffer: folderPathOrBuffer,
+        originalname: path.basename(fileOrBuffer),
+        mimetype: fileNameOrMimeType || 'application/octet-stream'
+      };
+      folderPath = path.dirname(fileOrBuffer);
+      fileName = file.originalname;
+    } else {
+      // Fallback
+      file = fileOrBuffer;
+      folderPath = folderPathOrBuffer || '';
+      fileName = fileNameOrMimeType || file.originalname || `file_${Date.now()}`;
+      if (file.mimetype) mimeType = file.mimetype;
     }
+    
+    const finalFileName = fileName;
+    const fullPath = folderPath 
+      ? path.join(folderPath, finalFileName).replace(/\\/g, '/')
+      : finalFileName;
+    
+    if (this.storageType === 'supabase' && this.supabaseClient) {
+      return this.uploadToSupabase(file, fullPath);
+    }
+    return this.uploadToLocal(file, fullPath);
   }
-
-  getFileUrl(storedPath: string): string {
-    this.logger.log(`🔍 Buscando archivo: ${storedPath}`);
-
-    const esArchivoLocal = storedPath.startsWith('\\\\') ||
-      storedPath.includes(':\\') ||
-      storedPath.includes('/tmp/') ||
-      storedPath.includes('uploads');
-
-    if (this.useSupabase && this.supabase && !esArchivoLocal) {
-      try {
-        const bucket = this.configService.get<string>('SUPABASE_BUCKET', 'documentos');
-        const { data } = this.supabase.storage
-          .from(bucket)
-          .getPublicUrl(storedPath);
-
-        this.logger.log(`🔗 URL pública generada: ${data.publicUrl}`);
-        return data.publicUrl;
-      } catch (error) {
-        this.logger.error(`❌ Error generando URL pública: ${error.message}`);
-        return storedPath;
-      }
+  
+  // Método para obtener URL pública del archivo (SÍNCRONO)
+  getFileUrl(filePath: string): string {
+    if (this.storageType === 'supabase' && this.supabaseClient) {
+      const { data } = this.supabaseClient
+        .storage
+        .from(this.supabaseBucket)
+        .getPublicUrl(filePath);
+      return data.publicUrl;
     }
-
-    return storedPath;
+    // Para local, devolver ruta local
+    const fullPath = path.join(this.localPath, filePath);
+    return fullPath;
   }
-
-  async deleteFile(storedPath: string): Promise<boolean> {
-    const esArchivoLocal = storedPath.startsWith('\\\\') ||
-      storedPath.includes(':\\') ||
-      storedPath.includes('/tmp/') ||
-      storedPath.includes('uploads');
-
-    if (this.useSupabase && this.supabase && !esArchivoLocal) {
-      try {
-        const bucket = this.configService.get<string>('SUPABASE_BUCKET', 'documentos');
-        const { error } = await this.supabase.storage
-          .from(bucket)
-          .remove([storedPath]);
-
-        if (error) {
-          this.logger.error(`❌ Error eliminando de Supabase: ${error.message}`);
-          return false;
-        }
-
-        this.logger.log(`✅ Archivo eliminado de Supabase: ${storedPath}`);
-        return true;
-      } catch (error) {
-        this.logger.error(`❌ Error eliminando archivo: ${error.message}`);
-        return false;
-      }
-    }
-
-    try {
-      if (fs.existsSync(storedPath)) {
-        fs.unlinkSync(storedPath);
-        this.logger.log(`✅ Archivo eliminado localmente: ${storedPath}`);
-        return true;
-      }
-      return false;
-    } catch (error) {
-      this.logger.error(`❌ Error eliminando archivo local: ${error.message}`);
-      return false;
-    }
-  }
-
-  async fileExists(storedPath: string): Promise<boolean> {
-    const esArchivoLocal = storedPath.startsWith('\\\\') ||
-      storedPath.includes(':\\') ||
-      storedPath.includes('/tmp/') ||
-      storedPath.includes('uploads');
-
-    if (this.useSupabase && this.supabase && !esArchivoLocal) {
-      try {
-        const bucket = this.configService.get<string>('SUPABASE_BUCKET', 'documentos');
-        const { data, error } = await this.supabase.storage
-          .from(bucket)
-          .list('', {
-            search: storedPath,
-            limit: 1
-          });
-
-        if (error) return false;
-        return data && data.length > 0;
-      } catch (error) {
-        return false;
-      }
-    }
-
-    try {
-      return fs.existsSync(storedPath);
-    } catch (error) {
-      return false;
-    }
-  }
-
-  private buildLocalPath(relativePath: string): string {
-    const cleanBasePath = this.localStoragePath.replace(/\\\\/g, '\\');
-    return path.join(cleanBasePath, relativePath);
-  }
-
+  
+  // Método para verificar si está usando Supabase
   isUsingSupabase(): boolean {
-    return this.useSupabase && this.supabase !== null;
+    return this.storageType === 'supabase' && this.supabaseClient !== null;
   }
-
-  getStorageInfo(): { type: string; bucket?: string; localPath?: string } {
-    if (this.useSupabase) {
+  
+  // Método para obtener información del almacenamiento
+  getStorageInfo(): { type: string; path?: string; bucket?: string } {
+    if (this.storageType === 'supabase') {
       return {
         type: 'supabase',
-        bucket: this.configService.get<string>('SUPABASE_BUCKET'),
+        bucket: this.supabaseBucket,
       };
     }
     return {
       type: 'local',
-      localPath: this.localStoragePath,
+      path: this.localPath,
     };
+  }
+  
+  // Método para guardar archivo (alias de uploadFile para compatibilidad)
+  async saveFile(file: any, filePath: string): Promise<string> {
+    const result = await this.uploadFile(file, path.dirname(filePath), path.basename(filePath));
+    return result.path || result;
+  }
+  
+  // Método para obtener archivo como buffer
+  async getFile(filePath: string): Promise<Buffer> {
+    if (this.storageType === 'supabase' && this.supabaseClient) {
+      return this.getFromSupabase(filePath);
+    }
+    return this.getFromLocal(filePath);
+  }
+  
+  // Método para eliminar archivo
+  async deleteFile(filePath: string): Promise<boolean> {
+    if (this.storageType === 'supabase' && this.supabaseClient) {
+      return this.deleteFromSupabase(filePath);
+    }
+    return this.deleteFromLocal(filePath);
+  }
+  
+  // Método para verificar si archivo existe
+  async fileExists(filePath: string): Promise<boolean> {
+    if (this.storageType === 'supabase' && this.supabaseClient) {
+      return this.existsInSupabase(filePath);
+    }
+    return this.existsInLocal(filePath);
+  }
+  
+  // Método para listar archivos en un directorio
+  async listFiles(folderPath: string): Promise<string[]> {
+    if (this.storageType === 'supabase' && this.supabaseClient) {
+      return this.listFromSupabase(folderPath);
+    }
+    return this.listFromLocal(folderPath);
+  }
+  
+  // Implementaciones locales
+  private async uploadToLocal(file: any, filePath: string): Promise<any> {
+    const fullPath = path.join(this.localPath, filePath);
+    const dir = path.dirname(fullPath);
+    
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    let buffer: Buffer;
+    if (file.buffer) {
+      buffer = file.buffer;
+    } else if (file.path) {
+      buffer = fs.readFileSync(file.path);
+    } else if (file.data) {
+      buffer = Buffer.from(file.data);
+    } else if (typeof file === 'string') {
+      buffer = fs.readFileSync(file);
+    } else {
+      throw new Error('Formato de archivo no soportado');
+    }
+    
+    fs.writeFileSync(fullPath, buffer);
+    this.logger.debug(`💾 Archivo guardado localmente: ${fullPath}`);
+    
+    return {
+      success: true,
+      path: filePath,
+      fullPath: fullPath,
+      provider: 'local'
+    };
+  }
+  
+  private async getFromLocal(filePath: string): Promise<Buffer> {
+    const fullPath = path.join(this.localPath, filePath);
+    if (!fs.existsSync(fullPath)) {
+      throw new Error(`Archivo no encontrado: ${fullPath}`);
+    }
+    return fs.readFileSync(fullPath);
+  }
+  
+  private async deleteFromLocal(filePath: string): Promise<boolean> {
+    const fullPath = path.join(this.localPath, filePath);
+    if (fs.existsSync(fullPath)) {
+      fs.unlinkSync(fullPath);
+      this.logger.debug(`🗑️ Archivo eliminado localmente: ${fullPath}`);
+      return true;
+    }
+    return false;
+  }
+  
+  private async existsInLocal(filePath: string): Promise<boolean> {
+    const fullPath = path.join(this.localPath, filePath);
+    return fs.existsSync(fullPath);
+  }
+  
+  private async listFromLocal(folderPath: string): Promise<string[]> {
+    const fullPath = path.join(this.localPath, folderPath);
+    if (!fs.existsSync(fullPath)) {
+      return [];
+    }
+    const files = fs.readdirSync(fullPath);
+    return files.map((file: string) => path.join(folderPath, file));
+  }
+  
+  // Implementaciones Supabase
+  private async uploadToSupabase(file: any, filePath: string): Promise<any> {
+    if (!this.supabaseClient) {
+      throw new Error('Supabase no configurado');
+    }
+    
+    let buffer: Buffer;
+    if (file.buffer) {
+      buffer = file.buffer;
+    } else if (file.path) {
+      buffer = fs.readFileSync(file.path);
+    } else if (file.data) {
+      buffer = Buffer.from(file.data);
+    } else if (typeof file === 'string') {
+      buffer = fs.readFileSync(file);
+    } else {
+      throw new Error('Formato de archivo no soportado');
+    }
+    
+    const { data, error } = await this.supabaseClient
+      .storage
+      .from(this.supabaseBucket)
+      .upload(filePath, buffer, {
+        contentType: file.mimetype || 'application/octet-stream',
+        upsert: true,
+      });
+    
+    if (error) {
+      this.logger.error(`❌ Error subiendo a Supabase: ${error.message}`);
+      if (process.env.FALLBACK_TO_LOCAL === 'true') {
+        this.logger.warn('⚠️ Fallback a almacenamiento LOCAL');
+        return this.uploadToLocal(file, filePath);
+      }
+      throw error;
+    }
+    
+    this.logger.debug(`☁️ Archivo guardado en Supabase: ${filePath}`);
+    return {
+      success: true,
+      path: data.path,
+      publicUrl: this.supabaseClient.storage.from(this.supabaseBucket).getPublicUrl(data.path).data.publicUrl,
+      provider: 'supabase'
+    };
+  }
+  
+  private async getFromSupabase(filePath: string): Promise<Buffer> {
+    if (!this.supabaseClient) {
+      throw new Error('Supabase no configurado');
+    }
+    
+    const { data, error } = await this.supabaseClient
+      .storage
+      .from(this.supabaseBucket)
+      .download(filePath);
+    
+    if (error) {
+      this.logger.error(`❌ Error descargando de Supabase: ${error.message}`);
+      throw error;
+    }
+    
+    const arrayBuffer = await data.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  }
+  
+  private async deleteFromSupabase(filePath: string): Promise<boolean> {
+    if (!this.supabaseClient) {
+      throw new Error('Supabase no configurado');
+    }
+    
+    const { error } = await this.supabaseClient
+      .storage
+      .from(this.supabaseBucket)
+      .remove([filePath]);
+    
+    if (error) {
+      this.logger.error(`❌ Error eliminando de Supabase: ${error.message}`);
+      return false;
+    }
+    
+    this.logger.debug(`🗑️ Archivo eliminado de Supabase: ${filePath}`);
+    return true;
+  }
+  
+  private async existsInSupabase(filePath: string): Promise<boolean> {
+    if (!this.supabaseClient) {
+      return false;
+    }
+    
+    try {
+      const { data, error } = await this.supabaseClient
+        .storage
+        .from(this.supabaseBucket)
+        .list(path.dirname(filePath), {
+          search: path.basename(filePath),
+        });
+      
+      if (error) return false;
+      return data && data.length > 0;
+    } catch (error) {
+      return false;
+    }
+  }
+  
+  private async listFromSupabase(folderPath: string): Promise<string[]> {
+    if (!this.supabaseClient) {
+      return [];
+    }
+    
+    const { data, error } = await this.supabaseClient
+      .storage
+      .from(this.supabaseBucket)
+      .list(folderPath);
+    
+    if (error) {
+      this.logger.error(`❌ Error listando archivos en Supabase: ${error.message}`);
+      return [];
+    }
+    
+    return data.map((file: any) => path.join(folderPath, file.name));
   }
 }
