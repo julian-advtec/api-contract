@@ -7,42 +7,58 @@ export class Contratista {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'documento_identidad', unique: true })
+  @Column({ name: 'tipo_documento', type: 'varchar', length: 10, default: 'CC' })
+  tipoDocumento: string;
+
+  @Column({ name: 'documento_identidad', type: 'varchar', length: 20, unique: true })
   documentoIdentidad: string;
 
-  @Column({ name: 'nombre_completo' })
-  nombreCompleto: string;
+  @Column({ name: 'razon_social', type: 'varchar', length: 200 })
+  razonSocial: string;
 
-  @Column({ name: 'numero_contrato', nullable: true, type: 'varchar' })
-  numeroContrato: string | null;
+  @Column({ name: 'representante_legal', type: 'varchar', length: 200, nullable: true })
+  representanteLegal: string | null;
 
-  @Column({ nullable: true, type: 'varchar' })
-  email: string | null;
+  @Column({ name: 'documento_representante', type: 'varchar', length: 20, nullable: true })
+  documentoRepresentante: string | null;
 
-  @Column({ nullable: true, type: 'varchar' })
+  @Column({ name: 'telefono', type: 'varchar', length: 15, nullable: true })
   telefono: string | null;
 
-  @Column({ nullable: true, type: 'text' })
+  @Column({ name: 'email', type: 'varchar', length: 100, nullable: true })
+  email: string | null;
+
+  @Column({ name: 'direccion', type: 'text', nullable: true })
   direccion: string | null;
 
-  @Column({ nullable: true, type: 'varchar' })
-  cargo: string | null;
+  @Column({ name: 'departamento', type: 'varchar', length: 50, nullable: true })
+  departamento: string | null;
 
-  @Column({ nullable: true, type: 'varchar' })
+  @Column({ name: 'ciudad', type: 'varchar', length: 50, nullable: true })
+  ciudad: string | null;
+
+  @Column({ name: 'tipo_contratista', type: 'varchar', length: 50, nullable: true })
   tipoContratista: string | null;
 
-  @Column({ nullable: true, type: 'varchar', default: 'ACTIVO' })
+  @Column({ name: 'estado', type: 'varchar', length: 20, default: 'ACTIVO' })
   estado: string;
 
-  @Column({ nullable: true, type: 'text' })
+  @Column({ name: 'numero_contrato', type: 'varchar', length: 50, nullable: true })
+  numeroContrato: string | null;
+
+  @Column({ name: 'cargo', type: 'varchar', length: 100, nullable: true })
+  cargo: string | null;
+
+  @Column({ name: 'observaciones', type: 'text', nullable: true })
   observaciones: string | null;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn({ name: 'updated_at', type: 'timestamp' })
   updatedAt: Date;
 
   @OneToMany(() => DocumentoContratista, (documento) => documento.contratista, { cascade: true })
   documentos: DocumentoContratista[];
+  
 }

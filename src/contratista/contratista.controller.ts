@@ -22,13 +22,14 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
-import type { Response } from 'express'; // ✅ Usar import type
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
 import { ContratistaService } from './contratista.service';
 import { TipoDocumento } from './entities/documento-contratista.entity';
+import { Contratista } from './entities/contratista.entity';
 
 @Controller('contratistas')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -145,7 +146,7 @@ export class ContratistasController {
       const resultados = contratistas.map((c) => ({
         id: c.id,
         documentoIdentidad: c.documentoIdentidad,
-        nombreCompleto: c.nombreCompleto,
+        razonSocial: c.razonSocial,
         numeroContrato: c.numeroContrato || 'Sin contrato',
         email: c.email,
         telefono: c.telefono,
@@ -311,7 +312,7 @@ export class ContratistasController {
       const resultados = contratistas.map((c) => ({
         id: c.id,
         documentoIdentidad: c.documentoIdentidad,
-        nombreCompleto: c.nombreCompleto,
+        razonSocial: c.razonSocial,
         numeroContrato: c.numeroContrato || 'Sin contrato',
         email: c.email,
         telefono: c.telefono,
@@ -343,19 +344,27 @@ export class ContratistasController {
   @Post()
   @Roles(UserRole.RADICADOR, UserRole.ADMIN)
   async crear(@Body() body: {
+    tipoDocumento: string;
     documentoIdentidad: string;
-    nombreCompleto: string;
-    numeroContrato?: string;
-    email?: string;
+    razonSocial: string;
+    representanteLegal?: string;
+    documentoRepresentante?: string;
     telefono?: string;
+    email?: string;
     direccion?: string;
+    departamento?: string;
+    ciudad?: string;
+    tipoContratista?: string;
+    estado?: string;
+    numeroContrato?: string;
     cargo?: string;
+    observaciones?: string;
   }) {
     try {
       this.logger.log('📝 Creando nuevo contratista');
 
-      if (!body.documentoIdentidad || !body.nombreCompleto) {
-        throw new BadRequestException('Documento de identidad y nombre completo son requeridos');
+      if (!body.documentoIdentidad || !body.razonSocial) {
+        throw new BadRequestException('Documento de identidad y razón social son requeridos');
       }
 
       const contratista = await this.contratistaService.crear(body);
@@ -399,23 +408,31 @@ export class ContratistasController {
   async crearContratistaCompleto(
     @Body() body: any,
     @UploadedFiles() files: Express.Multer.File[],
-    @Req() req: any // ✅ Agregar tipo any explícito
+    @Req() req: any
   ) {
     try {
       this.logger.log('📝 Creando contratista con documentos');
 
       const datosContratista = {
+        tipoDocumento: body.tipoDocumento || 'CC',
         documentoIdentidad: body.documentoIdentidad,
-        nombreCompleto: body.nombreCompleto,
-        numeroContrato: body.numeroContrato,
-        email: body.email,
+        razonSocial: body.razonSocial,
+        representanteLegal: body.representanteLegal,
+        documentoRepresentante: body.documentoRepresentante,
         telefono: body.telefono,
+        email: body.email,
         direccion: body.direccion,
-        cargo: body.cargo
+        departamento: body.departamento,
+        ciudad: body.ciudad,
+        tipoContratista: body.tipoContratista,
+        estado: body.estado || 'ACTIVO',
+        numeroContrato: body.numeroContrato,
+        cargo: body.cargo,
+        observaciones: body.observaciones
       };
 
-      if (!datosContratista.documentoIdentidad || !datosContratista.nombreCompleto) {
-        throw new BadRequestException('Documento y nombre son requeridos');
+      if (!datosContratista.documentoIdentidad || !datosContratista.razonSocial) {
+        throw new BadRequestException('Documento y razón social son requeridos');
       }
 
       const documentos = [];
@@ -463,13 +480,21 @@ export class ContratistasController {
   async actualizar(
     @Param('id') id: string,
     @Body() body: Partial<{
+      tipoDocumento: string;
       documentoIdentidad: string;
-      nombreCompleto: string;
-      numeroContrato?: string;
-      email?: string;
+      razonSocial: string;
+      representanteLegal?: string;
+      documentoRepresentante?: string;
       telefono?: string;
+      email?: string;
       direccion?: string;
+      departamento?: string;
+      ciudad?: string;
+      tipoContratista?: string;
+      estado?: string;
+      numeroContrato?: string;
       cargo?: string;
+      observaciones?: string;
     }>
   ) {
     try {
@@ -532,7 +557,7 @@ export class ContratistasController {
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
     @Body('tipo') tipo: string,
-    @Req() req: any // ✅ Agregar tipo any explícito
+    @Req() req: any
   ) {
     try {
       this.logger.log(`📄 Subiendo documento para contratista ${id}: ${tipo}`);
@@ -607,7 +632,7 @@ export class ContratistasController {
   async descargarDocumento(
     @Param('id') contratistaId: string,
     @Param('documentoId') documentoId: string,
-    @Res() res: Response // ✅ Ya está con import type
+    @Res() res: Response
   ) {
     try {
       this.logger.log(`📥 Descargando documento ${documentoId}`);
@@ -688,14 +713,14 @@ export class ContratistasController {
         };
       }
 
-      const contratistas = await this.contratistaService.buscarPorNombre(query);
+      const contratistas = await this.contratistaService.buscarPorRazonSocial(query);
 
       const resultados = contratistas.map((c) => ({
         id: c.id,
-        value: c.nombreCompleto,
-        label: `${c.nombreCompleto} (${c.documentoIdentidad})`,
+        value: c.razonSocial,
+        label: `${c.razonSocial} (${c.documentoIdentidad})`,
         documento: c.documentoIdentidad,
-        nombreCompleto: c.nombreCompleto,
+        razonSocial: c.razonSocial,
         documentoIdentidad: c.documentoIdentidad,
         numeroContrato: c.numeroContrato || 'Sin contrato',
         createdAt: c.createdAt
@@ -741,9 +766,9 @@ export class ContratistasController {
       const resultados = contratistas.map((c) => ({
         id: c.id,
         value: c.documentoIdentidad,
-        label: `${c.documentoIdentidad} - ${c.nombreCompleto}`,
+        label: `${c.documentoIdentidad} - ${c.razonSocial}`,
         documento: c.documentoIdentidad,
-        nombreCompleto: c.nombreCompleto,
+        razonSocial: c.razonSocial,
         documentoIdentidad: c.documentoIdentidad,
         numeroContrato: c.numeroContrato || 'Sin contrato',
         createdAt: c.createdAt
@@ -789,9 +814,9 @@ export class ContratistasController {
       const resultados = contratistas.map((c) => ({
         id: c.id,
         value: c.numeroContrato,
-        label: `${c.numeroContrato} - ${c.nombreCompleto} (${c.documentoIdentidad})`,
+        label: `${c.numeroContrato} - ${c.razonSocial} (${c.documentoIdentidad})`,
         documento: c.documentoIdentidad,
-        nombreCompleto: c.nombreCompleto,
+        razonSocial: c.razonSocial,
         documentoIdentidad: c.documentoIdentidad,
         numeroContrato: c.numeroContrato,
         createdAt: c.createdAt
@@ -850,7 +875,7 @@ export class ContratistasController {
 
   @Get('estadisticas')
   @Roles(UserRole.ADMIN, UserRole.SUPERVISOR)
-  async obtenerEstadisticas(): Promise<any> { // ✅ Agregar tipo de retorno explícito
+  async obtenerEstadisticas(): Promise<any> {
     try {
       this.logger.log('📊 Obteniendo estadísticas de contratistas');
 
@@ -905,9 +930,6 @@ export class ContratistasController {
     }
   }
 
-  /**
- * Buscar contratista por documento (NIT/CC) - para autocompletado en jurídica
- */
   @Get('buscar-por-documento/:documento')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)
   async buscarContratistaPorDocumento(@Param('documento') documento: string) {
@@ -938,7 +960,6 @@ export class ContratistasController {
         };
       }
 
-      // Tomar el primero (más relevante)
       const contratista = contratistas[0];
 
       return {
@@ -948,12 +969,14 @@ export class ContratistasController {
           data: {
             id: contratista.id,
             documentoIdentidad: contratista.documentoIdentidad,
-            nombreCompleto: contratista.nombreCompleto,
-            nombreRazonSocial: contratista.nombreCompleto,
+            razonSocial: contratista.razonSocial,
+            nombreRazonSocial: contratista.razonSocial,
             numeroContrato: contratista.numeroContrato,
             email: contratista.email,
             telefono: contratista.telefono,
             direccion: contratista.direccion,
+            departamento: contratista.departamento,
+            ciudad: contratista.ciudad,
             cargo: contratista.cargo,
             tipoContratista: contratista.tipoContratista,
             estado: contratista.estado,

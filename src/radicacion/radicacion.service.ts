@@ -63,72 +63,72 @@ export class RadicacionService {
     }
 
 
-private verificarYConfigurarRutaServidor(): void {
-    if (this.storageService.isUsingSupabase()) {
-        this.logger.log('☁️ Usando Supabase, no se requiere verificar servidor local');
-        return;
-    }
+    private verificarYConfigurarRutaServidor(): void {
+        if (this.storageService.isUsingSupabase()) {
+            this.logger.log('☁️ Usando Supabase, no se requiere verificar servidor local');
+            return;
+        }
 
-    try {
-        this.logger.log(`🔍 Verificando acceso al servidor R2-D2...`);
+        try {
+            this.logger.log(`🔍 Verificando acceso al servidor R2-D2...`);
 
-        const rutasAProbar = [
-            '\\\\R2-D2\\api-contract',
-            '\\\\\\\\R2-D2\\\\\\\\api-contract',
-            '//R2-D2/api-contract',
-        ];
+            const rutasAProbar = [
+                '\\\\R2-D2\\api-contract',
+                '\\\\\\\\R2-D2\\\\\\\\api-contract',
+                '//R2-D2/api-contract',
+            ];
 
-        let rutaFuncional = null;
+            let rutaFuncional = null;
 
-        for (const rutaTest of rutasAProbar) {
-            try {
-                this.logger.log(`🔍 Probando ruta: ${rutaTest}`);
-                if (fs.existsSync(rutaTest)) {
-                    rutaFuncional = rutaTest;
-                    this.logger.log(`✅ Ruta accesible: ${rutaTest}`);
-                    break;
-                } else {
-                    try {
-                        fs.mkdirSync(rutaTest, { recursive: true });
-                        if (fs.existsSync(rutaTest)) {
-                            rutaFuncional = rutaTest;
-                            this.logger.log(`✅ Directorio creado y accesible`);
-                            break;
+            for (const rutaTest of rutasAProbar) {
+                try {
+                    this.logger.log(`🔍 Probando ruta: ${rutaTest}`);
+                    if (fs.existsSync(rutaTest)) {
+                        rutaFuncional = rutaTest;
+                        this.logger.log(`✅ Ruta accesible: ${rutaTest}`);
+                        break;
+                    } else {
+                        try {
+                            fs.mkdirSync(rutaTest, { recursive: true });
+                            if (fs.existsSync(rutaTest)) {
+                                rutaFuncional = rutaTest;
+                                this.logger.log(`✅ Directorio creado y accesible`);
+                                break;
+                            }
+                        } catch (mkdirError) {
+                            this.logger.log(`❌ No se pudo crear directorio: ${mkdirError.message}`);
                         }
-                    } catch (mkdirError) {
-                        this.logger.log(`❌ No se pudo crear directorio: ${mkdirError.message}`);
                     }
+                } catch (error) {
+                    this.logger.log(`⚠️ Error accediendo a ruta ${rutaTest}: ${error.message}`);
                 }
-            } catch (error) {
-                this.logger.log(`⚠️ Error accediendo a ruta ${rutaTest}: ${error.message}`);
             }
-        }
 
-        if (rutaFuncional) {
-            this.basePath = rutaFuncional;
-            this.logger.log(`✅ Ruta servidor configurada: ${this.basePath}`);
-            this.verificarPermisosEscritura();
-        } else {
-            this.logger.error(`❌ No se pudo acceder a ninguna ruta del servidor`);
-            if (process.env.NODE_ENV === 'development') {
-                const rutaLocal = path.join(process.cwd(), 'uploads-dev-server');
-                this.basePath = rutaLocal;
-                this.logger.warn(`⚠️ EN DESARROLLO: Usando ruta local: ${this.basePath}`);
-                if (!fs.existsSync(this.basePath)) {
-                    fs.mkdirSync(this.basePath, { recursive: true });
-                    this.logger.log(`✅ Carpeta local creada`);
-                }
+            if (rutaFuncional) {
+                this.basePath = rutaFuncional;
+                this.logger.log(`✅ Ruta servidor configurada: ${this.basePath}`);
+                this.verificarPermisosEscritura();
             } else {
-                throw new InternalServerErrorException(
-                    `No se puede acceder al servidor de archivos R2-D2.`
-                );
+                this.logger.error(`❌ No se pudo acceder a ninguna ruta del servidor`);
+                if (process.env.NODE_ENV === 'development') {
+                    const rutaLocal = path.join(process.cwd(), 'uploads-dev-server');
+                    this.basePath = rutaLocal;
+                    this.logger.warn(`⚠️ EN DESARROLLO: Usando ruta local: ${this.basePath}`);
+                    if (!fs.existsSync(this.basePath)) {
+                        fs.mkdirSync(this.basePath, { recursive: true });
+                        this.logger.log(`✅ Carpeta local creada`);
+                    }
+                } else {
+                    throw new InternalServerErrorException(
+                        `No se puede acceder al servidor de archivos R2-D2.`
+                    );
+                }
             }
+        } catch (error) {
+            this.logger.error(`❌ Error configurando ruta servidor: ${error.message}`);
+            throw error;
         }
-    } catch (error) {
-        this.logger.error(`❌ Error configurando ruta servidor: ${error.message}`);
-        throw error;
     }
-}
 
     private verificarPermisosEscritura(): void {
         if (this.storageService.isUsingSupabase()) {
@@ -182,7 +182,6 @@ private verificarYConfigurarRutaServidor(): void {
             }
 
             this.logger.log(`✅ PERMISOS OK: ${usuarioCompleto.username} (${rolUsuario})`);
-
             let contratista: Contratista;
             try {
                 const contratistas = await this.contratistaService.buscarPorDocumento(
@@ -195,7 +194,7 @@ private verificarYConfigurarRutaServidor(): void {
                 } else {
                     contratista = await this.contratistaService.crear({
                         documentoIdentidad: createDocumentoDto.documentoContratista,
-                        nombreCompleto: createDocumentoDto.nombreContratista,
+                        razonSocial: createDocumentoDto.nombreContratista,
                     });
                     this.logger.log(`📝 Nuevo contratista creado: ${contratista.id}`);
                 }

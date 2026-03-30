@@ -54,7 +54,7 @@ export class ContratistaService {
 
       switch (tipo) {
         case 'nombre':
-          whereClause = [{ nombreCompleto: ILike(`%${terminoLower}%`) }];
+          whereClause = [{ razonSocial: ILike(`%${terminoLower}%`) }];
           break;
         case 'documento':
           whereClause = [{ documentoIdentidad: ILike(`%${terminoLower}%`) }];
@@ -64,7 +64,7 @@ export class ContratistaService {
           break;
         default:
           whereClause = [
-            { nombreCompleto: ILike(`%${terminoLower}%`) },
+            { razonSocial: ILike(`%${terminoLower}%`) },
             { documentoIdentidad: ILike(`%${terminoLower}%`) },
             { numeroContrato: ILike(`%${terminoLower}%`) }
           ];
@@ -72,7 +72,7 @@ export class ContratistaService {
 
       const contratistas = await this.contratistaRepository.find({
         where: whereClause,
-        order: { nombreCompleto: 'ASC' },
+        order: { razonSocial: 'ASC' },
         relations: ['documentos'],
         take: 20
       });
@@ -102,7 +102,7 @@ export class ContratistaService {
         .leftJoinAndSelect('c.documentos', 'documentos');
 
       if (filtros.nombre) {
-        query.andWhere('c.nombreCompleto ILIKE :nombre', { nombre: `%${filtros.nombre}%` });
+        query.andWhere('c.razonSocial ILIKE :nombre', { nombre: `%${filtros.nombre}%` });
       }
 
       if (filtros.documento) {
@@ -132,7 +132,7 @@ export class ContratistaService {
         query.skip(filtros.offset);
       }
 
-      query.orderBy('c.nombreCompleto', 'ASC');
+      query.orderBy('c.razonSocial', 'ASC');
 
       const contratistas = await query.getMany();
 
@@ -148,7 +148,7 @@ export class ContratistaService {
   async obtenerTodos(options?: { limit?: number; offset?: number }): Promise<Contratista[]> {
     try {
       const queryOptions: any = {
-        order: { nombreCompleto: 'ASC' },
+        order: { razonSocial: 'ASC' },
         relations: ['documentos']
       };
 
@@ -177,11 +177,11 @@ export class ContratistaService {
       return await this.contratistaRepository.find({
         where: [
           { documentoIdentidad: ILike(`%${terminoLower}%`) },
-          { nombreCompleto: ILike(`%${terminoLower}%`) },
+          { razonSocial: ILike(`%${terminoLower}%`) },
           { numeroContrato: ILike(`%${terminoLower}%`) },
         ],
         relations: ['documentos'],
-        order: { nombreCompleto: 'ASC' },
+        order: { razonSocial: 'ASC' },
         take: 20,
       });
     } catch (error) {
@@ -191,20 +191,25 @@ export class ContratistaService {
   }
 
   async crear(data: {
+    tipoDocumento?: string;
     documentoIdentidad: string;
-    nombreCompleto: string;
-    numeroContrato?: string;
-    email?: string;
+    razonSocial: string;
+    representanteLegal?: string;
+    documentoRepresentante?: string;
     telefono?: string;
+    email?: string;
     direccion?: string;
-    cargo?: string;
+    departamento?: string;
+    ciudad?: string;
     tipoContratista?: string;
     estado?: string;
+    numeroContrato?: string;
+    cargo?: string;
     observaciones?: string;
   }): Promise<Contratista> {
     try {
-      if (!data.documentoIdentidad || !data.nombreCompleto) {
-        throw new BadRequestException('Documento de identidad y nombre completo son requeridos');
+      if (!data.documentoIdentidad || !data.razonSocial) {
+        throw new BadRequestException('Documento de identidad y razón social son requeridos');
       }
 
       if (data.documentoIdentidad.length < 3) {
@@ -220,19 +225,24 @@ export class ContratistaService {
       }
 
       const contratista = new Contratista();
+      contratista.tipoDocumento = data.tipoDocumento || 'CC';
       contratista.documentoIdentidad = data.documentoIdentidad.trim();
-      contratista.nombreCompleto = data.nombreCompleto.trim();
-      contratista.numeroContrato = data.numeroContrato?.trim() || null;
-      contratista.email = data.email?.trim() || null;
-      contratista.telefono = data.telefono?.trim() || null;
-      contratista.direccion = data.direccion?.trim() || null;
-      contratista.cargo = data.cargo?.trim() || null;
-      contratista.tipoContratista = data.tipoContratista?.trim() || null;
+      contratista.razonSocial = data.razonSocial.trim();
+      contratista.representanteLegal = data.representanteLegal?.trim() ?? null;
+      contratista.documentoRepresentante = data.documentoRepresentante?.trim() ?? null;
+      contratista.telefono = data.telefono?.trim() ?? null;
+      contratista.email = data.email?.trim() ?? null;
+      contratista.direccion = data.direccion?.trim() ?? null;
+      contratista.departamento = data.departamento?.trim() ?? null;
+      contratista.ciudad = data.ciudad?.trim() ?? null;
+      contratista.tipoContratista = data.tipoContratista?.trim() ?? null;
       contratista.estado = data.estado || 'ACTIVO';
-      contratista.observaciones = data.observaciones?.trim() || null;
+      contratista.numeroContrato = data.numeroContrato?.trim() ?? null;
+      contratista.cargo = data.cargo?.trim() ?? null;
+      contratista.observaciones = data.observaciones?.trim() ?? null;
 
       const saved = await this.contratistaRepository.save(contratista);
-      this.logger.log(`✅ Contratista creado: ${saved.id} - ${saved.nombreCompleto}`);
+      this.logger.log(`✅ Contratista creado: ${saved.id} - ${saved.razonSocial}`);
 
       return saved;
     } catch (error) {
@@ -244,15 +254,20 @@ export class ContratistaService {
   async actualizar(
     id: string,
     data: Partial<{
+      tipoDocumento: string;
       documentoIdentidad: string;
-      nombreCompleto: string;
-      numeroContrato?: string;
-      email?: string;
+      razonSocial: string;
+      representanteLegal?: string;
+      documentoRepresentante?: string;
       telefono?: string;
+      email?: string;
       direccion?: string;
-      cargo?: string;
+      departamento?: string;
+      ciudad?: string;
       tipoContratista?: string;
       estado?: string;
+      numeroContrato?: string;
+      cargo?: string;
       observaciones?: string;
     }>
   ): Promise<Contratista> {
@@ -269,16 +284,21 @@ export class ContratistaService {
         }
       }
 
+      if (data.tipoDocumento) contratista.tipoDocumento = data.tipoDocumento;
       if (data.documentoIdentidad) contratista.documentoIdentidad = data.documentoIdentidad;
-      if (data.nombreCompleto) contratista.nombreCompleto = data.nombreCompleto;
-      if (data.numeroContrato !== undefined) contratista.numeroContrato = data.numeroContrato || null;
-      if (data.email !== undefined) contratista.email = data.email || null;
-      if (data.telefono !== undefined) contratista.telefono = data.telefono || null;
-      if (data.direccion !== undefined) contratista.direccion = data.direccion || null;
-      if (data.cargo !== undefined) contratista.cargo = data.cargo || null;
-      if (data.tipoContratista !== undefined) contratista.tipoContratista = data.tipoContratista || null;
+      if (data.razonSocial) contratista.razonSocial = data.razonSocial;
+      if (data.representanteLegal !== undefined) contratista.representanteLegal = data.representanteLegal ?? null;
+      if (data.documentoRepresentante !== undefined) contratista.documentoRepresentante = data.documentoRepresentante ?? null;
+      if (data.telefono !== undefined) contratista.telefono = data.telefono ?? null;
+      if (data.email !== undefined) contratista.email = data.email ?? null;
+      if (data.direccion !== undefined) contratista.direccion = data.direccion ?? null;
+      if (data.departamento !== undefined) contratista.departamento = data.departamento ?? null;
+      if (data.ciudad !== undefined) contratista.ciudad = data.ciudad ?? null;
+      if (data.tipoContratista !== undefined) contratista.tipoContratista = data.tipoContratista ?? null;
       if (data.estado !== undefined) contratista.estado = data.estado;
-      if (data.observaciones !== undefined) contratista.observaciones = data.observaciones || null;
+      if (data.numeroContrato !== undefined) contratista.numeroContrato = data.numeroContrato ?? null;
+      if (data.cargo !== undefined) contratista.cargo = data.cargo ?? null;
+      if (data.observaciones !== undefined) contratista.observaciones = data.observaciones ?? null;
 
       const updated = await this.contratistaRepository.save(contratista);
       this.logger.log(`✅ Contratista actualizado: ${updated.id}`);
@@ -292,15 +312,20 @@ export class ContratistaService {
 
   async crearConDocumentos(
     data: {
+      tipoDocumento?: string;
       documentoIdentidad: string;
-      nombreCompleto: string;
-      numeroContrato?: string;
-      email?: string;
+      razonSocial: string;
+      representanteLegal?: string;
+      documentoRepresentante?: string;
       telefono?: string;
+      email?: string;
       direccion?: string;
-      cargo?: string;
+      departamento?: string;
+      ciudad?: string;
       tipoContratista?: string;
       estado?: string;
+      numeroContrato?: string;
+      cargo?: string;
       observaciones?: string;
     },
     documentos?: Array<{ tipo: TipoDocumento; archivo: Express.Multer.File }>,
@@ -471,7 +496,7 @@ export class ContratistaService {
       return await this.contratistaRepository.find({
         where: { documentoIdentidad: ILike(`%${documentoLower}%`) },
         relations: ['documentos'],
-        order: { nombreCompleto: 'ASC' },
+        order: { razonSocial: 'ASC' },
         take: 20,
       });
     } catch (error) {
@@ -480,22 +505,22 @@ export class ContratistaService {
     }
   }
 
-  async buscarPorNombre(nombre: string): Promise<Contratista[]> {
+  async buscarPorRazonSocial(razonSocial: string): Promise<Contratista[]> {
     try {
-      if (!nombre || nombre.trim().length < 1) {
+      if (!razonSocial || razonSocial.trim().length < 1) {
         return [];
       }
 
-      const nombreLower = nombre.toLowerCase().trim();
+      const razonSocialLower = razonSocial.toLowerCase().trim();
 
       return await this.contratistaRepository.find({
-        where: { nombreCompleto: ILike(`%${nombreLower}%`) },
+        where: { razonSocial: ILike(`%${razonSocialLower}%`) },
         relations: ['documentos'],
-        order: { nombreCompleto: 'ASC' },
+        order: { razonSocial: 'ASC' },
         take: 20,
       });
     } catch (error) {
-      this.logger.error(`❌ Error buscando por nombre: ${error.message}`);
+      this.logger.error(`❌ Error buscando por razón social: ${error.message}`);
       return [];
     }
   }
@@ -511,7 +536,7 @@ export class ContratistaService {
       return await this.contratistaRepository.find({
         where: { numeroContrato: ILike(`%${numeroContratoLower}%`) },
         relations: ['documentos'],
-        order: { nombreCompleto: 'ASC' },
+        order: { razonSocial: 'ASC' },
         take: 20,
       });
     } catch (error) {

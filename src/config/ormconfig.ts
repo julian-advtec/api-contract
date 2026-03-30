@@ -153,8 +153,8 @@ export const ormconfig: DataSourceOptions = {
         RendicionCuentasHistorial,
         DocumentoContratista,
     ],
-    synchronize: !isProduction, // Solo sincronizar en desarrollo
-    logging: !isProduction, // Solo logging en desarrollo
+    synchronize: false, // 🔴 CAMBIADO A FALSE
+    logging: !isProduction,
     extra: {
         max: 20,
         idleTimeoutMillis: 30000,
