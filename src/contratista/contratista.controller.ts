@@ -30,13 +30,18 @@ import { UserRole } from '../users/enums/user-role.enum';
 import { ContratistaService } from './contratista.service';
 import { TipoDocumento } from './entities/documento-contratista.entity';
 import { Contratista } from './entities/contratista.entity';
+import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.service';
+import { ModuloBitacora, AccionBitacora } from '../bitacora-sistema/entities/bitacora-sistema.entity';
 
 @Controller('contratistas')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ContratistasController {
   private readonly logger = new Logger(ContratistasController.name);
 
-  constructor(private readonly contratistaService: ContratistaService) { }
+  constructor(
+    private readonly contratistaService: ContratistaService,
+    private readonly bitacoraService: BitacoraSistemaService,
+  ) { }
 
   // ===============================
   // HEALTH CHECK
@@ -57,11 +62,13 @@ export class ContratistasController {
   // ===============================
 
   @Get()
-  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
+  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)
   async obtenerTodos(
     @Query('limit') limit?: string,
-    @Query('offset') offset?: string
+    @Query('offset') offset?: string,
+    @Req() req?: any,
   ) {
+    const inicio = Date.now();
     try {
       this.logger.log('📋 Obteniendo todos los contratistas');
 
@@ -70,35 +77,80 @@ export class ContratistasController {
         offset: offset ? parseInt(offset) : undefined,
       });
 
+      const datosFormateados = contratistas.map(c => ({
+        id: c.id,
+        tipoDocumento: c.tipoDocumento,
+        documentoIdentidad: c.documentoIdentidad,
+        razonSocial: c.razonSocial,
+        nombreCompleto: c.razonSocial,
+        representanteLegal: c.representanteLegal,
+        documentoRepresentante: c.documentoRepresentante,
+        telefono: c.telefono,
+        email: c.email,
+        direccion: c.direccion,
+        departamento: c.departamento,
+        ciudad: c.ciudad,
+        tipoContratista: c.tipoContratista,
+        estado: c.estado,
+        numeroContrato: c.numeroContrato || 'Sin contrato',
+        cargo: c.cargo,
+        observaciones: c.observaciones,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt
+      }));
+
+      try {
+        await this.bitacoraService.registrar(
+          AccionBitacora.VER_DOCUMENTO,
+          ModuloBitacora.ADMINISTRACION,
+          req.user,
+          undefined,
+          {
+            detalles: `Consulta lista de contratistas (${datosFormateados.length} registros)`,
+            duracionMs: Date.now() - inicio,
+          },
+          req,
+        );
+      } catch (bitacoraError) {
+        this.logger.warn(`⚠️ Error en bitácora (no crítico): ${bitacoraError.message}`);
+      }
+
       return {
         ok: true,
-        data: {
-          success: true,
-          count: contratistas.length,
-          data: contratistas,
-          timestamp: new Date().toISOString(),
-        }
+        data: datosFormateados,
+        total: datosFormateados.length
       };
     } catch (error) {
       this.logger.error(`❌ Error obteniendo contratistas: ${error.message}`);
       return {
-        ok: true,
-        data: {
-          success: false,
-          message: 'Error al obtener contratistas',
-          data: []
-        }
+        ok: false,
+        message: 'Error al obtener contratistas',
+        data: [],
+        total: 0
       };
     }
   }
 
   @Get('buscar')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
-  async buscar(@Query('termino') termino: string) {
+  async buscar(@Query('termino') termino: string, @Req() req?: any) {
+    const inicio = Date.now();
     try {
       this.logger.log(`🔍 Buscando contratistas por término: "${termino}"`);
 
       const contratistas = await this.contratistaService.buscarPorTermino(termino);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.VER_DOCUMENTO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Búsqueda de contratistas por término: "${termino}" - ${contratistas.length} resultados`,
+          duracionMs: Date.now() - inicio,
+        },
+        req,
+      );
 
       return {
         ok: true,
@@ -125,8 +177,10 @@ export class ContratistasController {
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
   async buscarCombinado(
     @Query('tipo') tipo: 'nombre' | 'documento' | 'contrato',
-    @Query('termino') termino: string
+    @Query('termino') termino: string,
+    @Req() req?: any
   ) {
+    const inicio = Date.now();
     try {
       this.logger.log(`🔍 Búsqueda combinada: ${tipo} - "${termino}"`);
 
@@ -153,6 +207,18 @@ export class ContratistasController {
         cargo: c.cargo,
         createdAt: c.createdAt
       }));
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.VER_DOCUMENTO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Búsqueda combinada: ${tipo}=${termino} - ${resultados.length} resultados`,
+          duracionMs: Date.now() - inicio,
+        },
+        req,
+      );
 
       return {
         ok: true,
@@ -184,8 +250,10 @@ export class ContratistasController {
     @Query('fechaDesde') fechaDesde?: string,
     @Query('fechaHasta') fechaHasta?: string,
     @Query('limit') limit?: string,
-    @Query('offset') offset?: string
+    @Query('offset') offset?: string,
+    @Req() req?: any
   ) {
+    const inicio = Date.now();
     try {
       this.logger.log('🔍 Búsqueda avanzada solicitada');
 
@@ -199,6 +267,19 @@ export class ContratistasController {
       if (offset) filtros.offset = parseInt(offset);
 
       const resultado = await this.contratistaService.buscarAvanzado(filtros);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.VER_DOCUMENTO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Búsqueda avanzada - ${resultado.contratistas.length} de ${resultado.total} resultados`,
+          duracionMs: Date.now() - inicio,
+          metadata: filtros
+        },
+        req,
+      );
 
       return {
         ok: true,
@@ -223,12 +304,26 @@ export class ContratistasController {
   }
 
   @Get(':id')
-  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
-  async obtenerPorId(@Param('id') id: string) {
+  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)
+  async obtenerPorId(@Param('id') id: string, @Req() req?: any) {
+    const inicio = Date.now();
     try {
       this.logger.log(`🔍 Obteniendo contratista por ID: ${id}`);
 
       const contratista = await this.contratistaService.buscarPorId(id);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.VER_DOCUMENTO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Visualización de contratista: ${contratista.razonSocial} (${contratista.documentoIdentidad})`,
+          contratistaId: contratista.id,
+          duracionMs: Date.now() - inicio,
+        },
+        req,
+      );
 
       return {
         ok: true,
@@ -264,11 +359,36 @@ export class ContratistasController {
 
   @Get(':id/completo')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
-  async obtenerContratistaCompleto(@Param('id') id: string) {
+  async obtenerContratistaCompleto(@Param('id') id: string, @Req() req?: any) {
+    const inicio = Date.now();
     try {
       this.logger.log(`🔍 Obteniendo contratista completo: ${id}`);
 
       const contratistaCompleto = await this.contratistaService.obtenerContratistaCompleto(id);
+
+      if (!contratistaCompleto) {
+        return {
+          ok: true,
+          data: {
+            success: false,
+            message: 'Contratista no encontrado',
+            data: null
+          }
+        };
+      }
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.VER_DOCUMENTO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Visualización completa de contratista: ${contratistaCompleto.razonSocial}`,
+          contratistaId: id,
+          duracionMs: Date.now() - inicio,
+        },
+        req,
+      );
 
       return {
         ok: true,
@@ -292,7 +412,8 @@ export class ContratistasController {
 
   @Get('documento/:documento')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
-  async obtenerPorDocumento(@Param('documento') documento: string) {
+  async obtenerPorDocumento(@Param('documento') documento: string, @Req() req?: any) {
+    const inicio = Date.now();
     try {
       this.logger.log(`🔍 Obteniendo contratista por documento: ${documento}`);
 
@@ -320,6 +441,18 @@ export class ContratistasController {
         createdAt: c.createdAt
       }));
 
+      await this.bitacoraService.registrar(
+        AccionBitacora.VER_DOCUMENTO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Búsqueda por documento: ${documento} - ${resultados.length} resultados`,
+          duracionMs: Date.now() - inicio,
+        },
+        req,
+      );
+
       return {
         ok: true,
         data: {
@@ -341,6 +474,10 @@ export class ContratistasController {
     }
   }
 
+  // ===============================
+  // CREAR CONTRATISTA
+  // ===============================
+
   @Post()
   @Roles(UserRole.RADICADOR, UserRole.ADMIN)
   async crear(@Body() body: {
@@ -359,15 +496,50 @@ export class ContratistasController {
     numeroContrato?: string;
     cargo?: string;
     observaciones?: string;
-  }) {
+  }, @Req() req?: any) {
+    const inicio = Date.now();
     try {
       this.logger.log('📝 Creando nuevo contratista');
+      this.logger.log('📥 Datos recibidos:', JSON.stringify(body, null, 2));
 
       if (!body.documentoIdentidad || !body.razonSocial) {
         throw new BadRequestException('Documento de identidad y razón social son requeridos');
       }
 
-      const contratista = await this.contratistaService.crear(body);
+      const contratistaData = {
+        tipoDocumento: body.tipoDocumento || 'CC',
+        documentoIdentidad: body.documentoIdentidad,
+        razonSocial: body.razonSocial,
+        representanteLegal: body.representanteLegal !== undefined ? body.representanteLegal : undefined,
+        documentoRepresentante: body.documentoRepresentante !== undefined ? body.documentoRepresentante : undefined,
+        telefono: body.telefono !== undefined ? body.telefono : undefined,
+        email: body.email !== undefined ? body.email : undefined,
+        direccion: body.direccion !== undefined ? body.direccion : undefined,
+        departamento: body.departamento !== undefined ? body.departamento : undefined,
+        ciudad: body.ciudad !== undefined ? body.ciudad : undefined,
+        tipoContratista: body.tipoContratista !== undefined ? body.tipoContratista : undefined,
+        estado: body.estado || 'ACTIVO',
+        numeroContrato: body.numeroContrato !== undefined ? body.numeroContrato : undefined,
+        cargo: body.cargo !== undefined ? body.cargo : undefined,
+        observaciones: body.observaciones !== undefined ? body.observaciones : undefined
+      };
+
+      this.logger.log('📦 Datos mapeados:', JSON.stringify(contratistaData, null, 2));
+
+      const contratista = await this.contratistaService.crear(contratistaData);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_CREAR_USUARIO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Contratista creado: ${contratista.razonSocial} (${contratista.documentoIdentidad})`,
+          contratistaId: contratista.id,
+          duracionMs: Date.now() - inicio,
+        },
+        req,
+      );
 
       return {
         ok: true,
@@ -410,26 +582,30 @@ export class ContratistasController {
     @UploadedFiles() files: Express.Multer.File[],
     @Req() req: any
   ) {
+    const inicio = Date.now();
     try {
       this.logger.log('📝 Creando contratista con documentos');
+      this.logger.log('📥 Body recibido:', JSON.stringify(body, null, 2));
 
       const datosContratista = {
         tipoDocumento: body.tipoDocumento || 'CC',
         documentoIdentidad: body.documentoIdentidad,
         razonSocial: body.razonSocial,
-        representanteLegal: body.representanteLegal,
-        documentoRepresentante: body.documentoRepresentante,
-        telefono: body.telefono,
-        email: body.email,
-        direccion: body.direccion,
-        departamento: body.departamento,
-        ciudad: body.ciudad,
-        tipoContratista: body.tipoContratista,
+        representanteLegal: body.representanteLegal !== undefined ? body.representanteLegal : undefined,
+        documentoRepresentante: body.documentoRepresentante !== undefined ? body.documentoRepresentante : undefined,
+        telefono: body.telefono !== undefined ? body.telefono : undefined,
+        email: body.email !== undefined ? body.email : undefined,
+        direccion: body.direccion !== undefined ? body.direccion : undefined,
+        departamento: body.departamento !== undefined ? body.departamento : undefined,
+        ciudad: body.ciudad !== undefined ? body.ciudad : undefined,
+        tipoContratista: body.tipoContratista !== undefined ? body.tipoContratista : undefined,
         estado: body.estado || 'ACTIVO',
-        numeroContrato: body.numeroContrato,
-        cargo: body.cargo,
-        observaciones: body.observaciones
+        numeroContrato: body.numeroContrato !== undefined ? body.numeroContrato : undefined,
+        cargo: body.cargo !== undefined ? body.cargo : undefined,
+        observaciones: body.observaciones !== undefined ? body.observaciones : undefined
       };
+
+      this.logger.log('📦 Datos del contratista:', JSON.stringify(datosContratista, null, 2));
 
       if (!datosContratista.documentoIdentidad || !datosContratista.razonSocial) {
         throw new BadRequestException('Documento y razón social son requeridos');
@@ -454,6 +630,19 @@ export class ContratistasController {
         req.user?.email || 'sistema'
       );
 
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_CREAR_USUARIO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Contratista creado con ${documentos.length} documentos: ${resultado.contratista.razonSocial}`,
+          contratistaId: resultado.contratista.id,
+          duracionMs: Date.now() - inicio,
+        },
+        req,
+      );
+
       return {
         ok: true,
         data: {
@@ -475,6 +664,10 @@ export class ContratistasController {
     }
   }
 
+  // ===============================
+  // ACTUALIZAR CONTRATISTA (SIMPLE)
+  // ===============================
+
   @Put(':id')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN)
   async actualizar(
@@ -495,12 +688,66 @@ export class ContratistasController {
       numeroContrato?: string;
       cargo?: string;
       observaciones?: string;
-    }>
+    }>,
+    @Req() req?: any
   ) {
+    const inicio = Date.now();
     try {
       this.logger.log(`✏️ Actualizando contratista: ${id}`);
+      this.logger.log('📥 Datos recibidos:', JSON.stringify(body, null, 2));
 
-      const contratista = await this.contratistaService.actualizar(id, body);
+      const original = await this.contratistaService.buscarPorId(id);
+
+      const updateData: any = {};
+      if (body.tipoDocumento !== undefined) updateData.tipoDocumento = body.tipoDocumento;
+      if (body.documentoIdentidad !== undefined) updateData.documentoIdentidad = body.documentoIdentidad;
+      if (body.razonSocial !== undefined) updateData.razonSocial = body.razonSocial;
+      if (body.representanteLegal !== undefined) updateData.representanteLegal = body.representanteLegal;
+      if (body.documentoRepresentante !== undefined) updateData.documentoRepresentante = body.documentoRepresentante;
+      if (body.telefono !== undefined) updateData.telefono = body.telefono;
+      if (body.email !== undefined) updateData.email = body.email;
+      if (body.direccion !== undefined) updateData.direccion = body.direccion;
+      if (body.departamento !== undefined) updateData.departamento = body.departamento;
+      if (body.ciudad !== undefined) updateData.ciudad = body.ciudad;
+      if (body.tipoContratista !== undefined) updateData.tipoContratista = body.tipoContratista;
+      if (body.estado !== undefined) updateData.estado = body.estado;
+      if (body.numeroContrato !== undefined) updateData.numeroContrato = body.numeroContrato;
+      if (body.cargo !== undefined) updateData.cargo = body.cargo;
+      if (body.observaciones !== undefined) updateData.observaciones = body.observaciones;
+
+      this.logger.log('📦 Datos mapeados para actualizar:', JSON.stringify(updateData, null, 2));
+
+      const contratista = await this.contratistaService.actualizar(id, updateData);
+
+      const cambios: Record<string, any> = {};
+      if (original.razonSocial !== contratista.razonSocial) cambios.razonSocial = { anterior: original.razonSocial, nuevo: contratista.razonSocial };
+      if (original.documentoIdentidad !== contratista.documentoIdentidad) cambios.documentoIdentidad = { anterior: original.documentoIdentidad, nuevo: contratista.documentoIdentidad };
+      if (original.numeroContrato !== contratista.numeroContrato) cambios.numeroContrato = { anterior: original.numeroContrato, nuevo: contratista.numeroContrato };
+      if (original.estado !== contratista.estado) cambios.estado = { anterior: original.estado, nuevo: contratista.estado };
+      if (original.email !== contratista.email) cambios.email = { anterior: original.email, nuevo: contratista.email };
+      if (original.telefono !== contratista.telefono) cambios.telefono = { anterior: original.telefono, nuevo: contratista.telefono };
+      if (original.cargo !== contratista.cargo) cambios.cargo = { anterior: original.cargo, nuevo: contratista.cargo };
+      if (original.tipoDocumento !== contratista.tipoDocumento) cambios.tipoDocumento = { anterior: original.tipoDocumento, nuevo: contratista.tipoDocumento };
+      if (original.representanteLegal !== contratista.representanteLegal) cambios.representanteLegal = { anterior: original.representanteLegal, nuevo: contratista.representanteLegal };
+      if (original.direccion !== contratista.direccion) cambios.direccion = { anterior: original.direccion, nuevo: contratista.direccion };
+      if (original.tipoContratista !== contratista.tipoContratista) cambios.tipoContratista = { anterior: original.tipoContratista, nuevo: contratista.tipoContratista };
+      if (original.departamento !== contratista.departamento) cambios.departamento = { anterior: original.departamento, nuevo: contratista.departamento };
+      if (original.ciudad !== contratista.ciudad) cambios.ciudad = { anterior: original.ciudad, nuevo: contratista.ciudad };
+      if (original.observaciones !== contratista.observaciones) cambios.observaciones = { anterior: original.observaciones, nuevo: contratista.observaciones };
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_EDITAR_USUARIO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Contratista actualizado: ${contratista.razonSocial}`,
+          contratistaId: contratista.id,
+          duracionMs: Date.now() - inicio,
+          cambios: Object.keys(cambios).length > 0 ? cambios : undefined
+        },
+        req,
+      );
 
       return {
         ok: true,
@@ -512,34 +759,128 @@ export class ContratistasController {
       };
     } catch (error) {
       this.logger.error(`❌ Error actualizando contratista: ${error.message}`);
+      throw error;
+    }
+  }
 
-      if (error instanceof NotFoundException) {
-        return {
-          ok: true,
-          data: {
-            success: false,
-            message: error.message,
-            data: null
+  // ===============================
+  // ACTUALIZAR CONTRATISTA COMPLETO (CON DOCUMENTOS - CREA NUEVA VERSIÓN)
+  // ===============================
+
+  @Put(':id/completo')
+  @Roles(UserRole.RADICADOR, UserRole.ADMIN)
+  @UseInterceptors(FilesInterceptor('documentos', 20))
+  async actualizarContratistaCompleto(
+    @Param('id') id: string,
+    @Body() body: any,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Req() req: any
+  ) {
+    const inicio = Date.now();
+    try {
+      this.logger.log(`✏️ Actualizando contratista completo (nueva versión): ${id}`);
+      this.logger.log('📥 Body recibido:', JSON.stringify(body, null, 2));
+      this.logger.log(`📎 Archivos recibidos: ${files?.length || 0}`);
+
+      // Obtener el contratista original para la bitácora
+      const original = await this.contratistaService.buscarPorId(id);
+
+      // Preparar datos para actualizar (solo los campos que vienen en el body)
+      const datosActualizar: any = {};
+
+      if (body.tipoDocumento !== undefined) datosActualizar.tipoDocumento = body.tipoDocumento;
+      if (body.documentoIdentidad !== undefined) datosActualizar.documentoIdentidad = body.documentoIdentidad;
+      if (body.razonSocial !== undefined) datosActualizar.razonSocial = body.razonSocial;
+      if (body.representanteLegal !== undefined) datosActualizar.representanteLegal = body.representanteLegal;
+      if (body.documentoRepresentante !== undefined) datosActualizar.documentoRepresentante = body.documentoRepresentante;
+      if (body.telefono !== undefined) datosActualizar.telefono = body.telefono;
+      if (body.email !== undefined) datosActualizar.email = body.email;
+      if (body.direccion !== undefined) datosActualizar.direccion = body.direccion;
+      if (body.departamento !== undefined) datosActualizar.departamento = body.departamento;
+      if (body.ciudad !== undefined) datosActualizar.ciudad = body.ciudad;
+      if (body.tipoContratista !== undefined) datosActualizar.tipoContratista = body.tipoContratista;
+      if (body.estado !== undefined) datosActualizar.estado = body.estado;
+      if (body.numeroContrato !== undefined) datosActualizar.numeroContrato = body.numeroContrato;
+      if (body.cargo !== undefined) datosActualizar.cargo = body.cargo;
+      if (body.observaciones !== undefined) datosActualizar.observaciones = body.observaciones;
+
+      this.logger.log('📦 Datos a actualizar:', JSON.stringify(datosActualizar, null, 2));
+
+      // Procesar documentos nuevos
+      const documentos = [];
+      if (files && files.length > 0) {
+        for (let i = 0; i < files.length; i++) {
+          const tipo = body[`tipo_documento_${i}`];
+          if (tipo && Object.values(TipoDocumento).includes(tipo as TipoDocumento)) {
+            documentos.push({ tipo: tipo as TipoDocumento, archivo: files[i] });
           }
-        };
+        }
       }
 
-      if (error instanceof BadRequestException || error instanceof ConflictException) {
-        return {
-          ok: true,
-          data: {
-            success: false,
-            message: error.message,
-            data: null
-          }
-        };
+      // Actualizar contratista - crea nueva versión
+      const resultado = await this.contratistaService.actualizarConDocumentos(
+        id,
+        datosActualizar,
+        documentos,
+        req.user?.email || 'sistema'
+      );
+
+      // Detectar cambios para la bitácora
+      const cambios: Record<string, any> = {};
+      if (original.razonSocial !== resultado.contratistaNuevo.razonSocial) {
+        cambios.razonSocial = { anterior: original.razonSocial, nuevo: resultado.contratistaNuevo.razonSocial };
       }
+      if (original.representanteLegal !== resultado.contratistaNuevo.representanteLegal) {
+        cambios.representanteLegal = { anterior: original.representanteLegal, nuevo: resultado.contratistaNuevo.representanteLegal };
+      }
+      if (original.tipoContratista !== resultado.contratistaNuevo.tipoContratista) {
+        cambios.tipoContratista = { anterior: original.tipoContratista, nuevo: resultado.contratistaNuevo.tipoContratista };
+      }
+      if (original.cargo !== resultado.contratistaNuevo.cargo) {
+        cambios.cargo = { anterior: original.cargo, nuevo: resultado.contratistaNuevo.cargo };
+      }
+      if (original.estado !== resultado.contratistaNuevo.estado) {
+        cambios.estado = { anterior: original.estado, nuevo: resultado.contratistaNuevo.estado };
+      }
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_EDITAR_USUARIO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Contratista actualizado: nueva versión ${resultado.contratistaNuevo.id} (original ${id} desactivado)`,
+          contratistaId: resultado.contratistaNuevo.id,
+          duracionMs: Date.now() - inicio,
+          cambios: Object.keys(cambios).length > 0 ? cambios : undefined,
+          metadata: {
+            documentosSubidos: documentos.length,
+            versionAnterior: id,
+            versionNueva: resultado.contratistaNuevo.id
+          }
+        },
+        req,
+      );
 
       return {
         ok: true,
         data: {
+          success: true,
+          message: 'Contratista actualizado exitosamente (nueva versión creada)',
+          data: {
+            contratistaOriginal: resultado.contratistaOriginal,
+            contratistaNuevo: resultado.contratistaNuevo,
+            documentos: resultado.documentos
+          }
+        }
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error actualizando contratista completo: ${error.message}`);
+      return {
+        ok: true,
+        data: {
           success: false,
-          message: 'Error al actualizar contratista',
+          message: error.message,
           data: null
         }
       };
@@ -559,6 +900,7 @@ export class ContratistasController {
     @Body('tipo') tipo: string,
     @Req() req: any
   ) {
+    const inicio = Date.now();
     try {
       this.logger.log(`📄 Subiendo documento para contratista ${id}: ${tipo}`);
 
@@ -575,6 +917,23 @@ export class ContratistasController {
         tipo as TipoDocumento,
         file,
         req.user?.email || 'sistema'
+      );
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_EDITAR_USUARIO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Documento subido para contratista ${id}: ${tipo} - ${file.originalname}`,
+          duracionMs: Date.now() - inicio,
+          metadata: {
+            tipoDocumento: tipo,
+            nombreArchivo: file.originalname,
+            tamanoBytes: file.size
+          }
+        },
+        req,
       );
 
       return {
@@ -600,7 +959,7 @@ export class ContratistasController {
 
   @Get(':id/documentos')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
-  async obtenerDocumentos(@Param('id') id: string) {
+  async obtenerDocumentos(@Param('id') id: string, @Req() req?: any) {
     try {
       this.logger.log(`📋 Obteniendo documentos de contratista ${id}`);
 
@@ -627,19 +986,38 @@ export class ContratistasController {
     }
   }
 
-  @Get(':id/documentos/:documentoId/descargar')
+ @Get(':id/documentos/:documentoId/descargar')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
   async descargarDocumento(
     @Param('id') contratistaId: string,
     @Param('documentoId') documentoId: string,
-    @Res() res: Response
+    @Res() res: Response,
+    @Req() req?: any
   ) {
+    const inicio = Date.now();
     try {
-      this.logger.log(`📥 Descargando documento ${documentoId}`);
+      this.logger.log(`📥 Descargando documento ${documentoId} del contratista ${contratistaId}`);
 
       const { buffer, nombre, mimeType } = await this.contratistaService.descargarDocumento(
         documentoId,
         contratistaId
+      );
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.DESCARGAR_ARCHIVO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Descarga de documento: ${nombre}`,
+          duracionMs: Date.now() - inicio,
+          metadata: {
+            documentoId,
+            nombreArchivo: nombre,
+            contratistaId
+          }
+        },
+        req,
       );
 
       res.setHeader('Content-Type', mimeType);
@@ -667,12 +1045,27 @@ export class ContratistasController {
   @Roles(UserRole.RADICADOR, UserRole.ADMIN)
   async eliminarDocumento(
     @Param('id') contratistaId: string,
-    @Param('documentoId') documentoId: string
+    @Param('documentoId') documentoId: string,
+    @Req() req: any
   ) {
+    const inicio = Date.now();
     try {
       this.logger.log(`🗑️ Eliminando documento ${documentoId}`);
 
       await this.contratistaService.eliminarDocumento(documentoId, contratistaId);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_EDITAR_USUARIO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Documento eliminado del contratista ${contratistaId}`,
+          duracionMs: Date.now() - inicio,
+          metadata: { documentoId }
+        },
+        req,
+      );
 
       return {
         ok: true,
@@ -699,7 +1092,7 @@ export class ContratistasController {
 
   @Get('autocomplete/nombre')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
-  async autocompletePorNombre(@Query('q') query: string) {
+  async autocompletePorNombre(@Query('q') query: string, @Req() req?: any) {
     try {
       this.logger.log(`🔍 Autocomplete por nombre: "${query}"`);
 
@@ -747,7 +1140,7 @@ export class ContratistasController {
 
   @Get('autocomplete/documento')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
-  async autocompletePorDocumento(@Query('q') query: string) {
+  async autocompletePorDocumento(@Query('q') query: string, @Req() req?: any) {
     try {
       this.logger.log(`🔍 Autocomplete por documento: "${query}"`);
 
@@ -795,7 +1188,7 @@ export class ContratistasController {
 
   @Get('autocomplete/contrato')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
-  async autocompletePorContrato(@Query('q') query: string) {
+  async autocompletePorContrato(@Query('q') query: string, @Req() req?: any) {
     try {
       this.logger.log(`🔍 Autocomplete por contrato: "${query}"`);
 
@@ -847,7 +1240,7 @@ export class ContratistasController {
 
   @Get('verificar/documento/:documento')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN)
-  async verificarDocumento(@Param('documento') documento: string) {
+  async verificarDocumento(@Param('documento') documento: string, @Req() req?: any) {
     try {
       this.logger.log(`🔍 Verificando documento: "${documento}"`);
 
@@ -875,7 +1268,7 @@ export class ContratistasController {
 
   @Get('estadisticas')
   @Roles(UserRole.ADMIN, UserRole.SUPERVISOR)
-  async obtenerEstadisticas(): Promise<any> {
+  async obtenerEstadisticas(@Req() req?: any): Promise<any> {
     try {
       this.logger.log('📊 Obteniendo estadísticas de contratistas');
 
@@ -903,7 +1296,7 @@ export class ContratistasController {
 
   @Get('recientes')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
-  async obtenerRecientes(@Query('limit') limit?: string) {
+  async obtenerRecientes(@Query('limit') limit?: string, @Req() req?: any) {
     try {
       this.logger.log('📊 Obteniendo contratistas recientes');
 
@@ -932,7 +1325,8 @@ export class ContratistasController {
 
   @Get('buscar-por-documento/:documento')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)
-  async buscarContratistaPorDocumento(@Param('documento') documento: string) {
+  async buscarContratistaPorDocumento(@Param('documento') documento: string, @Req() req?: any) {
+    const inicio = Date.now();
     try {
       this.logger.log(`🔍 Buscando contratista por documento: "${documento}"`);
 
@@ -961,6 +1355,19 @@ export class ContratistasController {
       }
 
       const contratista = contratistas[0];
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.VER_DOCUMENTO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Búsqueda de contratista por documento: ${documento}`,
+          duracionMs: Date.now() - inicio,
+          metadata: { documento, encontrado: true }
+        },
+        req,
+      );
 
       return {
         ok: true,

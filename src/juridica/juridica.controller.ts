@@ -5,6 +5,7 @@ import {
   Post,
   Put,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -14,30 +15,54 @@ import {
   HttpStatus,
   Logger,
   BadRequestException,
+  UseGuards,
+  Req,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from '../users/enums/user-role.enum';
 import { JuridicaService } from './juridica.service';
+import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.service';
+import { ModuloBitacora, AccionBitacora } from '../bitacora-sistema/entities/bitacora-sistema.entity';
 import { CreateContratoDto } from './dto/create-contrato.dto';
 import { UpdateContratoDto } from './dto/update-contrato.dto';
-import { CreatePolizaDto } from './dto/create-poliza.dto';
-import { CreateModificacionDto } from './dto/create-modificacion.dto';
 import { CambiarEstadoDto } from './dto/cambiar-estado.dto';
 import { FiltrosContratoDto } from './dto/filtros-contrato.dto';
 import { TipoDocumento } from './entities/documento-contrato.entity';
 
 @Controller('juridica')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN, UserRole.JURIDICA, UserRole.SUPERVISOR)
 export class JuridicaController {
   private readonly logger = new Logger(JuridicaController.name);
 
-  constructor(private readonly juridicaService: JuridicaService) {}
+  constructor(
+    private readonly juridicaService: JuridicaService,
+    private readonly bitacoraService: BitacoraSistemaService,
+  ) { }
 
   // ==================== CONTRATOS ====================
 
   @Post('contratos')
-  async createContrato(@Body() createContratoDto: CreateContratoDto) {
+  async createContrato(@Body() createContratoDto: CreateContratoDto, @Req() req?: any) {
     try {
       this.logger.log(`📝 Creando contrato: ${createContratoDto.numeroContrato}`);
       const contrato = await this.juridicaService.create(createContratoDto);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_CREAR_USUARIO,
+        ModuloBitacora.JURIDICA,
+        req.user,
+        undefined,
+        {
+          detalles: `Contrato creado: ${contrato.numeroContrato}`,
+          contratoId: contrato.id,
+        },
+        req,
+      );
+
       return {
         success: true,
         message: 'Contrato creado exitosamente',
@@ -53,10 +78,22 @@ export class JuridicaController {
   }
 
   @Get('contratos')
-  async findAllContratos(@Query() filtros: FiltrosContratoDto) {
+  async findAllContratos(@Query() filtros: FiltrosContratoDto, @Req() req?: any) {
     try {
       this.logger.log(`📋 Listando contratos`);
       const contratos = await this.juridicaService.findAll(filtros);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.VER_DOCUMENTO,
+        ModuloBitacora.JURIDICA,
+        req.user,
+        undefined,
+        {
+          detalles: `Consulta lista de contratos (${contratos.length} registros)`,
+        },
+        req,
+      );
+
       return {
         success: true,
         count: contratos.length,
@@ -72,9 +109,22 @@ export class JuridicaController {
   }
 
   @Get('contratos/:id')
-  async findOneContrato(@Param('id') id: string) {
+  async findOneContrato(@Param('id') id: string, @Req() req?: any) {
     try {
       const contrato = await this.juridicaService.findOne(id);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.VER_DOCUMENTO,
+        ModuloBitacora.JURIDICA,
+        req.user,
+        undefined,
+        {
+          detalles: `Visualización de contrato: ${contrato.numeroContrato}`,
+          contratoId: id,
+        },
+        req,
+      );
+
       return {
         success: true,
         data: contrato,
@@ -92,9 +142,23 @@ export class JuridicaController {
   async updateContrato(
     @Param('id') id: string,
     @Body() updateContratoDto: UpdateContratoDto,
+    @Req() req?: any,
   ) {
     try {
       const contrato = await this.juridicaService.update(id, updateContratoDto);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_EDITAR_USUARIO,
+        ModuloBitacora.JURIDICA,
+        req.user,
+        undefined,
+        {
+          detalles: `Contrato actualizado: ${contrato.numeroContrato}`,
+          contratoId: id,
+        },
+        req,
+      );
+
       return {
         success: true,
         message: 'Contrato actualizado exitosamente',
@@ -113,9 +177,24 @@ export class JuridicaController {
   async cambiarEstadoContrato(
     @Param('id') id: string,
     @Body() cambiarEstadoDto: CambiarEstadoDto,
+    @Req() req?: any,
   ) {
     try {
       const contrato = await this.juridicaService.cambiarEstado(id, cambiarEstadoDto);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.JURIDICA_APROBAR,
+        ModuloBitacora.JURIDICA,
+        req.user,
+        undefined,
+        {
+          detalles: `Estado del contrato ${contrato.numeroContrato} cambiado a ${cambiarEstadoDto.estado}`,
+          contratoId: id,
+          metadata: { estadoAnterior: contrato.estado, estadoNuevo: cambiarEstadoDto.estado },
+        },
+        req,
+      );
+
       return {
         success: true,
         message: `Estado del contrato cambiado a ${cambiarEstadoDto.estado}`,
@@ -135,10 +214,24 @@ export class JuridicaController {
   @Post('contratos/:contratoId/polizas')
   async agregarPoliza(
     @Param('contratoId') contratoId: string,
-    @Body() createPolizaDto: CreatePolizaDto,
+    @Body() createPolizaDto: any,
+    @Req() req?: any,
   ) {
     try {
       const poliza = await this.juridicaService.agregarPoliza(contratoId, createPolizaDto);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_EDITAR_USUARIO,
+        ModuloBitacora.JURIDICA,
+        req.user,
+        undefined,
+        {
+          detalles: `Póliza agregada al contrato ${contratoId}`,
+          metadata: { polizaId: poliza.id, tipoPoliza: poliza.tipoPoliza },
+        },
+        req,
+      );
+
       return {
         success: true,
         message: 'Póliza agregada exitosamente',
@@ -157,9 +250,23 @@ export class JuridicaController {
   async aprobarPoliza(
     @Param('polizaId') polizaId: string,
     @Body('usuario') usuario: string,
+    @Req() req?: any,
   ) {
     try {
       const poliza = await this.juridicaService.aprobarPoliza(polizaId, usuario || 'Sistema');
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.JURIDICA_APROBAR,
+        ModuloBitacora.JURIDICA,
+        req.user,
+        undefined,
+        {
+          detalles: `Póliza ${poliza.numeroPoliza} aprobada`,
+          metadata: { polizaId, tipoPoliza: poliza.tipoPoliza },
+        },
+        req,
+      );
+
       return {
         success: true,
         message: 'Póliza aprobada exitosamente',
@@ -177,9 +284,22 @@ export class JuridicaController {
   // ==================== MODIFICACIONES ====================
 
   @Post('modificaciones')
-  async crearModificacion(@Body() createModificacionDto: CreateModificacionDto) {
+  async crearModificacion(@Body() createModificacionDto: any, @Req() req?: any) {
     try {
       const modificacion = await this.juridicaService.crearModificacion(createModificacionDto);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_EDITAR_USUARIO,
+        ModuloBitacora.JURIDICA,
+        req.user,
+        undefined,
+        {
+          detalles: `Modificación creada para contrato ${createModificacionDto.contratoId}`,
+          metadata: { modificacionId: modificacion.id, tipo: modificacion.tipoModificacion },
+        },
+        req,
+      );
+
       return {
         success: true,
         message: 'Modificación creada exitosamente',
@@ -204,6 +324,7 @@ export class JuridicaController {
     @Body('tipoDocumento') tipoDocumento: TipoDocumento,
     @Body('descripcion') descripcion: string,
     @Body('usuario') usuario: string,
+    @Req() req?: any,
   ) {
     try {
       if (!file) {
@@ -216,6 +337,18 @@ export class JuridicaController {
         tipoDocumento,
         descripcion,
         usuario || 'Sistema',
+      );
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.DESCARGAR_ARCHIVO,
+        ModuloBitacora.JURIDICA,
+        req.user,
+        undefined,
+        {
+          detalles: `Documento subido al contrato ${contratoId}: ${file.originalname}`,
+          metadata: { tipoDocumento, nombreArchivo: file.originalname },
+        },
+        req,
       );
 
       return {
@@ -235,9 +368,21 @@ export class JuridicaController {
   // ==================== DASHBOARD Y REPORTES ====================
 
   @Get('dashboard/gerencial')
-  async obtenerDashboardGerencial() {
+  async obtenerDashboardGerencial(@Req() req?: any) {
     try {
       const dashboard = await this.juridicaService.obtenerDashboardGerencial();
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.VER_DOCUMENTO,
+        ModuloBitacora.JURIDICA,
+        req.user,
+        undefined,
+        {
+          detalles: `Dashboard gerencial consultado`,
+        },
+        req,
+      );
+
       return {
         success: true,
         data: dashboard,
@@ -252,9 +397,10 @@ export class JuridicaController {
   }
 
   @Get('alertas')
-  async obtenerAlertas() {
+  async obtenerAlertas(@Req() req?: any) {
     try {
       const alertas = await this.juridicaService.obtenerAlertas();
+
       return {
         success: true,
         count: alertas.length,
@@ -277,19 +423,51 @@ export class JuridicaController {
       status: 'ok',
       service: 'juridica',
       timestamp: new Date().toISOString(),
-      endpoints: [
-        'POST /juridica/contratos',
-        'GET /juridica/contratos',
-        'GET /juridica/contratos/:id',
-        'PUT /juridica/contratos/:id',
-        'PATCH /juridica/contratos/:id/estado',
-        'POST /juridica/contratos/:contratoId/polizas',
-        'PATCH /juridica/polizas/:polizaId/aprobar',
-        'POST /juridica/modificaciones',
-        'POST /juridica/contratos/:contratoId/documentos',
-        'GET /juridica/dashboard/gerencial',
-        'GET /juridica/alertas',
-      ],
+    };
+  }
+
+  // src/juridica/juridica.controller.ts - Agrega este método
+
+  @Get()
+  async getAllContratos(@Query() filtros: FiltrosContratoDto, @Req() req?: any) {
+    try {
+      this.logger.log(`📋 Listando contratos (raíz)`);
+      const contratos = await this.juridicaService.findAll(filtros);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.VER_DOCUMENTO,
+        ModuloBitacora.JURIDICA,
+        req.user,
+        undefined,
+        { detalles: `Consulta lista de contratos (${contratos.length} registros)` },
+        req,
+      );
+
+      return {
+        success: true,
+        count: contratos.length,
+        data: contratos,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error listando contratos: ${error.message}`);
+      throw new HttpException(
+        { success: false, message: error.message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // También agrega el endpoint de verificar permisos
+  @Get('verificar/permisos')
+  async verificarPermisos(@Req() req?: any) {
+    const role = req.user?.role;
+    return {
+      success: true,
+      data: {
+        puedeCrear: role === UserRole.ADMIN || role === UserRole.JURIDICA,
+        puedeVer: true,
+        usuario: req.user
+      }
     };
   }
 }

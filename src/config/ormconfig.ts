@@ -16,7 +16,7 @@ import { AsesorGerenciaDocumento } from '../asesor-gerencia/entities/asesor-gere
 import { RendicionCuentasDocumento } from '../rendicion-cuentas/entities/rendicion-cuentas-documento.entity';
 import { RendicionCuentasHistorial } from '../rendicion-cuentas/entities/rendicion-cuentas-historial.entity';
 import { DocumentoContratista } from '../contratista/entities/documento-contratista.entity';
-
+import { BitacoraSistema } from '../bitacora-sistema/entities/bitacora-sistema.entity';
 // Función para detectar si estamos en producción
 function isProductionEnvironment(): boolean {
     // Detectar si estamos en Render
@@ -152,6 +152,7 @@ export const ormconfig: DataSourceOptions = {
         RendicionCuentasDocumento,
         RendicionCuentasHistorial,
         DocumentoContratista,
+        BitacoraSistema
     ],
     synchronize: false, // 🔴 CAMBIADO A FALSE
     logging: !isProduction,

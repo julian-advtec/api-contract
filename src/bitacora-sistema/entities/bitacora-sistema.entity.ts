@@ -7,7 +7,6 @@ import {
   ManyToOne,
   JoinColumn,
   Index,
-  UpdateDateColumn
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Documento } from '../../radicacion/entities/documento.entity';
@@ -27,7 +26,6 @@ export enum ModuloBitacora {
 }
 
 export enum AccionBitacora {
-  // ========== RADICACIÓN ==========
   RADICAR_DOCUMENTO = 'RADICAR_DOCUMENTO',
   EDITAR_DOCUMENTO = 'EDITAR_DOCUMENTO',
   ELIMINAR_DOCUMENTO = 'ELIMINAR_DOCUMENTO',
@@ -35,16 +33,12 @@ export enum AccionBitacora {
   DESCARGAR_ARCHIVO = 'DESCARGAR_ARCHIVO',
   PREVISUALIZAR_ARCHIVO = 'PREVISUALIZAR_ARCHIVO',
   CAMBIAR_ESTADO = 'CAMBIAR_ESTADO',
-  
-  // ========== SUPERVISIÓN ==========
   SUPERVISOR_TOMAR = 'SUPERVISOR_TOMAR',
   SUPERVISOR_APROBAR = 'SUPERVISOR_APROBAR',
   SUPERVISOR_RECHAZAR = 'SUPERVISOR_RECHAZAR',
   SUPERVISOR_OBSERVAR = 'SUPERVISOR_OBSERVAR',
   SUPERVISOR_LIBERAR = 'SUPERVISOR_LIBERAR',
   SUPERVISOR_ASIGNAR = 'SUPERVISOR_ASIGNAR',
-  
-  // ========== AUDITORÍA ==========
   AUDITOR_TOMAR = 'AUDITOR_TOMAR',
   AUDITOR_SUBIR_DOCUMENTOS = 'AUDITOR_SUBIR_DOCUMENTOS',
   AUDITOR_APROBAR = 'AUDITOR_APROBAR',
@@ -52,8 +46,6 @@ export enum AccionBitacora {
   AUDITOR_OBSERVAR = 'AUDITOR_OBSERVAR',
   AUDITOR_COMPLETAR = 'AUDITOR_COMPLETAR',
   AUDITOR_LIBERAR = 'AUDITOR_LIBERAR',
-  
-  // ========== CONTABILIDAD ==========
   CONTABILIDAD_TOMAR = 'CONTABILIDAD_TOMAR',
   CONTABILIDAD_SUBIR_DOCUMENTOS = 'CONTABILIDAD_SUBIR_DOCUMENTOS',
   CONTABILIDAD_COMPLETAR = 'CONTABILIDAD_COMPLETAR',
@@ -61,8 +53,6 @@ export enum AccionBitacora {
   CONTABILIDAD_OBSERVAR = 'CONTABILIDAD_OBSERVAR',
   CONTABILIDAD_RECHAZAR = 'CONTABILIDAD_RECHAZAR',
   CONTABILIDAD_LIBERAR = 'CONTABILIDAD_LIBERAR',
-  
-  // ========== TESORERÍA ==========
   TESORERIA_TOMAR = 'TESORERIA_TOMAR',
   TESORERIA_SUBIR_PAGO = 'TESORERIA_SUBIR_PAGO',
   TESORERIA_APROBAR_PAGO = 'TESORERIA_APROBAR_PAGO',
@@ -70,39 +60,29 @@ export enum AccionBitacora {
   TESORERIA_RECHAZAR = 'TESORERIA_RECHAZAR',
   TESORERIA_OBSERVAR = 'TESORERIA_OBSERVAR',
   TESORERIA_LIBERAR = 'TESORERIA_LIBERAR',
-  
-  // ========== JURÍDICA ==========
   JURIDICA_TOMAR = 'JURIDICA_TOMAR',
   JURIDICA_REVISAR = 'JURIDICA_REVISAR',
   JURIDICA_APROBAR = 'JURIDICA_APROBAR',
   JURIDICA_RECHAZAR = 'JURIDICA_RECHAZAR',
   JURIDICA_OBSERVAR = 'JURIDICA_OBSERVAR',
   JURIDICA_LIBERAR = 'JURIDICA_LIBERAR',
-  
-  // ========== ASESOR GERENCIA ==========
   ASESOR_TOMAR = 'ASESOR_TOMAR',
   ASESOR_REVISAR = 'ASESOR_REVISAR',
   ASESOR_APROBAR = 'ASESOR_APROBAR',
   ASESOR_RECHAZAR = 'ASESOR_RECHAZAR',
   ASESOR_OBSERVAR = 'ASESOR_OBSERVAR',
   ASESOR_LIBERAR = 'ASESOR_LIBERAR',
-  
-  // ========== RENDICIÓN CUENTAS ==========
   RENDICION_TOMAR = 'RENDICION_TOMAR',
   RENDICION_REVISAR = 'RENDICION_REVISAR',
   RENDICION_APROBAR = 'RENDICION_APROBAR',
   RENDICION_RECHAZAR = 'RENDICION_RECHAZAR',
   RENDICION_OBSERVAR = 'RENDICION_OBSERVAR',
   RENDICION_LIBERAR = 'RENDICION_LIBERAR',
-  
-  // ========== ADMINISTRACIÓN ==========
   ADMIN_CREAR_USUARIO = 'ADMIN_CREAR_USUARIO',
   ADMIN_EDITAR_USUARIO = 'ADMIN_EDITAR_USUARIO',
   ADMIN_ELIMINAR_USUARIO = 'ADMIN_ELIMINAR_USUARIO',
   ADMIN_CAMBIAR_ROL = 'ADMIN_CAMBIAR_ROL',
   ADMIN_CONFIGURAR_SISTEMA = 'ADMIN_CONFIGURAR_SISTEMA',
-  
-  // ========== SISTEMA ==========
   SISTEMA_LOGIN = 'SISTEMA_LOGIN',
   SISTEMA_LOGOUT = 'SISTEMA_LOGOUT',
   SISTEMA_ERROR = 'SISTEMA_ERROR',
@@ -111,76 +91,61 @@ export enum AccionBitacora {
 }
 
 @Entity('bitacora_sistema')
-@Index(['documentoId', 'fecha'])
-@Index(['usuarioId', 'fecha'])
-@Index(['modulo', 'fecha'])
-@Index(['accion', 'fecha'])
+@Index(['documento_id', 'created_at'])
+@Index(['usuario_id', 'created_at'])
+@Index(['modulo', 'created_at'])
+@Index(['accion', 'created_at'])
 export class BitacoraSistema {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'enum', enum: ModuloBitacora })
-  modulo: ModuloBitacora;
+  @Column({ type: 'varchar', length: 50 })
+  modulo: string;
 
-  @Column({ type: 'enum', enum: AccionBitacora })
-  accion: AccionBitacora;
+  @Column({ type: 'varchar', length: 100 })
+  accion: string;
 
   @Column({ type: 'text', nullable: true })
   descripcion: string;
 
-  @Column({ type: 'varchar', length: 50 })
-  rolUsuario: string;
+  @Column({ type: 'varchar', length: 50, name: 'rol_usuario' })
+  rol_usuario: string;
 
   @Column({ type: 'jsonb', nullable: true })
-  metadata: {
-    ip?: string;
-    userAgent?: string;
-    numeroArchivo?: number;
-    nombreArchivo?: string;
-    tipoArchivo?: string;
-    estadoAnterior?: string;
-    estadoNuevo?: string;
-    detalles?: any;
-    duracion?: number;
-    error?: string;
-    cambios?: Record<string, any>;
-    archivosSubidos?: string[];
-    documentosFaltantes?: string[];
-    observaciones?: string;
-  };
+  metadata: any;
 
-  @CreateDateColumn({ type: 'timestamp with time zone' })
-  fecha: Date;
+  @CreateDateColumn({ type: 'timestamp with time zone', name: 'created_at' })
+  created_at: Date;
 
-  // Relaciones
-  @Column({ nullable: true })
+  // Relaciones con nombres snake_case en BD
+  @Column({ name: 'usuario_id', nullable: true })
   @Index()
-  usuarioId: string;
+  usuario_id: string;
 
   @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'usuarioId' })
+  @JoinColumn({ name: 'usuario_id' })
   usuario: User;
 
-  @Column({ nullable: true })
+  @Column({ name: 'documento_id', nullable: true })
   @Index()
-  documentoId: string;
+  documento_id: string;
 
   @ManyToOne(() => Documento, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'documentoId' })
+  @JoinColumn({ name: 'documento_id' })
   documento: Documento;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
-  nombreUsuario: string;
+  @Column({ type: 'varchar', length: 255, name: 'nombre_usuario', nullable: true })
+  nombre_usuario: string;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
-  numeroRadicado: string;
+  @Column({ type: 'varchar', length: 255, name: 'numero_radicado', nullable: true })
+  numero_radicado: string;
 
-  @Column({ type: 'varchar', length: 100, nullable: true })
-  numeroContrato: string;
+  @Column({ type: 'varchar', length: 100, name: 'numero_contrato', nullable: true })
+  numero_contrato: string;
 
-  @Column({ type: 'varchar', length: 100, nullable: true })
-  documentoContratista: string;
+  @Column({ type: 'varchar', length: 100, name: 'documento_contratista', nullable: true })
+  documento_contratista: string;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
-  nombreContratista: string;
+  @Column({ type: 'varchar', length: 255, name: 'nombre_contratista', nullable: true })
+  nombre_contratista: string;
 }
