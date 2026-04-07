@@ -94,7 +94,7 @@ export class ContratistasController {
         estado: c.estado,
         numeroContrato: c.numeroContrato || 'Sin contrato',
         cargo: c.cargo,
-        observaciones: c.observaciones,
+        objetivoContrato: c.objetivoContrato,
         createdAt: c.createdAt,
         updatedAt: c.updatedAt
       }));
@@ -495,7 +495,7 @@ export class ContratistasController {
     estado?: string;
     numeroContrato?: string;
     cargo?: string;
-    observaciones?: string;
+    objetivoContrato?: string;
   }, @Req() req?: any) {
     const inicio = Date.now();
     try {
@@ -521,7 +521,7 @@ export class ContratistasController {
         estado: body.estado || 'ACTIVO',
         numeroContrato: body.numeroContrato !== undefined ? body.numeroContrato : undefined,
         cargo: body.cargo !== undefined ? body.cargo : undefined,
-        observaciones: body.observaciones !== undefined ? body.observaciones : undefined
+        objetivoContrato: body.objetivoContrato !== undefined ? body.objetivoContrato : undefined
       };
 
       this.logger.log('📦 Datos mapeados:', JSON.stringify(contratistaData, null, 2));
@@ -602,7 +602,7 @@ export class ContratistasController {
         estado: body.estado || 'ACTIVO',
         numeroContrato: body.numeroContrato !== undefined ? body.numeroContrato : undefined,
         cargo: body.cargo !== undefined ? body.cargo : undefined,
-        observaciones: body.observaciones !== undefined ? body.observaciones : undefined
+        objetivoContrato: body.objetivoContrato !== undefined ? body.objetivoContrato : undefined
       };
 
       this.logger.log('📦 Datos del contratista:', JSON.stringify(datosContratista, null, 2));
@@ -687,7 +687,7 @@ export class ContratistasController {
       estado?: string;
       numeroContrato?: string;
       cargo?: string;
-      observaciones?: string;
+      objetivoContrato?: string;
     }>,
     @Req() req?: any
   ) {
@@ -713,7 +713,7 @@ export class ContratistasController {
       if (body.estado !== undefined) updateData.estado = body.estado;
       if (body.numeroContrato !== undefined) updateData.numeroContrato = body.numeroContrato;
       if (body.cargo !== undefined) updateData.cargo = body.cargo;
-      if (body.observaciones !== undefined) updateData.observaciones = body.observaciones;
+      if (body.objetivoContrato !== undefined) updateData.objetivoContrato = body.objetivoContrato;
 
       this.logger.log('📦 Datos mapeados para actualizar:', JSON.stringify(updateData, null, 2));
 
@@ -733,7 +733,7 @@ export class ContratistasController {
       if (original.tipoContratista !== contratista.tipoContratista) cambios.tipoContratista = { anterior: original.tipoContratista, nuevo: contratista.tipoContratista };
       if (original.departamento !== contratista.departamento) cambios.departamento = { anterior: original.departamento, nuevo: contratista.departamento };
       if (original.ciudad !== contratista.ciudad) cambios.ciudad = { anterior: original.ciudad, nuevo: contratista.ciudad };
-      if (original.observaciones !== contratista.observaciones) cambios.observaciones = { anterior: original.observaciones, nuevo: contratista.observaciones };
+      if (original.objetivoContrato !== contratista.objetivoContrato) cambios.objetivoContrato = { anterior: original.objetivoContrato, nuevo: contratista.objetivoContrato };
 
       await this.bitacoraService.registrar(
         AccionBitacora.ADMIN_EDITAR_USUARIO,
@@ -802,7 +802,7 @@ export class ContratistasController {
       if (body.estado !== undefined) datosActualizar.estado = body.estado;
       if (body.numeroContrato !== undefined) datosActualizar.numeroContrato = body.numeroContrato;
       if (body.cargo !== undefined) datosActualizar.cargo = body.cargo;
-      if (body.observaciones !== undefined) datosActualizar.observaciones = body.observaciones;
+      if (body.objetivoContrato !== undefined) datosActualizar.objetivoContrato = body.objetivoContrato;
 
       this.logger.log('📦 Datos a actualizar:', JSON.stringify(datosActualizar, null, 2));
 
@@ -986,7 +986,7 @@ export class ContratistasController {
     }
   }
 
- @Get(':id/documentos/:documentoId/descargar')
+  @Get(':id/documentos/:documentoId/descargar')
   @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
   async descargarDocumento(
     @Param('id') contratistaId: string,
@@ -1387,12 +1387,145 @@ export class ContratistasController {
             cargo: contratista.cargo,
             tipoContratista: contratista.tipoContratista,
             estado: contratista.estado,
-            observaciones: contratista.observaciones
+            objetivoContrato: contratista.objetivoContrato
           }
         }
       };
     } catch (error) {
       this.logger.error(`❌ Error buscando contratista por documento: ${error.message}`);
+      return {
+        ok: true,
+        data: {
+          success: false,
+          message: 'Error al buscar contratista',
+          data: null
+        }
+      };
+    }
+  }
+
+  @Get(':id/documentos/descargar-todos')
+  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
+  async descargarTodosDocumentos(
+    @Param('id') id: string,
+    @Res() res: Response,
+    @Req() req?: any
+  ) {
+    const inicio = Date.now();
+    try {
+      this.logger.log(`📦 Descargando TODOS los documentos del contratista ${id} como ZIP`);
+
+      const { zipBuffer, nombreZip, totalDocumentos } = await this.contratistaService.descargarTodosDocumentos(id);
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.DESCARGAR_ARCHIVO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Descarga masiva de documentos (${totalDocumentos} archivos) del contratista ${id}`,
+          duracionMs: Date.now() - inicio,
+          metadata: {
+            contratistaId: id,
+            totalDocumentos,
+            nombreZip
+          }
+        },
+        req,
+      );
+
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreZip)}"`);
+      res.setHeader('Content-Length', zipBuffer.length);
+
+      res.send(zipBuffer);
+    } catch (error) {
+      this.logger.error(`❌ Error descargando todos los documentos: ${error.message}`);
+
+      if (!res.headersSent) {
+        const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
+        return res.status(status).json({
+          ok: true,
+          data: {
+            success: false,
+            message: error.message
+          }
+        });
+      }
+    }
+  }
+
+  @Get('buscar-por-contrato/:numeroContrato')
+  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)
+  async buscarPorNumeroContrato(@Param('numeroContrato') numeroContrato: string, @Req() req?: any) {
+    const inicio = Date.now();
+    try {
+      this.logger.log(`🔍 Buscando contratista por número de contrato: "${numeroContrato}"`);
+
+      if (!numeroContrato || numeroContrato.trim().length < 1) {
+        return {
+          ok: true,
+          data: {
+            success: true,
+            data: null,
+            message: 'Número de contrato requerido'
+          }
+        };
+      }
+
+      const contratista = await this.contratistaService.buscarPorNumeroContratoExacto(numeroContrato);
+
+      if (!contratista) {
+        return {
+          ok: true,
+          data: {
+            success: true,
+            data: null,
+            message: 'No se encontró ningún contratista con ese número de contrato'
+          }
+        };
+      }
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.VER_DOCUMENTO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Búsqueda de contratista por número de contrato: ${numeroContrato}`,
+          duracionMs: Date.now() - inicio,
+          metadata: { numeroContrato, encontrado: true }
+        },
+        req,
+      );
+
+      return {
+        ok: true,
+        data: {
+          success: true,
+          data: {
+            id: contratista.id,
+            documentoIdentidad: contratista.documentoIdentidad,
+            razonSocial: contratista.razonSocial,
+            nombreRazonSocial: contratista.razonSocial,
+            numeroContrato: contratista.numeroContrato,
+            email: contratista.email,
+            telefono: contratista.telefono,
+            direccion: contratista.direccion,
+            departamento: contratista.departamento,
+            ciudad: contratista.ciudad,
+            cargo: contratista.cargo,
+            tipoContratista: contratista.tipoContratista,
+            estado: contratista.estado,
+            objetivoContrato: contratista.objetivoContrato,
+            representanteLegal: contratista.representanteLegal,
+            documentoRepresentante: contratista.documentoRepresentante,
+            tipoDocumento: contratista.tipoDocumento
+          }
+        }
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error buscando contratista por número de contrato: ${error.message}`);
       return {
         ok: true,
         data: {

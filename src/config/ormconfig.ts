@@ -17,56 +17,64 @@ import { RendicionCuentasDocumento } from '../rendicion-cuentas/entities/rendici
 import { RendicionCuentasHistorial } from '../rendicion-cuentas/entities/rendicion-cuentas-historial.entity';
 import { DocumentoContratista } from '../contratista/entities/documento-contratista.entity';
 import { BitacoraSistema } from '../bitacora-sistema/entities/bitacora-sistema.entity';
+
+import { Contrato } from '../juridica/entities/contrato.entity';
+import { Proveedor } from '../juridica/entities/proveedor.entity';
+import { Poliza } from '../juridica/entities/poliza.entity';
+import { ModificacionContrato } from '../juridica/entities/modificacion-contrato.entity';
+import { DocumentoContrato } from '../juridica/entities/documento-contrato.entity';
+import { Obligacion } from '../juridica/entities/obligacion.entity';
+
 // Función para detectar si estamos en producción
 function isProductionEnvironment(): boolean {
     // Detectar si estamos en Render
-    const isRender = process.env.RENDER !== undefined || 
-                     (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('render.com'));
-    
+    const isRender = process.env.RENDER !== undefined ||
+        (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('render.com'));
+
     // Detectar por NODE_ENV
     const isProd = process.env.NODE_ENV === 'production';
-    
+
     // Detectar archivo .env.production
     const hasProductionEnv = fs.existsSync(path.join(process.cwd(), '.env.production'));
-    
+
     // Detectar si hay DATABASE_URL de producción (Render o Supabase)
-    const hasProdDbUrl = process.env.DATABASE_URL && 
-                         (process.env.DATABASE_URL.includes('render.com') ||
-                          process.env.DATABASE_URL.includes('supabase.co'));
-    
+    const hasProdDbUrl = process.env.DATABASE_URL &&
+        (process.env.DATABASE_URL.includes('render.com') ||
+            process.env.DATABASE_URL.includes('supabase.co'));
+
     // Detectar si estamos en VSCode (desarrollo)
     const isVSCode = process.env.VSCODE_PID !== undefined;
-    
+
     // Si estamos en VSCode, forzar desarrollo
     if (isVSCode) {
         console.log('💻 VSCode detectado - Forzando entorno DESARROLLO');
         return false;
     }
-    
+
     // Si hay archivo .env.production, es producción
     if (hasProductionEnv) {
         console.log('📁 Archivo .env.production detectado - Entorno PRODUCCIÓN');
         return true;
     }
-    
+
     // Si estamos en Render, es producción
     if (isRender) {
         console.log('☁️ Render.com detectado - Entorno PRODUCCIÓN');
         return true;
     }
-    
+
     // Si NODE_ENV es production, es producción
     if (isProd) {
         console.log('🔧 NODE_ENV=production - Entorno PRODUCCIÓN');
         return true;
     }
-    
+
     // Si hay DATABASE_URL de producción, es producción
     if (hasProdDbUrl) {
         console.log('🗄️ DATABASE_URL de producción detectada - Entorno PRODUCCIÓN');
         return true;
     }
-    
+
     // Por defecto, desarrollo
     console.log('💻 Entorno DESARROLLO por defecto');
     return false;
@@ -75,13 +83,13 @@ function isProductionEnvironment(): boolean {
 // Función para detectar configuración de base de datos
 function detectDatabaseConfig() {
     const isProduction = isProductionEnvironment();
-    
+
     console.log('🔍 ========== CONFIGURACIÓN BASE DE DATOS ==========');
     console.log(`   📝 Entorno: ${isProduction ? 'PRODUCCIÓN' : 'DESARROLLO'}`);
     console.log(`   📝 NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
     console.log(`   📝 DATABASE_URL: ${process.env.DATABASE_URL ? '✅ Presente' : '❌ No presente'}`);
     console.log(`   📝 DB_HOST: ${process.env.DB_HOST || 'No configurado'}`);
-    
+
     // ENTORNO DE PRODUCCIÓN
     if (isProduction) {
         // Prioridad 1: DATABASE_URL (Render/Supabase)
@@ -94,7 +102,7 @@ function detectDatabaseConfig() {
                 },
             };
         }
-        
+
         // Prioridad 2: Configuración individual en producción (fallback)
         if (process.env.DB_HOST) {
             console.log('⚠️ Usando configuración individual como fallback (PRODUCCIÓN)');
@@ -106,12 +114,12 @@ function detectDatabaseConfig() {
                 database: process.env.DB_NAME || 'contract_db',
             };
         }
-        
+
         // Si no hay configuración, error
         console.error('❌ No hay configuración de base de datos para producción');
         throw new Error('Database configuration missing for production');
     }
-    
+
     // ENTORNO DE DESARROLLO - Usar base de datos LOCAL
     console.log('💾 Usando base de datos LOCAL (DESARROLLO)');
     return {
@@ -152,7 +160,14 @@ export const ormconfig: DataSourceOptions = {
         RendicionCuentasDocumento,
         RendicionCuentasHistorial,
         DocumentoContratista,
-        BitacoraSistema
+        BitacoraSistema,
+
+        Contrato,
+        Proveedor,
+        Poliza,
+        ModificacionContrato,
+        DocumentoContrato,
+        Obligacion,
     ],
     synchronize: false, // 🔴 CAMBIADO A FALSE
     logging: !isProduction,

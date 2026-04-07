@@ -18,6 +18,7 @@ import { SignaturesModule } from './signatures/signatures.module';
 import { AsesorGerenciaModule } from './asesor-gerencia/asesor-gerencia.module';
 import { RendicionCuentasModule } from './rendicion-cuentas/rendicion-cuentas.module';
 import { StorageModule } from './common/storage/storage.module';
+import { JuridicaModule } from './juridica/juridica.module';
 
 @Module({
   imports: [
@@ -38,7 +39,8 @@ import { StorageModule } from './common/storage/storage.module';
     TesoreriaModule,
     SignaturesModule,
     AsesorGerenciaModule,
-    RendicionCuentasModule
+    RendicionCuentasModule,
+    JuridicaModule
   ],
   controllers: [AppController],
   providers: [AppService],

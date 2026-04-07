@@ -426,8 +426,6 @@ export class JuridicaController {
     };
   }
 
-  // src/juridica/juridica.controller.ts - Agrega este método
-
   @Get()
   async getAllContratos(@Query() filtros: FiltrosContratoDto, @Req() req?: any) {
     try {
@@ -457,7 +455,6 @@ export class JuridicaController {
     }
   }
 
-  // También agrega el endpoint de verificar permisos
   @Get('verificar/permisos')
   async verificarPermisos(@Req() req?: any) {
     const role = req.user?.role;

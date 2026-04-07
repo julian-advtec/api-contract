@@ -49,8 +49,8 @@ export class Contratista {
   @Column({ name: 'cargo', type: 'varchar', length: 100, nullable: true })
   cargo: string | null;
 
-  @Column({ name: 'observaciones', type: 'text', nullable: true })
-  observaciones: string | null;
+  @Column({ name: 'objetivo_contrato', type: 'text', nullable: true })  // ✅ CAMBIADO DE observaciones A objetivo_contrato
+  objetivoContrato: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
   createdAt: Date;
@@ -60,5 +60,4 @@ export class Contratista {
 
   @OneToMany(() => DocumentoContratista, (documento) => documento.contratista, { cascade: true })
   documentos: DocumentoContratista[];
-  
 }
