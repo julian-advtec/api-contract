@@ -52,4 +52,5 @@ export class AsesorGerenciaDocumento {
     }
     return { puede: true };
   }
+  
 }

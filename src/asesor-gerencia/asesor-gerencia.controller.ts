@@ -26,7 +26,7 @@ import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express'; // ← CORRECCIÓN: import type
 import { multerAsesorGerenciaConfig } from '../config/multer-asesor-gerencia.config';
 import { AsesorGerenciaEstado } from './entities/asesor-gerencia-estado.enum';
-
+import * as path from 'path';
 // Tipo del usuario del JWT
 interface JwtUser {
   id: string;
@@ -34,6 +34,7 @@ interface JwtUser {
   role: UserRole;
   fullName?: string;
 }
+
 
 @Controller('asesor-gerencia')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -179,17 +180,48 @@ export class AsesorGerenciaController {
     @Res() res: Response,
   ) {
     try {
-      const { rutaAbsoluta, nombreArchivo } = await this.service.obtenerRutaArchivo(documentoId, tipo);
-      this.logger.log(`Sirviendo archivo ${tipo}: ${rutaAbsoluta}`);
+      // ✅ Normalizar el tipo a minúsculas para evitar problemas de mayúsculas/minúsculas
+      const tipoNormalizado = tipo.toLowerCase();
 
-      res.setHeader('Content-Type', 'application/pdf');
+      this.logger.log(`📄 Solicitando archivo - doc: ${documentoId}, tipo original: ${tipo}, normalizado: ${tipoNormalizado}`);
+
+      const { rutaAbsoluta, nombreArchivo } = await this.service.obtenerRutaArchivo(documentoId, tipoNormalizado);
+
+      this.logger.log(`✅ Archivo encontrado: ${rutaAbsoluta}`);
+
+      // Determinar Content-Type basado en la extensión
+      const ext = path.extname(rutaAbsoluta).toLowerCase();
+      let contentType = 'application/octet-stream';
+
+      if (ext === '.pdf') {
+        contentType = 'application/pdf';
+      } else if (ext === '.jpg' || ext === '.jpeg') {
+        contentType = 'image/jpeg';
+      } else if (ext === '.png') {
+        contentType = 'image/png';
+      } else if (ext === '.doc') {
+        contentType = 'application/msword';
+      } else if (ext === '.docx') {
+        contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      }
+
+      res.setHeader('Content-Type', contentType);
       res.setHeader('Content-Disposition', `inline; filename="${nombreArchivo}"`);
       res.sendFile(rutaAbsoluta);
     } catch (error) {
-      this.logger.error(`Error al servir archivo ${tipo} para ${documentoId}: ${error.message}`);
-      res.status(404).json({
-        message: error.message || `Archivo tipo ${tipo} no encontrado`
-      });
+      this.logger.error(`❌ Error al servir archivo ${tipo} para ${documentoId}: ${error.message}`);
+
+      if (error instanceof NotFoundException) {
+        res.status(404).json({
+          success: false,
+          message: error.message || `Archivo tipo ${tipo} no encontrado`
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: error.message || 'Error interno al obtener el archivo'
+        });
+      }
     }
   }
 
@@ -221,5 +253,5 @@ export class AsesorGerenciaController {
     const documentos = await this.service.obtenerTodosDocumentos(user.id);
     return { success: true, data: documentos };
   }
-  
+
 }

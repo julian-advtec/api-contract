@@ -346,77 +346,75 @@ export class AsesorGerenciaService {
     };
   }
 
-  async obtenerRutaArchivo(
+async obtenerRutaArchivo(
     documentoId: string,
     tipo: string,
-  ): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
+): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
     this.logger.log(`[obtenerRutaArchivo] Solicitando tipo=${tipo} para documento=${documentoId}`);
 
     const documento = await this.documentoRepository.findOne({
-      where: { id: documentoId },
+        where: { id: documentoId },
     });
 
     if (!documento) {
-      throw new NotFoundException('Documento no encontrado');
+        throw new NotFoundException('Documento no encontrado');
     }
 
     let nombreArchivo: string | null = null;
     const carpetaBase = documento.rutaCarpetaRadicado;
 
-    if (tipo.toLowerCase() === 'comprobantefirmado' || tipo === 'comprobanteFirmado') {
-      const registro = await this.asesorGerenciaRepository.findOne({
-        where: { documento: { id: documentoId } },
-      });
+    // ✅ Normalizar el tipo
+    const tipoLower = tipo.toLowerCase();
 
-      if (!registro?.comprobanteFirmadoPath) {
-        throw new NotFoundException('No hay comprobante firmado por gerencia');
-      }
+    // Caso 1: Comprobante firmado por gerencia
+    if (tipoLower === 'comprobantefirmado' || tipoLower === 'comprobante_firmado') {
+        const registro = await this.asesorGerenciaRepository.findOne({
+            where: { documento: { id: documentoId } },
+        });
 
-
-      nombreArchivo = registro.comprobanteFirmadoPath;
+        if (!registro?.comprobanteFirmadoPath) {
+            throw new NotFoundException('No hay comprobante firmado por gerencia');
+        }
+        nombreArchivo = registro.comprobanteFirmadoPath;
     }
-    // Caso 1: Aprobación subido por Asesor Gerencia
-    if (tipo.toLowerCase() === 'aprobacion') {
-      const registro = await this.asesorGerenciaRepository.findOne({
-        where: { documento: { id: documentoId } },
-        order: { fechaActualizacion: 'DESC' },
-      });
+    // Caso 2: Aprobación subido por Asesor Gerencia
+    else if (tipoLower === 'aprobacion') {
+        const registro = await this.asesorGerenciaRepository.findOne({
+            where: { documento: { id: documentoId } },
+            order: { fechaActualizacion: 'DESC' },
+        });
 
-      if (!registro) {
-        throw new NotFoundException('No hay registro de asesor gerencia');
-      }
+        if (!registro) {
+            throw new NotFoundException('No hay registro de asesor gerencia');
+        }
 
-      nombreArchivo = registro.aprobacionPath;
-      if (!nombreArchivo) {
-        throw new NotFoundException('No se subió archivo de aprobación');
-      }
+        nombreArchivo = registro.aprobacionPath;
+        if (!nombreArchivo) {
+            throw new NotFoundException('No se subió archivo de aprobación');
+        }
     }
+    // Caso 3: Comprobante de pago subido por Tesorería ✅
+    else if (tipoLower === 'pagorealizado' || tipoLower === 'pago_realizado') {
+        const tesoreria = await this.tesoreriaRepository.findOne({
+            where: { documento: { id: documentoId } }
+        });
 
-    // Caso 2: Comprobante de pago subido por Tesorería
-    else if (tipo.toLowerCase() === 'pagorealizado' || tipo.toLowerCase() === 'pagoRealizado') {
-      const tesoreria = await this.tesoreriaRepository.findOne({
-        where: {
-          documento: { id: documentoId }   // ← CORRECCIÓN AQUÍ: usa la propiedad real 'documento'
-        },
-      });
+        if (!tesoreria) {
+            this.logger.warn(`No hay registro en tesoreria_documentos para ${documentoId}`);
+            throw new NotFoundException('No hay comprobante de pago registrado (sin registro en tesorería)');
+        }
 
-      if (!tesoreria) {
-        this.logger.warn(`No hay registro en tesoreria_documentos para ${documentoId}`);
-        throw new NotFoundException('No hay comprobante de pago registrado (sin registro en tesorería)');
-      }
+        nombreArchivo = tesoreria.pagoRealizadoPath;
 
-      nombreArchivo = tesoreria.pagoRealizadoPath;
+        if (!nombreArchivo) {
+            this.logger.warn(`Registro de tesorería existe pero pagoRealizadoPath está vacío para ${documentoId}`);
+            throw new NotFoundException('Registro de tesorería encontrado, pero no hay path del comprobante');
+        }
 
-      if (!nombreArchivo) {
-        this.logger.warn(`Registro de tesorería existe pero pagoRealizadoPath está vacío para ${documentoId}`);
-        throw new NotFoundException('Registro de tesorería encontrado, pero no hay path del comprobante');
-      }
-
-      this.logger.log(`Path encontrado en tesorería: ${nombreArchivo}`);
+        this.logger.log(`✅ Path encontrado en tesorería: ${nombreArchivo}`);
     }
-
     else {
-      throw new BadRequestException(`Tipo de archivo no soportado: ${tipo}`);
+        throw new BadRequestException(`Tipo de archivo no soportado: ${tipo}`);
     }
 
     // Construir ruta absoluta
@@ -424,17 +422,17 @@ export class AsesorGerenciaService {
 
     // Verificar existencia física
     if (!fs.existsSync(rutaAbsoluta)) {
-      this.logger.error(`Archivo no existe en disco: ${rutaAbsoluta}`);
-      throw new NotFoundException(`El archivo ${nombreArchivo} no se encuentra en el servidor`);
+        this.logger.error(`❌ Archivo no existe en disco: ${rutaAbsoluta}`);
+        throw new NotFoundException(`El archivo ${nombreArchivo} no se encuentra en el servidor`);
     }
 
-    this.logger.log(`Archivo listo para servir: ${rutaAbsoluta}`);
+    this.logger.log(`✅ Archivo listo para servir: ${rutaAbsoluta}`);
 
     return {
-      rutaAbsoluta,
-      nombreArchivo: path.basename(nombreArchivo),
+        rutaAbsoluta,
+        nombreArchivo: path.basename(nombreArchivo),
     };
-  }
+}
 
   async obtenerHistorial(asesorId: string): Promise<any[]> {
     this.logger.log(`Obteniendo historial COMPLETO para asesorId: ${asesorId}`);
@@ -745,4 +743,5 @@ export class AsesorGerenciaService {
       esMio: item.asesor?.id === asesorId
     }));
   }
+
 }
