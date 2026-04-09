@@ -169,7 +169,7 @@ export const ormconfig: DataSourceOptions = {
         DocumentoContrato,
         Obligacion,
     ],
-    synchronize: false, // 🔴 CAMBIADO A FALSE
+    synchronize: true, // 🔴 CAMBIADO A FALSE
     logging: !isProduction,
     extra: {
         max: 20,

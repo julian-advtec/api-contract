@@ -57,6 +57,11 @@ export class JuridicaService {
         try {
             this.logger.log(`📝 Creando nuevo contrato: ${createContratoDto.numeroContrato}`);
 
+            // ✅ Convertir fechas strings a objetos Date
+            const fechaInicio = new Date(createContratoDto.fechaInicio);
+            const fechaTerminacion = new Date(createContratoDto.fechaTerminacion);
+            const fechaFirma = new Date(createContratoDto.fechaFirma);
+
             const existente = await this.contratoRepository.findOne({
                 where: { numeroContrato: createContratoDto.numeroContrato },
             });
@@ -85,6 +90,9 @@ export class JuridicaService {
 
             const contrato = this.contratoRepository.create({
                 ...createContratoDto,
+                fechaInicio,
+                fechaTerminacion,
+                fechaFirma,
                 proveedor,
                 valorTotal,
                 saldoDisponible: valorTotal,
@@ -97,6 +105,7 @@ export class JuridicaService {
                     detalles: createContratoDto,
                 }],
             });
+            
 
             const savedContrato = await this.contratoRepository.save(contrato);
 
@@ -166,6 +175,17 @@ export class JuridicaService {
 
             if (!contrato) {
                 throw new NotFoundException(`Contrato ${id} no encontrado`);
+            }
+
+            // ✅ Convertir fechas a objetos Date si vienen como strings
+            if (contrato.fechaInicio && typeof contrato.fechaInicio === 'string') {
+                contrato.fechaInicio = new Date(contrato.fechaInicio);
+            }
+            if (contrato.fechaTerminacion && typeof contrato.fechaTerminacion === 'string') {
+                contrato.fechaTerminacion = new Date(contrato.fechaTerminacion);
+            }
+            if (contrato.fechaFirma && typeof contrato.fechaFirma === 'string') {
+                contrato.fechaFirma = new Date(contrato.fechaFirma);
             }
 
             return this.calcularIndicadores(contrato);
@@ -592,6 +612,14 @@ export class JuridicaService {
     // ==================== MÉTODOS AUXILIARES ====================
 
     private calcularIndicadores(contrato: Contrato): Contrato {
+        // ✅ Convertir fechas a objetos Date si son strings
+        if (contrato.fechaInicio && typeof contrato.fechaInicio === 'string') {
+            contrato.fechaInicio = new Date(contrato.fechaInicio);
+        }
+        if (contrato.fechaTerminacion && typeof contrato.fechaTerminacion === 'string') {
+            contrato.fechaTerminacion = new Date(contrato.fechaTerminacion);
+        }
+
         const tiempoTranscurrido = this.calcularPorcentajeTiempo(contrato);
 
         contrato.saldoDisponible = Number(contrato.valorTotal) -
@@ -620,9 +648,17 @@ export class JuridicaService {
     }
 
     private calcularPorcentajeTiempo(contrato: Contrato): number {
+        // ✅ Asegurar que las fechas son objetos Date
+        const fechaInicio = contrato.fechaInicio instanceof Date
+            ? contrato.fechaInicio
+            : new Date(contrato.fechaInicio);
+        const fechaTerminacion = contrato.fechaTerminacion instanceof Date
+            ? contrato.fechaTerminacion
+            : new Date(contrato.fechaTerminacion);
+
         const now = new Date();
-        const total = contrato.fechaTerminacion.getTime() - contrato.fechaInicio.getTime();
-        const transcurrido = now.getTime() - contrato.fechaInicio.getTime();
+        const total = fechaTerminacion.getTime() - fechaInicio.getTime();
+        const transcurrido = now.getTime() - fechaInicio.getTime();
 
         if (transcurrido <= 0) return 0;
         if (transcurrido >= total) return 100;
@@ -648,7 +684,12 @@ export class JuridicaService {
                 return null;
             }
 
+            // Buscar en la tabla de contratistas directamente usando TypeORM
+            // Nota: Esto requiere importar ContratistaRepository en el constructor
+            // Como alternativa, podemos hacer una consulta HTTP a otro servicio
 
+            // Por ahora, retornamos null y manejamos la búsqueda desde el controlador
+            // que ya tiene acceso al servicio de contratistas
             return null;
         } catch (error) {
             this.logger.error(`❌ Error buscando por número de contrato: ${error.message}`);

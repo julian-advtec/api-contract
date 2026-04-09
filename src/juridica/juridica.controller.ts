@@ -24,6 +24,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
 import { JuridicaService } from './juridica.service';
+import { ContratistaService } from '../contratista/contratista.service'; // ✅ Importar
 import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.service';
 import { ModuloBitacora, AccionBitacora } from '../bitacora-sistema/entities/bitacora-sistema.entity';
 import { CreateContratoDto } from './dto/create-contrato.dto';
@@ -41,6 +42,7 @@ export class JuridicaController {
   constructor(
     private readonly juridicaService: JuridicaService,
     private readonly bitacoraService: BitacoraSistemaService,
+    private readonly contratistaService: ContratistaService, // ✅ Inyectar
   ) { }
 
   // ==================== CONTRATOS ====================
@@ -206,6 +208,40 @@ export class JuridicaController {
         { success: false, message: error.message },
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
+    }
+  }
+
+  // ==================== BÚSQUEDA DE CONTRATISTA ====================
+
+  @Get('contratistas/buscar-por-contrato/:numeroContrato')
+  @Roles(UserRole.ADMIN, UserRole.JURIDICA, UserRole.SUPERVISOR)
+  async buscarContratistaPorNumeroContrato(
+    @Param('numeroContrato') numeroContrato: string,
+    @Req() req?: any
+  ) {
+    try {
+      this.logger.log(`🔍 Buscando contratista por número de contrato: ${numeroContrato}`);
+      
+      // ✅ Usar el servicio de contratistas
+      const contratista = await this.contratistaService.buscarPorNumeroContratoExacto(numeroContrato);
+      
+      return {
+        ok: true,
+        data: {
+          success: true,
+          data: contratista
+        }
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error buscando contratista: ${error.message}`);
+      return {
+        ok: true,
+        data: {
+          success: false,
+          message: error.message,
+          data: null
+        }
+      };
     }
   }
 

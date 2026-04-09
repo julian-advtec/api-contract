@@ -1,20 +1,20 @@
 // src/juridica/dto/create-contrato.dto.ts
-import {
-  IsString,
-  IsNumber,
-  IsDate,
-  IsEnum,
-  IsOptional,
-  IsBoolean,
-  Min,
+
+import { 
+  IsString, 
+  IsNumber, 
+  IsDate, 
+  IsOptional, 
+  IsBoolean, 
+  Min, 
   Max,
-  ValidateNested,
-  IsArray,
+  IsUUID,
+  IsPositive,
+  IsEnum
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { TipoContrato } from '../entities/contrato.entity';
 import { CreateProveedorDto } from './create-proveedor.dto';
-import { CreatePolizaDto } from './create-poliza.dto';
 
 export class CreateContratoDto {
   @IsString()
@@ -26,14 +26,12 @@ export class CreateContratoDto {
   @IsEnum(TipoContrato)
   tipoContrato: TipoContrato;
 
-  @ValidateNested()
-  @Type(() => CreateProveedorDto)
+  @IsOptional()
+  @IsUUID()
+  proveedorId?: string;
+
   @IsOptional()
   proveedor?: CreateProveedorDto;
-
-  @IsString()
-  @IsOptional()
-  proveedorId?: string;
 
   @IsString()
   objeto: string;
@@ -43,20 +41,8 @@ export class CreateContratoDto {
   valor: number;
 
   @IsNumber()
-  @Min(1)
+  @IsPositive()
   plazoDias: number;
-
-  @IsString()
-  @IsOptional()
-  cdp?: string;
-
-  @IsString()
-  @IsOptional()
-  rp?: string;
-
-  @IsDate()
-  @Type(() => Date)
-  fechaFirma: Date;
 
   @IsDate()
   @Type(() => Date)
@@ -66,46 +52,139 @@ export class CreateContratoDto {
   @Type(() => Date)
   fechaTerminacion: Date;
 
-  @IsBoolean()
+  @IsDate()
+  @Type(() => Date)
+  fechaFirma: Date;
+
   @IsOptional()
+  @IsString()
+  supervisor?: string;
+
+  @IsOptional()
+  @IsString()
+  cdp?: string;
+
+  @IsOptional()
+  @IsString()
+  rp?: string;
+
+  @IsOptional()
+  @IsBoolean()
   seDesembolsaAnticipo?: boolean;
 
+  @IsOptional()
   @IsNumber()
   @Min(0)
   @Max(100)
-  @IsOptional()
   porcentajeAnticipo?: number;
 
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  @IsOptional()
   valorAnticipo?: number;
 
+  @IsOptional()
   @IsDate()
   @Type(() => Date)
-  @IsOptional()
   fechaDesembolsoAnticipo?: Date;
 
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  @IsOptional()
   adiciones?: number;
 
   @IsNumber()
   @Min(0)
   valorTotal: number;
 
+  @IsOptional()
   @IsString()
-  @IsOptional()
-  supervisor?: string;
-
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => CreatePolizaDto)
-  @IsOptional()
-  polizas?: CreatePolizaDto[];
-
-  @IsString()
-  @IsOptional()
   creadoPor?: string;
+
+  // ✅ No incluir ultimoUsuario aquí - se usa en UpdateContratoDto
+
+  // Pólizas
+  @IsOptional()
+  @IsBoolean()
+  requierePolizas?: boolean;
+
+  @IsOptional()
+  @IsString()
+  polizaCumplimientoNumero?: string;
+
+  @IsOptional()
+  @IsString()
+  polizaCumplimientoAseguradora?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  polizaCumplimientoValor?: number;
+
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  polizaCumplimientoVigenciaDesde?: Date;
+
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  polizaCumplimientoVigenciaHasta?: Date;
+
+  @IsOptional()
+  @IsBoolean()
+  requierePolizaCalidad?: boolean;
+
+  @IsOptional()
+  @IsString()
+  polizaCalidadNumero?: string;
+
+  @IsOptional()
+  @IsString()
+  polizaCalidadAseguradora?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  polizaCalidadValor?: number;
+
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  polizaCalidadVigenciaDesde?: Date;
+
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  polizaCalidadVigenciaHasta?: Date;
+
+  @IsOptional()
+  @IsBoolean()
+  requierePolizaRC?: boolean;
+
+  @IsOptional()
+  @IsString()
+  polizaRCNumero?: string;
+
+  @IsOptional()
+  @IsString()
+  polizaRCAseguradora?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  polizaRCValor?: number;
+
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  polizaRCVigenciaDesde?: Date;
+
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  polizaRCVigenciaHasta?: Date;
+
+  @IsOptional()
+  polizas?: any[];
 }

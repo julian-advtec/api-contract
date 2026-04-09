@@ -434,28 +434,34 @@ export class ContratistaService {
     }
   }
 
-  async buscarPorNumeroContratoExacto(numeroContrato: string): Promise<Contratista | null> {
-    try {
-      this.logger.log(`🔍 Buscando contratista por número de contrato exacto: "${numeroContrato}"`);
-      if (!numeroContrato || numeroContrato.trim().length < 1) return null;
-
-      const contratista = await this.contratistaRepository.findOne({
-        where: { numeroContrato: numeroContrato.trim(), estado: 'ACTIVO' },
-        relations: ['documentos']
-      });
-
-      if (!contratista) {
-        this.logger.log(`❌ No se encontró contratista con número de contrato: ${numeroContrato}`);
-        return null;
-      }
-
-      this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial} (${contratista.id})`);
-      return contratista;
-    } catch (error) {
-      this.logger.error(`❌ Error buscando por número de contrato: ${error.message}`);
+async buscarPorNumeroContratoExacto(numeroContrato: string): Promise<Contratista | null> {
+  try {
+    this.logger.log(`🔍 Buscando contratista por número de contrato exacto: "${numeroContrato}"`);
+    
+    if (!numeroContrato || numeroContrato.trim().length < 1) {
       return null;
     }
+
+    const contratista = await this.contratistaRepository.findOne({
+      where: { 
+        numeroContrato: numeroContrato.trim(),
+        estado: 'ACTIVO'
+      },
+      relations: ['documentos'] // ✅ IMPORTANTE: incluir documentos
+    });
+
+    if (!contratista) {
+      this.logger.log(`❌ No se encontró contratista con número de contrato: ${numeroContrato}`);
+      return null;
+    }
+
+    this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial} (${contratista.id}) con ${contratista.documentos?.length || 0} documentos`);
+    return contratista;
+  } catch (error) {
+    this.logger.error(`❌ Error buscando por número de contrato: ${error.message}`);
+    return null;
   }
+}
 
   async buscarPorId(id: string): Promise<Contratista> {
     try {
