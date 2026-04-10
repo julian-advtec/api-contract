@@ -105,7 +105,7 @@ export class JuridicaService {
                     detalles: createContratoDto,
                 }],
             });
-            
+
 
             const savedContrato = await this.contratoRepository.save(contrato);
 
@@ -696,4 +696,29 @@ export class JuridicaService {
             return null;
         }
     }
+
+
+
+async obtenerDocumentosContrato(contratoId: string): Promise<DocumentoContrato[]> {
+    try {
+        this.logger.log(`📄 Buscando documentos del contrato: ${contratoId}`);
+
+        const documentos = await this.documentoRepository.find({
+            where: {
+                contratoId: contratoId,
+                esVersionActual: true
+            },
+            order: { 
+                fechaCreacion: 'DESC' 
+            } as any
+        });
+
+        this.logger.log(`✅ ${documentos.length} documentos encontrados`);
+        return documentos;
+    } catch (error) {
+        this.logger.error(`❌ Error obteniendo documentos: ${error.message}`);
+        return [];
+    }
+}
+  
 }

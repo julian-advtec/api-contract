@@ -221,10 +221,10 @@ export class JuridicaController {
   ) {
     try {
       this.logger.log(`🔍 Buscando contratista por número de contrato: ${numeroContrato}`);
-      
+
       // ✅ Usar el servicio de contratistas
       const contratista = await this.contratistaService.buscarPorNumeroContratoExacto(numeroContrato);
-      
+
       return {
         ok: true,
         data: {
@@ -502,5 +502,44 @@ export class JuridicaController {
         usuario: req.user
       }
     };
+  }
+
+  @Get('contratos/:id/documentos')
+  @Roles(UserRole.ADMIN, UserRole.JURIDICA, UserRole.SUPERVISOR)
+  async obtenerDocumentosContrato(
+    @Param('id') id: string,
+    @Req() req?: any
+  ) {
+    try {
+      this.logger.log(`📄 Obteniendo documentos del contrato: ${id}`);
+
+      // Obtener el contrato primero para verificar que existe
+      const contrato = await this.juridicaService.findOne(id);
+
+      if (!contrato) {
+        return {
+          success: false,
+          message: 'Contrato no encontrado',
+          data: []
+        };
+      }
+
+      // Los documentos ya vienen incluidos en la relación del contrato
+      const documentos = contrato.documentos || [];
+
+      this.logger.log(`✅ ${documentos.length} documentos encontrados para el contrato ${id}`);
+
+      return {
+        success: true,
+        data: documentos
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo documentos del contrato ${id}: ${error.message}`);
+      return {
+        success: false,
+        message: error.message,
+        data: []
+      };
+    }
   }
 }
