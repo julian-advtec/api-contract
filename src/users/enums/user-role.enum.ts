@@ -9,7 +9,6 @@ export enum UserRole {
   TESORERIA = 'tesoreria',
   ASESOR_GERENCIA = 'asesor_gerencia',
   RENDICION_CUENTAS = 'rendicion_cuentas'
-  
 }
 
 

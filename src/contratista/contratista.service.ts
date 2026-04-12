@@ -434,6 +434,8 @@ export class ContratistaService {
     }
   }
 
+// src/contratista/contratista.service.ts
+
 async buscarPorNumeroContratoExacto(numeroContrato: string): Promise<Contratista | null> {
   try {
     this.logger.log(`🔍 Buscando contratista por número de contrato exacto: "${numeroContrato}"`);
@@ -447,7 +449,7 @@ async buscarPorNumeroContratoExacto(numeroContrato: string): Promise<Contratista
         numeroContrato: numeroContrato.trim(),
         estado: 'ACTIVO'
       },
-      relations: ['documentos'] // ✅ IMPORTANTE: incluir documentos
+      relations: ['documentos'] // ✅ Esto ya está, pero asegúrate que existe
     });
 
     if (!contratista) {
@@ -455,7 +457,9 @@ async buscarPorNumeroContratoExacto(numeroContrato: string): Promise<Contratista
       return null;
     }
 
+    // ✅ Log para verificar documentos
     this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial} (${contratista.id}) con ${contratista.documentos?.length || 0} documentos`);
+    
     return contratista;
   } catch (error) {
     this.logger.error(`❌ Error buscando por número de contrato: ${error.message}`);

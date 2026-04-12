@@ -1456,84 +1456,91 @@ export class ContratistasController {
   }
 
   @Get('buscar-por-contrato/:numeroContrato')
-  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)
-  async buscarPorNumeroContrato(@Param('numeroContrato') numeroContrato: string, @Req() req?: any) {
-    const inicio = Date.now();
-    try {
-      this.logger.log(`🔍 Buscando contratista por número de contrato: "${numeroContrato}"`);
+@Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)
+async buscarPorNumeroContrato(@Param('numeroContrato') numeroContrato: string, @Req() req?: any) {
+  const inicio = Date.now();
+  try {
+    this.logger.log(`🔍 Buscando contratista por número de contrato: "${numeroContrato}"`);
 
-      if (!numeroContrato || numeroContrato.trim().length < 1) {
-        return {
-          ok: true,
-          data: {
-            success: true,
-            data: null,
-            message: 'Número de contrato requerido'
-          }
-        };
-      }
-
-      const contratista = await this.contratistaService.buscarPorNumeroContratoExacto(numeroContrato);
-
-      if (!contratista) {
-        return {
-          ok: true,
-          data: {
-            success: true,
-            data: null,
-            message: 'No se encontró ningún contratista con ese número de contrato'
-          }
-        };
-      }
-
-      await this.bitacoraService.registrar(
-        AccionBitacora.VER_DOCUMENTO,
-        ModuloBitacora.ADMINISTRACION,
-        req.user,
-        undefined,
-        {
-          detalles: `Búsqueda de contratista por número de contrato: ${numeroContrato}`,
-          duracionMs: Date.now() - inicio,
-          metadata: { numeroContrato, encontrado: true }
-        },
-        req,
-      );
-
+    if (!numeroContrato || numeroContrato.trim().length < 1) {
       return {
         ok: true,
         data: {
           success: true,
-          data: {
-            id: contratista.id,
-            documentoIdentidad: contratista.documentoIdentidad,
-            razonSocial: contratista.razonSocial,
-            nombreRazonSocial: contratista.razonSocial,
-            numeroContrato: contratista.numeroContrato,
-            email: contratista.email,
-            telefono: contratista.telefono,
-            direccion: contratista.direccion,
-            departamento: contratista.departamento,
-            ciudad: contratista.ciudad,
-            cargo: contratista.cargo,
-            tipoContratista: contratista.tipoContratista,
-            estado: contratista.estado,
-            objetivoContrato: contratista.objetivoContrato,
-            representanteLegal: contratista.representanteLegal,
-            documentoRepresentante: contratista.documentoRepresentante,
-            tipoDocumento: contratista.tipoDocumento
-          }
-        }
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error buscando contratista por número de contrato: ${error.message}`);
-      return {
-        ok: true,
-        data: {
-          success: false,
-          message: 'Error al buscar contratista',
-          data: null
+          data: null,
+          message: 'Número de contrato requerido'
         }
       };
     }
+
+    const contratista = await this.contratistaService.buscarPorNumeroContratoExacto(numeroContrato);
+
+    if (!contratista) {
+      return {
+        ok: true,
+        data: {
+          success: true,
+          data: null,
+          message: 'No se encontró ningún contratista con ese número de contrato'
+        }
+      };
+    }
+
+    // ✅ Asegurar que los documentos estén incluidos en la respuesta
+    const responseData = {
+      id: contratista.id,
+      documentoIdentidad: contratista.documentoIdentidad,
+      razonSocial: contratista.razonSocial,
+      nombreRazonSocial: contratista.razonSocial,
+      numeroContrato: contratista.numeroContrato,
+      email: contratista.email,
+      telefono: contratista.telefono,
+      direccion: contratista.direccion,
+      departamento: contratista.departamento,
+      ciudad: contratista.ciudad,
+      cargo: contratista.cargo,
+      tipoContratista: contratista.tipoContratista,
+      estado: contratista.estado,
+      objetivoContrato: contratista.objetivoContrato,
+      representanteLegal: contratista.representanteLegal,
+      documentoRepresentante: contratista.documentoRepresentante,
+      tipoDocumento: contratista.tipoDocumento,
+      // ✅ INCLUIR LOS DOCUMENTOS
+      documentos: contratista.documentos || []
+    };
+
+    this.logger.log(`📎 Enviando ${responseData.documentos.length} documentos en la respuesta`);
+
+    await this.bitacoraService.registrar(
+      AccionBitacora.VER_DOCUMENTO,
+      ModuloBitacora.ADMINISTRACION,
+      req.user,
+      undefined,
+      {
+        detalles: `Búsqueda de contratista por número de contrato: ${numeroContrato}`,
+        duracionMs: Date.now() - inicio,
+        metadata: { numeroContrato, encontrado: true, documentos: contratista.documentos?.length || 0 }
+      },
+      req,
+    );
+
+    return {
+      ok: true,
+      data: {
+        success: true,
+        data: responseData
+      }
+    };
+  } catch (error) {
+    this.logger.error(`❌ Error buscando contratista por número de contrato: ${error.message}`);
+    return {
+      ok: true,
+      data: {
+        success: false,
+        message: error.message,
+        data: null
+      }
+    };
   }
+}
 }

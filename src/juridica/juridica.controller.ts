@@ -542,4 +542,64 @@ export class JuridicaController {
       };
     }
   }
+
+  @Get('contrato-con-contratista/:numeroContrato')
+  @Roles(UserRole.ADMIN, UserRole.JURIDICA, UserRole.SUPERVISOR, UserRole.RADICADOR)
+  async obtenerContratoYContratistaPorNumero(
+    @Param('numeroContrato') numeroContrato: string,
+    @Req() req?: any
+  ) {
+    try {
+      this.logger.log(`🔍 Buscando contrato y contratista por número: "${numeroContrato}"`);
+
+      // ✅ 1. Buscar el CONTRATO en jurídica por número
+      const contrato = await this.juridicaService.buscarContratoPorNumero(numeroContrato);
+
+      // ✅ 2. Buscar el CONTRATISTA por número de contrato
+      const contratista = await this.contratistaService.buscarPorNumeroContratoExacto(numeroContrato);
+
+      this.logger.log(`📊 Resultado - Contrato: ${contrato ? 'Encontrado' : 'No encontrado'}`);
+      this.logger.log(`📊 Resultado - Contratista: ${contratista ? 'Encontrado' : 'No encontrado'}`);
+
+      if (contrato) {
+        this.logger.log(`📅 Fechas del contrato: ${contrato.fechaInicio} a ${contrato.fechaTerminacion}`);
+      }
+
+      // ✅ 3. Construir respuesta combinada
+      const resultado = {
+        contratista: contratista ? {
+          id: contratista.id,
+          nombre: contratista.razonSocial,
+          documento: contratista.documentoIdentidad,
+          numeroContrato: contratista.numeroContrato
+        } : null,
+        contrato: contrato ? {
+          fechaInicio: contrato.fechaInicio,
+          fechaFin: contrato.fechaTerminacion,
+          fechaFirma: contrato.fechaFirma,
+          objeto: contrato.objeto,
+          valor: contrato.valor,
+          estado: contrato.estado
+        } : null
+      };
+
+      return {
+        ok: true,
+        data: {
+          success: true,
+          data: resultado
+        }
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error buscando contrato y contratista: ${error.message}`);
+      return {
+        ok: true,
+        data: {
+          success: false,
+          message: error.message,
+          data: null
+        }
+      };
+    }
+  }
 }

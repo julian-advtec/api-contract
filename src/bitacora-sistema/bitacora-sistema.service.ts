@@ -17,7 +17,7 @@ export class BitacoraSistemaService {
     private bitacoraRepository: Repository<BitacoraSistema>,
   ) {
     // CAMBIAR A LA RUTA DEL SERVIDOR COMPARTIDO
-    this.logsBasePath = path.join('\\\\R2-D2', 'api-contract', 'logs', 'bitacora');
+   this.logsBasePath = path.join('C:', 'R2-D2', 'api-contract', 'logs', 'bitacora');
     this.crearEstructuraDirectorios();
     this.logger.log(`📁 Ruta de logs configurada: ${this.logsBasePath}`);
   }

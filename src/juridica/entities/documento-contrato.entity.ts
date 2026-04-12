@@ -24,6 +24,7 @@ export class DocumentoContrato {
   @Column({ name: 'ruta_archivo', type: 'text' })
   rutaArchivo: string;
 
+  
   @Column({
     name: 'tipo_documento',
     type: 'enum',

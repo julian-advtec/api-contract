@@ -169,7 +169,7 @@ export const ormconfig: DataSourceOptions = {
         DocumentoContrato,
         Obligacion,
     ],
-    synchronize: true, // 🔴 CAMBIADO A FALSE
+    synchronize: false, // 🔴 CAMBIADO A FALSE
     logging: !isProduction,
     extra: {
         max: 20,
@@ -177,5 +177,6 @@ export const ormconfig: DataSourceOptions = {
         connectionTimeoutMillis: 2000,
     },
 };
+
 
 export const AppDataSource = new DataSource(ormconfig);

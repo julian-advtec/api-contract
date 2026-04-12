@@ -721,4 +721,30 @@ async obtenerDocumentosContrato(contratoId: string): Promise<DocumentoContrato[]
     }
 }
   
+async buscarContratoPorNumero(numeroContrato: string): Promise<Contrato | null> {
+  try {
+    this.logger.log(`🔍 Buscando contrato por número: "${numeroContrato}"`);
+
+    // ✅ Buscar exactamente por el número de contrato
+    const contrato = await this.contratoRepository.findOne({
+      where: { 
+        numeroContrato: numeroContrato.trim() 
+      }
+    });
+
+    if (!contrato) {
+      this.logger.warn(`⚠️ No se encontró contrato con número: "${numeroContrato}"`);
+      return null;
+    }
+
+    this.logger.log(`✅ Contrato encontrado: ${contrato.numeroContrato}`);
+    this.logger.log(`📅 Fecha Inicio: ${contrato.fechaInicio}`);
+    this.logger.log(`📅 Fecha Fin: ${contrato.fechaTerminacion}`);
+    
+    return contrato;
+  } catch (error) {
+    this.logger.error(`❌ Error buscando contrato: ${error.message}`);
+    return null;
+  }
+}
 }
