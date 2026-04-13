@@ -70,4 +70,5 @@ export class CreateDocumentoDto {
         message: 'primerRadicadoDelAno debe ser un valor booleano (true o false)' 
     })
     primerRadicadoDelAno?: boolean;
+    
 }

@@ -1,5 +1,3 @@
-// src/auditor/auditor.service.ts
-
 import {
   Injectable,
   NotFoundException,
@@ -7,7 +5,9 @@ import {
   Logger,
   InternalServerErrorException,
   ForbiddenException,
-  ConflictException
+  ConflictException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
@@ -22,11 +22,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { exec } from 'child_process';
+import { promisify } from 'util';
 import { ConfigService } from '@nestjs/config';
 import { AuditorValidationHelper } from './auditor-validation.helper';
 import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.service';
 import { ModuloBitacora, AccionBitacora } from '../bitacora-sistema/entities/bitacora-sistema.entity';
 import { JuridicaService } from '../juridica/juridica.service';
+import { Contratista } from '../contratista/entities/contratista.entity';
+import { ContratistaService } from '../contratista/contratista.service';
+
+const execAsync = promisify(exec);
 
 @Injectable()
 export class AuditorService {
@@ -40,22 +45,26 @@ export class AuditorService {
     private documentoRepository: Repository<Documento>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    @InjectRepository(Contratista) // ← AGREGAR
+    private contratistaRepository: Repository<Contratista>,
     @InjectRepository(AuditorDocumento)
     private auditorDocumentoRepository: Repository<AuditorDocumento>,
     private readonly configService: ConfigService,
     private readonly bitacoraService: BitacoraSistemaService,
-    private juridicaService: JuridicaService,
+    private readonly juridicaService: JuridicaService,
+    private readonly contratistaService: ContratistaService, // ← AGREGAR (inyectado directamente)
   ) {
     this.logger.log('📋 AuditorService inicializado');
   }
-
   // ===============================
   // 1. OBTENER DOCUMENTOS DISPONIBLES PARA AUDITOR
   // ===============================
 
   async obtenerDocumentosDisponibles(auditorId: string): Promise<any[]> {
     this.logger.log(`📋 Auditor ${auditorId} solicitando documentos disponibles`);
+
     try {
+      // Obtener documentos en estado RADICADO
       const documentos = await this.documentoRepository
         .createQueryBuilder('documento')
         .leftJoinAndSelect('documento.radicador', 'radicador')
@@ -66,7 +75,22 @@ export class AuditorService {
 
       this.logger.log(`✅ Encontrados ${documentos.length} documentos en estado RADICADO`);
 
-      const auditorDocs = await this.auditorRepository.find({
+      // Obtener TODAS las asignaciones de auditoría en revisión
+      const asignacionesEnRevision = await this.auditorRepository.find({
+        where: { estado: AuditorEstado.EN_REVISION },
+        relations: ['documento', 'auditor']
+      });
+
+      // Crear un mapa de documentoId -> auditor que lo está revisando
+      const mapaDocumentosEnRevision = new Map<string, string>();
+      for (const asignacion of asignacionesEnRevision) {
+        if (asignacion.documento && asignacion.documento.id) {
+          mapaDocumentosEnRevision.set(asignacion.documento.id, asignacion.auditor.id);
+        }
+      }
+
+      // Obtener documentos que el auditor actual tiene en revisión
+      const misDocumentosEnRevision = await this.auditorRepository.find({
         where: {
           auditor: { id: auditorId },
           estado: AuditorEstado.EN_REVISION
@@ -74,10 +98,12 @@ export class AuditorService {
         relations: ['documento']
       });
 
-      const documentosEnRevisionIds = auditorDocs.map(ad => ad.documento.id);
+      const misDocumentosIds = new Set(misDocumentosEnRevision.map(ad => ad.documento?.id).filter(id => id));
 
-      const documentosConEstado = documentos.map(documento => {
-        const estaRevisandoYo = documentosEnRevisionIds.includes(documento.id);
+      return documentos.map(documento => {
+        const auditorAsignadoId = mapaDocumentosEnRevision.get(documento.id);
+        const estaEnRevisionPorMi = misDocumentosIds.has(documento.id);
+        const tieneAuditorAsignado = !!auditorAsignadoId;
 
         return {
           id: documento.id,
@@ -93,23 +119,24 @@ export class AuditorService {
           supervisor: documento.usuarioAsignadoNombre,
           observacion: documento.observacion || '',
           primerRadicadoDelAno: documento.primerRadicadoDelAno,
-          disponible: true,
+          disponible: !tieneAuditorAsignado || estaEnRevisionPorMi,
           asignacion: {
-            enRevision: estaRevisandoYo,
-            puedoTomar: !estaRevisandoYo && documento.estado === 'RADICADO',
+            enRevision: estaEnRevisionPorMi,
+            puedoTomar: !tieneAuditorAsignado && documento.estado === 'RADICADO',
+            yaAsignado: tieneAuditorAsignado && !estaEnRevisionPorMi,
+            auditorAsignadoId: auditorAsignadoId,
             puedeSubirDocumentos: documento.primerRadicadoDelAno,
             supervisorAsignado: documento.usuarioAsignadoNombre,
             tieneSupervisor: !!documento.usuarioAsignadoNombre
           }
         };
       });
-
-      return documentosConEstado;
     } catch (error) {
       this.logger.error(`❌ Error obteniendo documentos disponibles: ${error.message}`);
       throw error;
     }
   }
+
 
   // ===============================
   // 2. TOMAR DOCUMENTO PARA REVISIÓN
@@ -122,16 +149,28 @@ export class AuditorService {
     await queryRunner.startTransaction();
 
     try {
+      // ✅ BUSCAR EL DOCUMENTO SIN LOCK PARA EVITAR PROBLEMAS
       const documento = await queryRunner.manager
         .createQueryBuilder(Documento, 'documento')
         .where('documento.id = :id', { id: documentoId })
         .andWhere('documento.estado = :estado', { estado: 'RADICADO' })
-        .setLock('pessimistic_write')
         .getOne();
 
+      // Si no se encuentra, verificar si existe pero con otro estado
       if (!documento) {
-        throw new NotFoundException('Documento no encontrado o no está disponible para auditoría (debe estar en estado RADICADO)');
+        const docExistente = await queryRunner.manager.findOne(Documento, {
+          where: { id: documentoId }
+        });
+
+        if (docExistente) {
+          throw new BadRequestException(
+            `El documento existe pero está en estado "${docExistente.estado}". Solo se pueden tomar documentos en estado RADICADO.`
+          );
+        }
+        throw new NotFoundException('Documento no encontrado');
       }
+
+      this.logger.log(`✅ Documento encontrado: ${documento.numeroRadicado} - Estado actual: ${documento.estado}`);
 
       const auditor = await queryRunner.manager.findOne(User, {
         where: { id: auditorId }
@@ -141,6 +180,7 @@ export class AuditorService {
         throw new NotFoundException('Auditor no encontrado');
       }
 
+      // Verificar si ya existe una asignación EN_REVISION para este documento
       const auditorDocExistente = await queryRunner.manager.findOne(AuditorDocumento, {
         where: {
           documento: { id: documentoId },
@@ -156,6 +196,7 @@ export class AuditorService {
         );
       }
 
+      // Actualizar estado del documento principal
       documento.estado = 'EN_REVISION_AUDITOR';
       documento.fechaActualizacion = new Date();
       documento.ultimoAcceso = new Date();
@@ -163,6 +204,7 @@ export class AuditorService {
       documento.usuarioAsignado = auditor;
       documento.usuarioAsignadoNombre = auditor.fullName || auditor.username;
 
+      // Agregar al historial
       const historial = documento.historialEstados || [];
       historial.push({
         fecha: new Date(),
@@ -177,6 +219,7 @@ export class AuditorService {
       await queryRunner.manager.save(Documento, documento);
       this.logger.log(`📝 Documento principal actualizado a estado: ${documento.estado}`);
 
+      // Crear o actualizar registro en auditor_documento
       let auditorDoc = await queryRunner.manager.findOne(AuditorDocumento, {
         where: {
           documento: { id: documentoId },
@@ -203,7 +246,9 @@ export class AuditorService {
       }
 
       await queryRunner.manager.save(AuditorDocumento, auditorDoc);
+      this.logger.log(`✅ Registro en auditor_documento creado/actualizado con estado: ${auditorDoc.estado}`);
 
+      // Registrar en bitácora
       try {
         await this.bitacoraService.registrar(
           AccionBitacora.AUDITOR_TOMAR,
@@ -218,9 +263,10 @@ export class AuditorService {
         );
         this.logger.log(`✅ Bitácora registrada: AUDITOR_TOMAR - ${documento.numeroRadicado}`);
       } catch (bitacoraError) {
-        this.logger.warn(`⚠️ Error registrando bitácora: ${bitacoraError.message}`);
+        this.logger.warn(`⚠️ Error registrando bitácora (no crítico): ${bitacoraError.message}`);
       }
 
+      // Registrar acceso en carpeta
       if (documento && documento.rutaCarpetaRadicado) {
         await this.registrarAccesoAuditor(
           documento.rutaCarpetaRadicado,
@@ -231,7 +277,7 @@ export class AuditorService {
       }
 
       await queryRunner.commitTransaction();
-      this.logger.log(`✅ Documento ${documento.numeroRadicado} tomado para revisión por ${auditor.username}. Estado actualizado a EN_REVISION_AUDITOR`);
+      this.logger.log(`✅ Documento ${documento.numeroRadicado} tomado para revisión por ${auditor.username}`);
 
       return {
         success: true,
@@ -779,9 +825,7 @@ export class AuditorService {
           id: auditorDoc.auditor.id,
           nombre: auditorDoc.auditor.fullName,
           username: auditorDoc.auditor.username
-        },
-        tieneDocumentos: auditorDoc.tieneTodosDocumentos(),
-        puedeSubirDocumentos: documento.primerRadicadoDelAno
+        }
       } : null
     };
   }
@@ -905,53 +949,137 @@ export class AuditorService {
     }
   }
 
-  private async encontrarRutaArchivoAuditor(
-    documento: Documento,
-    tipoArchivo: 'rpPath' | 'cdpPath' | 'polizaPath' | 'certificadoBancarioPath' | 'minutaPath' | 'actaInicioPath'
-  ): Promise<{ rutaAbsoluta: string; nombreArchivo: string; documentoOrigen: Documento } | null> {
-    this.logger.debug(`[BUSQUEDA-ARCHIVO] Buscando ${tipoArchivo} para doc ${documento.id}`);
+private async encontrarRutaArchivoAuditor(
+  documento: Documento,
+  tipoArchivo: 'rpPath' | 'cdpPath' | 'polizaPath' | 'certificadoBancarioPath' | 'minutaPath' | 'actaInicioPath'
+): Promise<{ rutaAbsoluta: string; nombreArchivo: string; documentoOrigen: Documento } | null> {
+  this.logger.debug(`[BUSQUEDA-ARCHIVO] Buscando ${tipoArchivo} para doc ${documento.id}`);
 
-    let auditorDoc = await this.auditorDocumentoRepository.findOne({
-      where: { documento: { id: documento.id } },
-    });
+  // Mapear tipoArchivo a tipo de documento
+  const mapaTipo: Record<string, { tipoContrato: string; tipoContratista: string }> = {
+    rpPath: { tipoContrato: 'RP', tipoContratista: '' },
+    cdpPath: { tipoContrato: 'CDP', tipoContratista: '' },
+    polizaPath: { tipoContrato: '', tipoContratista: 'GARANTIA' },
+    certificadoBancarioPath: { tipoContrato: '', tipoContratista: 'CERTIFICADO_BANCARIO' },
+    minutaPath: { tipoContrato: 'MINUTA', tipoContratista: '' },
+    actaInicioPath: { tipoContrato: 'ACTA_INICIO', tipoContratista: '' },
+  };
 
-    if (auditorDoc && (auditorDoc as any)[tipoArchivo]) {
-      const nombreArchivo = (auditorDoc as any)[tipoArchivo];
-      const rutaAbsoluta = path.join(documento.rutaCarpetaRadicado, nombreArchivo);
-      if (fs.existsSync(rutaAbsoluta)) {
-        this.logger.debug(`[BUSQUEDA-ARCHIVO] ✅ Encontrado en el documento actual: ${nombreArchivo}`);
-        return { rutaAbsoluta, nombreArchivo, documentoOrigen: documento };
-      }
+  const tipos = mapaTipo[tipoArchivo];
+  if (!tipos) {
+    this.logger.warn(`⚠️ Tipo de archivo no reconocido: ${tipoArchivo}`);
+    return null;
+  }
+
+  // 1. PRIMERO: Buscar en auditor_documentos (archivos subidos por el auditor)
+  let auditorDoc = await this.auditorDocumentoRepository.findOne({
+    where: { documento: { id: documento.id } },
+  });
+
+  if (auditorDoc && (auditorDoc as any)[tipoArchivo]) {
+    const nombreArchivo = (auditorDoc as any)[tipoArchivo];
+    const rutaAbsoluta = path.join(documento.rutaCarpetaRadicado, nombreArchivo);
+    if (fs.existsSync(rutaAbsoluta)) {
+      this.logger.debug(`[BUSQUEDA-ARCHIVO] ✅ Encontrado en auditor_documentos: ${nombreArchivo}`);
+      return { rutaAbsoluta, nombreArchivo, documentoOrigen: documento };
     }
+  }
 
-    if (!documento.primerRadicadoDelAno) {
-      const primerRadicado = await this.documentoRepository.findOne({
-        where: {
-          numeroContrato: documento.numeroContrato,
-          primerRadicadoDelAno: true,
-        },
-        order: { fechaRadicacion: 'ASC' },
-      });
-
-      if (primerRadicado) {
-        const auditorDocPrimero = await this.auditorDocumentoRepository.findOne({
-          where: { documento: { id: primerRadicado.id } },
+  // 2. SEGUNDO: Buscar en DOCUMENTOS DEL CONTRATO (para RP, CDP, Minuta, Acta de Inicio)
+  if (tipos.tipoContrato) {
+    try {
+      const contrato = await this.juridicaService.buscarContratoPorNumero(documento.numeroContrato);
+      
+      if (contrato && contrato.documentos && contrato.documentos.length > 0) {
+        const docContrato = contrato.documentos.find((doc: any) => {
+          const tipoDoc = doc.tipoDocumento?.toUpperCase() || '';
+          return tipoDoc === tipos.tipoContrato || tipoDoc.includes(tipos.tipoContrato);
         });
-
-        if (auditorDocPrimero && (auditorDocPrimero as any)[tipoArchivo]) {
-          const nombreArchivo = (auditorDocPrimero as any)[tipoArchivo];
-          const rutaAbsoluta = path.join(primerRadicado.rutaCarpetaRadicado, nombreArchivo);
+        
+        if (docContrato && docContrato.rutaArchivo) {
+          let rutaAbsoluta = docContrato.rutaArchivo;
+          if (!path.isAbsolute(rutaAbsoluta)) {
+            const basePath = this.configService.get('STORAGE_LOCAL_PATH') || '\\\\R2-D2\\api-contract';
+            rutaAbsoluta = path.join(basePath, rutaAbsoluta);
+          }
+          
           if (fs.existsSync(rutaAbsoluta)) {
-            this.logger.debug(`[BUSQUEDA-ARCHIVO] ✅ Encontrado en primer radicado (${primerRadicado.numeroRadicado}): ${nombreArchivo}`);
-            return { rutaAbsoluta, nombreArchivo, documentoOrigen: primerRadicado };
+            this.logger.debug(`[BUSQUEDA-ARCHIVO] ✅ Encontrado en documentos_contrato: ${docContrato.nombreArchivo}`);
+            return { 
+              rutaAbsoluta, 
+              nombreArchivo: docContrato.nombreArchivo, 
+              documentoOrigen: documento 
+            };
           }
         }
       }
+    } catch (error) {
+      this.logger.warn(`⚠️ Error buscando en contrato: ${error.message}`);
     }
-
-    this.logger.debug(`[BUSQUEDA-ARCHIVO] ❌ No se encontró ${tipoArchivo} para el documento ${documento.id}.`);
-    return null;
   }
+
+  // 3. TERCERO: Buscar en DOCUMENTOS DEL CONTRATISTA (para Póliza, Certificado Bancario)
+  if (tipos.tipoContratista) {
+    try {
+      const contratista = await this.buscarContratistaPorNumeroContrato(documento.numeroContrato);
+      
+      if (contratista && contratista.documentos && contratista.documentos.length > 0) {
+        const docContratista = contratista.documentos.find((doc: any) => {
+          const tipoDoc = doc.tipo?.toUpperCase() || '';
+          return tipoDoc === tipos.tipoContratista || tipoDoc.includes(tipos.tipoContratista);
+        });
+        
+        if (docContratista && docContratista.rutaArchivo) {
+          let rutaAbsoluta = docContratista.rutaArchivo;
+          if (!path.isAbsolute(rutaAbsoluta)) {
+            const basePath = this.configService.get('STORAGE_LOCAL_PATH') || '\\\\R2-D2\\api-contract';
+            rutaAbsoluta = path.join(basePath, rutaAbsoluta);
+          }
+          
+          if (fs.existsSync(rutaAbsoluta)) {
+            this.logger.debug(`[BUSQUEDA-ARCHIVO] ✅ Encontrado en documentos_contratista: ${docContratista.nombreArchivo}`);
+            return { 
+              rutaAbsoluta, 
+              nombreArchivo: docContratista.nombreArchivo, 
+              documentoOrigen: documento 
+            };
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`⚠️ Error buscando en contratista: ${error.message}`);
+    }
+  }
+
+  // 4. CUARTO: Buscar en el PRIMER RADICADO del año (solo si no es primer radicado)
+  if (!documento.primerRadicadoDelAno) {
+    const primerRadicado = await this.documentoRepository.findOne({
+      where: {
+        numeroContrato: documento.numeroContrato,
+        primerRadicadoDelAno: true,
+      },
+      order: { fechaRadicacion: 'ASC' },
+    });
+
+    if (primerRadicado) {
+      const auditorDocPrimero = await this.auditorDocumentoRepository.findOne({
+        where: { documento: { id: primerRadicado.id } },
+      });
+
+      if (auditorDocPrimero && (auditorDocPrimero as any)[tipoArchivo]) {
+        const nombreArchivo = (auditorDocPrimero as any)[tipoArchivo];
+        const rutaAbsoluta = path.join(primerRadicado.rutaCarpetaRadicado, nombreArchivo);
+        if (fs.existsSync(rutaAbsoluta)) {
+          this.logger.debug(`[BUSQUEDA-ARCHIVO] ✅ Encontrado en primer radicado (${primerRadicado.numeroRadicado}): ${nombreArchivo}`);
+          return { rutaAbsoluta, nombreArchivo, documentoOrigen: primerRadicado };
+        }
+      }
+    }
+  }
+
+  this.logger.debug(`[BUSQUEDA-ARCHIVO] ❌ No se encontró ${tipoArchivo} para el documento ${documento.id}.`);
+  return null;
+}
 
   // ===============================
   // MÉTODOS DE SUBIDA DE DOCUMENTOS
@@ -1068,37 +1196,140 @@ export class AuditorService {
     return { ruta: rutaAbsoluta, nombre: nombreArchivo };
   }
 
+  async buscarContratistaPorNumeroContrato(numeroContrato: string): Promise<Contratista | null> {
+  this.logger.log(`🔍 Buscando contratista por número de contrato: ${numeroContrato}`);
+
+  try {
+    // ✅ El método ya devuelve Contratista | null
+    const contratista = await this.contratistaService.buscarPorNumeroContratoExacto(numeroContrato);
+
+    if (!contratista) {
+      this.logger.warn(`⚠️ No se encontró contratista para el contrato: ${numeroContrato}`);
+      return null;
+    }
+
+    this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial}`);
+    return contratista;
+  } catch (error) {
+    this.logger.error(`❌ Error buscando contratista: ${error.message}`);
+    return null;
+  }
+}
+  // ===============================
+  // MÉTODO CORREGIDO PARA OBTENER RUTA DE ARCHIVO AUDITOR
+  // ===============================
+
   async obtenerRutaArchivoAuditorFull(
     documentoId: string,
     tipo: string,
     userId?: string,
   ): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
-    const documento = await this.documentoRepository.findOne({ where: { id: documentoId } });
-    if (!documento) throw new NotFoundException(`Documento ${documentoId} no encontrado`);
+    this.logger.log(`🔍 Buscando archivo auditor: ${tipo} para documento ${documentoId}`);
 
-    let auditorDoc = await this.auditorDocumentoRepository.findOne({
-      where: { documento: { id: documentoId } },
+    // Obtener el documento principal
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId },
+      relations: ['radicador']
     });
 
-    if (!auditorDoc) throw new NotFoundException('No hay registro de auditoría');
-
-    const tipoACampo: Record<string, string> = {
-      'rp': 'rpPath', 'cdp': 'cdpPath', 'poliza': 'polizaPath',
-      'certificadobancario': 'certificadoBancarioPath', 'minuta': 'minutaPath', 'actainicio': 'actaInicioPath',
-    };
-
-    const campo = tipoACampo[tipo.toLowerCase()];
-    if (!campo) throw new BadRequestException(`Tipo de archivo no soportado: ${tipo}`);
-
-    const nombreArchivo = (auditorDoc as any)[campo];
-    if (!nombreArchivo) throw new NotFoundException(`No hay archivo de tipo ${tipo}`);
-
-    const rutaAbsoluta = path.join(documento.rutaCarpetaRadicado, nombreArchivo);
-    if (!fs.existsSync(rutaAbsoluta)) {
-      throw new NotFoundException(`Archivo ${tipo} no encontrado en el servidor`);
+    if (!documento) {
+      throw new NotFoundException(`Documento ${documentoId} no encontrado`);
     }
 
-    return { rutaAbsoluta, nombreArchivo: path.basename(nombreArchivo) };
+    let rutaRelativa: string | null = null;
+    let fuente = '';
+
+    // Mapear tipo a la fuente correspondiente
+    const tiposContrato = ['rp', 'cdp', 'minuta', 'actaInicio'];
+    const tiposContratista = ['poliza', 'certificadoBancario'];
+
+    try {
+      if (tiposContrato.includes(tipo)) {
+        // Buscar en documentos del CONTRATO
+        fuente = 'contrato';
+        const numeroContrato = documento.numeroContrato;
+
+        // ✅ CORREGIDO: usar buscarContratoPorNumero en lugar de obtenerContratoPorNumero
+        const contrato = await this.juridicaService.buscarContratoPorNumero(numeroContrato);
+
+        if (contrato && contrato.documentos) {
+          let tipoDocumento = '';
+          switch (tipo) {
+            case 'rp': tipoDocumento = 'RP'; break;
+            case 'cdp': tipoDocumento = 'CDP'; break;
+            case 'minuta': tipoDocumento = 'MINUTA'; break;
+            case 'actaInicio': tipoDocumento = 'ACTA_INICIO'; break;
+          }
+
+          const documentoContrato = contrato.documentos.find((doc: any) =>
+            doc.tipoDocumento === tipoDocumento ||
+            doc.tipoDocumento?.toUpperCase().includes(tipoDocumento)
+          );
+
+          if (documentoContrato && documentoContrato.rutaArchivo) {
+            rutaRelativa = documentoContrato.rutaArchivo;
+            this.logger.log(`✅ ${tipo} encontrado en contrato: ${rutaRelativa}`);
+          }
+        }
+      }
+      else if (tiposContratista.includes(tipo)) {
+        // Buscar en documentos del CONTRATISTA
+        fuente = 'contratista';
+        const numeroContrato = documento.numeroContrato;
+
+        // ✅ CORREGIDO: usar buscarContratistaPorNumeroContrato
+        const contratista = await this.buscarContratistaPorNumeroContrato(numeroContrato);
+
+        if (contratista && contratista.documentos) {
+          let tipoDocumento = '';
+          switch (tipo) {
+            case 'poliza': tipoDocumento = 'GARANTIA'; break;
+            case 'certificadoBancario': tipoDocumento = 'CERTIFICADO_BANCARIO'; break;
+          }
+
+          const documentoContratista = contratista.documentos.find((doc: any) =>
+            doc.tipo === tipoDocumento ||
+            doc.tipo?.toUpperCase().includes(tipoDocumento)
+          );
+
+          if (documentoContratista && documentoContratista.rutaArchivo) {
+            rutaRelativa = documentoContratista.rutaArchivo;
+            this.logger.log(`✅ ${tipo} encontrado en contratista: ${rutaRelativa}`);
+          }
+        }
+      }
+      else {
+        throw new BadRequestException(`Tipo de archivo no soportado: ${tipo}`);
+      }
+
+      if (!rutaRelativa) {
+        this.logger.warn(`⚠️ No se encontró ${tipo} en ${fuente}`);
+        throw new NotFoundException(`No se encontró el archivo ${tipo} en ${fuente}`);
+      }
+
+      // Construir ruta absoluta
+      let rutaAbsoluta = rutaRelativa;
+      if (!path.isAbsolute(rutaAbsoluta)) {
+        // Si la ruta es relativa, construir a partir de la carpeta base
+        const basePath = this.configService.get('STORAGE_LOCAL_PATH') || '\\\\R2-D2\\api-contract';
+        rutaAbsoluta = path.join(basePath, rutaRelativa);
+      }
+
+      // Verificar que el archivo existe
+      if (!fs.existsSync(rutaAbsoluta)) {
+        this.logger.error(`❌ Archivo no existe en disco: ${rutaAbsoluta}`);
+        throw new NotFoundException(`El archivo ${tipo} no existe físicamente en el servidor`);
+      }
+
+      return {
+        rutaAbsoluta,
+        nombreArchivo: path.basename(rutaRelativa)
+      };
+
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo ${tipo}: ${error.message}`);
+      throw error;
+    }
   }
 
   // ===============================

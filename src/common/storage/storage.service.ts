@@ -3,237 +3,108 @@ import { Injectable, Logger, OnModuleInit, NotFoundException, BadRequestExceptio
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
-import { createClient } from '@supabase/supabase-js';
 
 @Injectable()
 export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
-  private supabaseClient: any;
-  private storageType: string;
-  private localPath: string;
-  private isDevelopment: boolean;
-  private supabaseBucket: string;
+  private networkPath: string;
   private readonly NETWORK_STORAGE_PATH = '\\\\R2-D2\\api-contract';
 
   constructor(private configService: ConfigService) {
-    this.isDevelopment = process.env.NODE_ENV === 'development' ||
-      process.env.VSCODE_PID !== undefined ||
-      !process.env.SUPABASE_URL;
-
-    // ✅ FORZAR USO DE ALMACENAMIENTO LOCAL SIEMPRE
-    this.storageType = 'local'; // Siempre local
-
-    // ✅ USAR LA RUTA DE RED CORRECTAMENTE
-    const configuredPath = this.configService.get('storage.local.basePath') ||
-      process.env.LOCAL_STORAGE_PATH ||
-      this.NETWORK_STORAGE_PATH;
-
-    // Normalizar la ruta de red para Windows
-    if (process.platform === 'win32') {
-      this.localPath = configuredPath.replace(/\\\\/g, '\\');
-    } else {
-      this.localPath = configuredPath;
-    }
-
-    this.supabaseBucket = this.configService.get('storage.supabase.bucket') ||
-      process.env.SUPABASE_BUCKET ||
-      'documentos';
-
+    // ✅ FORZAR USO DE LA RUTA DE RED
+    this.networkPath = this.NETWORK_STORAGE_PATH;
+    
     this.logger.log(`📦 ======= CONFIGURACIÓN DE ALMACENAMIENTO =======`);
-    this.logger.log(`   Tipo: LOCAL (forzado)`);
-    this.logger.log(`   Ruta base: ${this.localPath}`);
-    this.logger.log(`   Entorno: ${this.isDevelopment ? 'DESARROLLO' : 'PRODUCCIÓN'}`);
+    this.logger.log(`   Tipo: RED (\\\\R2-D2\\api-contract)`);
+    this.logger.log(`   Ruta base: ${this.networkPath}`);
     this.logger.log(`==================================================`);
-
-    // Asegurar que el directorio local existe
-    this.ensureLocalDirectory();
-  }
-
-  private detectStorageType(): string {
-    // ✅ SIEMPRE RETORNAR 'local'
-    return 'local';
   }
 
   async onModuleInit() {
-    this.logger.log(`💾 Usando almacenamiento LOCAL (SIEMPRE)`);
-    this.logger.log(`📁 Ruta base: ${this.localPath}`);
-    this.ensureLocalDirectory();
+    this.logger.log(`💾 Usando almacenamiento en SERVIDOR DE RED`);
+    this.logger.log(`📁 Ruta base: ${this.networkPath}`);
+    this.ensureNetworkDirectory();
   }
 
-  private ensureLocalDirectory() {
+  private ensureNetworkDirectory() {
     try {
-      let normalizedPath = this.localPath;
-
-      // Normalizar ruta para Windows
+      // Normalizar la ruta UNC para Windows
+      let normalizedPath = this.networkPath;
+      
       if (process.platform === 'win32') {
-        normalizedPath = this.localPath.replace(/\\\\/g, '\\');
-      }
-
-      this.logger.log(`🔍 Verificando directorio: ${normalizedPath}`);
-
-      // Verificar si la ruta de red está accesible
-      const isNetworkPath = normalizedPath.startsWith('\\\\');
-
-      if (isNetworkPath) {
-        this.logger.log(`🌐 Es una ruta de red: ${normalizedPath}`);
-        // Intentar acceder a la ruta de red
-        try {
-          fs.accessSync(path.dirname(normalizedPath), fs.constants.R_OK);
-          this.logger.log(`✅ Ruta de red accesible`);
-        } catch (error) {
-          this.logger.warn(`⚠️ Ruta de red no accesible: ${error.message}`);
-          if (this.isDevelopment) {
-            // En desarrollo, usar ruta local como fallback
-            const fallbackPath = path.join(process.cwd(), 'uploads-dev');
-            this.logger.warn(`📁 Usando fallback local en desarrollo: ${fallbackPath}`);
-            normalizedPath = fallbackPath;
-            this.localPath = fallbackPath;
-          }
+        // Asegurar formato UNC correcto
+        normalizedPath = this.networkPath.replace(/\\\\/g, '\\');
+        if (!normalizedPath.startsWith('\\\\')) {
+          normalizedPath = '\\\\' + normalizedPath.replace(/\\/g, '\\');
         }
       }
 
-      // Crear directorio si no existe
+      this.logger.log(`🔍 Verificando directorio de red: ${normalizedPath}`);
+
+      // Verificar si la ruta de red está accesible
+      try {
+        // Intentar acceder al servidor
+        const serverRoot = normalizedPath.split('\\').slice(0, 3).join('\\');
+        fs.accessSync(serverRoot, fs.constants.R_OK);
+        this.logger.log(`✅ Servidor de red accesible: ${serverRoot}`);
+      } catch (error) {
+        this.logger.error(`❌ No se puede acceder al servidor de red: ${error.message}`);
+        this.logger.error(`   Verifica que:`);
+        this.logger.error(`   1. El servidor R2-D2 esté encendido`);
+        this.logger.error(`   2. La carpeta compartida 'api-contract' exista`);
+        this.logger.error(`   3. Tengas permisos de lectura/escritura`);
+        throw new Error(`Servidor de red no disponible: ${this.networkPath}`);
+      }
+
+      // Crear directorio base si no existe
       if (!fs.existsSync(normalizedPath)) {
-        this.logger.log(`📁 Creando directorio: ${normalizedPath}`);
+        this.logger.log(`📁 Creando directorio base en red: ${normalizedPath}`);
         fs.mkdirSync(normalizedPath, { recursive: true });
-        this.logger.log(`✅ Directorio creado: ${normalizedPath}`);
+        this.logger.log(`✅ Directorio base creado: ${normalizedPath}`);
       } else {
-        this.logger.log(`✅ Directorio existente: ${normalizedPath}`);
+        this.logger.log(`✅ Directorio base existe: ${normalizedPath}`);
       }
 
       // Verificar permisos de escritura
       const testFile = path.join(normalizedPath, `.write_test_${Date.now()}.txt`);
       fs.writeFileSync(testFile, 'test');
       fs.unlinkSync(testFile);
-      this.logger.log(`✅ Directorio tiene permisos de escritura`);
+      this.logger.log(`✅ Permisos de escritura verificados en la red`);
+
+      // Actualizar networkPath con la ruta normalizada
+      this.networkPath = normalizedPath;
 
     } catch (error: any) {
-      this.logger.error(`❌ Error con directorio: ${error.message}`);
-
-      // Fallback a directorio local alternativo
-      const altPath = path.join(process.cwd(), 'uploads');
-      try {
-        if (!fs.existsSync(altPath)) {
-          fs.mkdirSync(altPath, { recursive: true });
-        }
-        this.localPath = altPath;
-        this.logger.log(`📁 Usando directorio alternativo: ${altPath}`);
-      } catch (altError: any) {
-        this.logger.error(`❌ También falló el directorio alternativo: ${altError.message}`);
-        throw new Error(`No se pudo establecer el directorio de almacenamiento: ${error.message}`);
-      }
+      this.logger.error(`❌ Error CRÍTICO con servidor de red: ${error.message}`);
+      throw new Error(`No se puede acceder al servidor de red: ${error.message}`);
     }
   }
 
   private getFullPath(relativePath: string): string {
     // Normalizar la ruta relativa (usar separadores de Windows)
-    const normalizedRelative = relativePath.replace(/\//g, path.sep);
-    // Unir con la ruta base
-    const fullPath = path.join(this.localPath, normalizedRelative);
+    const normalizedRelative = relativePath.replace(/\//g, '\\');
+    
+    // Construir la ruta completa UNC
+    let fullPath: string;
+    
+    if (process.platform === 'win32') {
+      fullPath = path.join(this.networkPath, normalizedRelative);
+    } else {
+      // Para Linux/WSL, usar formato especial
+      const networkPathUnix = this.networkPath.replace(/\\\\/g, '/');
+      fullPath = path.join(networkPathUnix, normalizedRelative);
+    }
+    
+    this.logger.debug(`   Ruta completa: ${fullPath}`);
     return fullPath;
   }
 
-  async uploadFile(fileOrBuffer: any, folderPathOrBuffer?: any, fileNameOrMimeType?: any): Promise<any> {
-    let file: any;
-    let folderPath: string = '';
-    let fileName: string = '';
-
-    this.logger.debug(`🔍 uploadFile llamado con:`);
-    this.logger.debug(`   fileOrBuffer type: ${typeof fileOrBuffer}`);
-    this.logger.debug(`   fileOrBuffer constructor: ${fileOrBuffer?.constructor?.name}`);
-    this.logger.debug(`   folderPathOrBuffer type: ${typeof folderPathOrBuffer}`);
-    this.logger.debug(`   fileNameOrMimeType type: ${typeof fileNameOrMimeType}`);
-
-    // ============================================================
-    // ✅ FORMA 1: uploadFile(relativePath, buffer, mimeType)
-    // Esta es la forma que usa radicacion.service.ts
-    // ============================================================
-    if (typeof fileOrBuffer === 'string' && Buffer.isBuffer(folderPathOrBuffer)) {
-      // fileOrBuffer = ruta relativa (string)
-      // folderPathOrBuffer = buffer del archivo
-      // fileNameOrMimeType = mimeType
-
-      const relativePath = fileOrBuffer;  // ← Este es el fileRelativePath completo
-      const buffer = folderPathOrBuffer;
-      const mimeType = fileNameOrMimeType || 'application/octet-stream';
-
-      this.logger.log(`📤 Subiendo archivo (buffer) a: ${relativePath}`);
-      this.logger.log(`   Buffer size: ${buffer?.length || 0} bytes`);
-      this.logger.log(`   MimeType: ${mimeType}`);
-
-      // Extraer folderPath y fileName del relativePath
-      const normalizedPath = relativePath.replace(/\\/g, '/');
-      const lastSlashIndex = normalizedPath.lastIndexOf('/');
-
-      if (lastSlashIndex !== -1) {
-        folderPath = normalizedPath.substring(0, lastSlashIndex);
-        fileName = normalizedPath.substring(lastSlashIndex + 1);
-      } else {
-        folderPath = '';
-        fileName = normalizedPath;
-      }
-
-      // Crear objeto file simulado
-      file = {
-        buffer: buffer,
-        originalname: fileName,
-        mimetype: mimeType
-      };
-
-      return this.saveToLocal(file, folderPath, fileName);
-    }
-
-    // ============================================================
-    // ✅ FORMA 2: uploadFile(file, folderPath, fileName)
-    // ============================================================
-    if (fileOrBuffer && typeof fileOrBuffer === 'object' && (fileOrBuffer.buffer || fileOrBuffer.path)) {
-      file = fileOrBuffer;
-      folderPath = typeof folderPathOrBuffer === 'string' ? folderPathOrBuffer : '';
-      fileName = fileNameOrMimeType || file.originalname || `file_${Date.now()}`;
-
-      this.logger.log(`📤 Subiendo archivo (file object) a: ${path.join(folderPath, fileName)}`);
-      return this.saveToLocal(file, folderPath, fileName);
-    }
-
-    // ============================================================
-    // ✅ FORMA 3: uploadFile(buffer, folderPath, mimeType)
-    // ============================================================
-    if (Buffer.isBuffer(fileOrBuffer) && typeof folderPathOrBuffer === 'string') {
-      const buffer = fileOrBuffer;
-      const mimeType = fileNameOrMimeType || 'application/octet-stream';
-      folderPath = folderPathOrBuffer;
-      fileName = `file_${Date.now()}`;
-
-      file = {
-        buffer: buffer,
-        originalname: fileName,
-        mimetype: mimeType
-      };
-
-      this.logger.log(`📤 Subiendo archivo (buffer directo) a: ${path.join(folderPath, fileName)}`);
-      return this.saveToLocal(file, folderPath, fileName);
-    }
-
-    // ============================================================
-    // ❌ Si llegamos aquí, no se reconoció la llamada
-    // ============================================================
-    this.logger.error(`❌ No se pudo determinar la forma de llamada`);
-    this.logger.error(`   fileOrBuffer: ${typeof fileOrBuffer} = ${JSON.stringify(fileOrBuffer)?.substring(0, 100)}`);
-    this.logger.error(`   folderPathOrBuffer: ${typeof folderPathOrBuffer}`);
-    this.logger.error(`   fileNameOrMimeType: ${typeof fileNameOrMimeType}`);
-
-    throw new BadRequestException(
-      `Formato de llamada a uploadFile no reconocido. ` +
-      `Esperaba (string, buffer, string) o (file, string, string) o (buffer, string, string)`
-    );
-  }
-
   // ============================================================
-  // ✅ MÉTODO PARA GUARDAR LOCALMENTE
+  // ✅ MÉTODO PARA GUARDAR SOLO EN RED
   // ============================================================
-  private async saveToLocal(file: any, folderPath: string, fileName: string): Promise<any> {
+  private async saveToNetwork(file: any, folderPath: string, fileName: string): Promise<any> {
     try {
-      // Construir la ruta completa
+      // Construir la ruta relativa
       let relativePath: string;
       if (folderPath && folderPath.trim() !== '') {
         relativePath = path.join(folderPath, fileName).replace(/\\/g, '/');
@@ -244,16 +115,16 @@ export class StorageService implements OnModuleInit {
       const fullPath = this.getFullPath(relativePath);
       const dir = path.dirname(fullPath);
 
-      this.logger.log(`💾 Guardando archivo localmente:`);
+      this.logger.log(`💾 Guardando archivo en SERVIDOR DE RED:`);
       this.logger.log(`   Ruta relativa: ${relativePath}`);
       this.logger.log(`   Ruta completa: ${fullPath}`);
       this.logger.log(`   Directorio: ${dir}`);
 
       // Crear directorio si no existe
       if (!fs.existsSync(dir)) {
-        this.logger.log(`📁 Creando directorio: ${dir}`);
+        this.logger.log(`📁 Creando directorio en red: ${dir}`);
         fs.mkdirSync(dir, { recursive: true });
-        this.logger.log(`✅ Directorio creado exitosamente`);
+        this.logger.log(`✅ Directorio creado exitosamente en red`);
       }
 
       // Obtener buffer del archivo
@@ -279,82 +150,153 @@ export class StorageService implements OnModuleInit {
         throw new Error('El buffer del archivo está vacío');
       }
 
-      // Guardar archivo
+      // Guardar archivo SOLO en red
       fs.writeFileSync(fullPath, buffer);
-      this.logger.log(`✅ Archivo guardado exitosamente: ${fullPath}`);
+      this.logger.log(`✅ Archivo guardado exitosamente en RED: ${fullPath}`);
       this.logger.log(`   Tamaño: ${buffer.length} bytes`);
 
       // Verificar que el archivo se guardó correctamente
       if (fs.existsSync(fullPath)) {
         const stats = fs.statSync(fullPath);
-        this.logger.log(`✅ Verificación: archivo existe (${stats.size} bytes)`);
+        this.logger.log(`✅ Verificación: archivo existe en red (${stats.size} bytes)`);
       } else {
-        this.logger.error(`❌ ERROR: El archivo no existe después de guardarlo`);
-        throw new Error('El archivo no se guardó correctamente');
+        this.logger.error(`❌ ERROR: El archivo no existe después de guardarlo en red`);
+        throw new Error('El archivo no se guardó correctamente en la red');
       }
 
       return {
         success: true,
         path: relativePath,
         fullPath: fullPath,
-        provider: 'local',
+        provider: 'network',
         size: buffer.length,
         fileName: fileName,
         folderPath: folderPath
       };
     } catch (error: any) {
-      this.logger.error(`❌ Error guardando archivo local: ${error.message}`);
+      this.logger.error(`❌ Error guardando archivo en RED: ${error.message}`);
       this.logger.error(`   Stack: ${error.stack}`);
       throw error;
     }
   }
 
   // ============================================================
-  // OBTENER ARCHIVO COMO BUFFER
+  // ✅ MÉTODO PRINCIPAL PARA SUBIR ARCHIVOS
   // ============================================================
-  async getFile(filePath: string): Promise<Buffer> {
-    // Siempre local
-    return this.getFromLocal(filePath);
+  async uploadFile(fileOrBuffer: any, folderPathOrBuffer?: any, fileNameOrMimeType?: any): Promise<any> {
+    let file: any;
+    let folderPath: string = '';
+    let fileName: string = '';
+
+    this.logger.debug(`🔍 uploadFile llamado`);
+    this.logger.debug(`   fileOrBuffer type: ${typeof fileOrBuffer}`);
+
+    // ============================================================
+    // FORMA 1: uploadFile(relativePath, buffer, mimeType)
+    // ============================================================
+    if (typeof fileOrBuffer === 'string' && Buffer.isBuffer(folderPathOrBuffer)) {
+      const relativePath = fileOrBuffer;
+      const buffer = folderPathOrBuffer;
+      const mimeType = fileNameOrMimeType || 'application/octet-stream';
+
+      this.logger.log(`📤 Subiendo archivo (buffer) a: ${relativePath}`);
+      this.logger.log(`   Buffer size: ${buffer?.length || 0} bytes`);
+
+      // Extraer folderPath y fileName del relativePath
+      const normalizedPath = relativePath.replace(/\\/g, '/');
+      const lastSlashIndex = normalizedPath.lastIndexOf('/');
+
+      if (lastSlashIndex !== -1) {
+        folderPath = normalizedPath.substring(0, lastSlashIndex);
+        fileName = normalizedPath.substring(lastSlashIndex + 1);
+      } else {
+        folderPath = '';
+        fileName = normalizedPath;
+      }
+
+      file = {
+        buffer: buffer,
+        originalname: fileName,
+        mimetype: mimeType
+      };
+
+      return this.saveToNetwork(file, folderPath, fileName);
+    }
+
+    // ============================================================
+    // FORMA 2: uploadFile(file, folderPath, fileName)
+    // ============================================================
+    if (fileOrBuffer && typeof fileOrBuffer === 'object' && fileOrBuffer.buffer) {
+      file = fileOrBuffer;
+      folderPath = typeof folderPathOrBuffer === 'string' ? folderPathOrBuffer : '';
+      fileName = fileNameOrMimeType || file.originalname || `file_${Date.now()}`;
+
+      this.logger.log(`📤 Subiendo archivo (file object) a: ${path.join(folderPath, fileName)}`);
+      return this.saveToNetwork(file, folderPath, fileName);
+    }
+
+    // ============================================================
+    // FORMA 3: uploadFile(buffer, folderPath, mimeType)
+    // ============================================================
+    if (Buffer.isBuffer(fileOrBuffer) && typeof folderPathOrBuffer === 'string') {
+      const buffer = fileOrBuffer;
+      const mimeType = fileNameOrMimeType || 'application/octet-stream';
+      folderPath = folderPathOrBuffer;
+      fileName = `file_${Date.now()}`;
+
+      file = {
+        buffer: buffer,
+        originalname: fileName,
+        mimetype: mimeType
+      };
+
+      this.logger.log(`📤 Subiendo archivo (buffer directo) a: ${path.join(folderPath, fileName)}`);
+      return this.saveToNetwork(file, folderPath, fileName);
+    }
+
+    // ============================================================
+    // ❌ ERROR: No se reconoció la llamada
+    // ============================================================
+    this.logger.error(`❌ No se pudo determinar la forma de llamada`);
+    throw new BadRequestException(
+      `Formato de llamada a uploadFile no reconocido. ` +
+      `Esperaba (string, buffer, string) o (file, string, string) o (buffer, string, string)`
+    );
   }
 
-  private async getFromLocal(filePath: string): Promise<Buffer> {
+  // ============================================================
+  // OBTENER ARCHIVO (SOLO DE RED)
+  // ============================================================
+  async getFile(filePath: string): Promise<Buffer> {
     const fullPath = this.getFullPath(filePath);
-    this.logger.debug(`📥 Buscando archivo local: ${fullPath}`);
+    this.logger.debug(`📥 Buscando archivo en red: ${fullPath}`);
 
     if (!fs.existsSync(fullPath)) {
-      throw new NotFoundException(`Archivo no encontrado: ${filePath}`);
+      throw new NotFoundException(`Archivo no encontrado en red: ${filePath}`);
     }
 
     return fs.readFileSync(fullPath);
   }
 
   // ============================================================
-  // VERIFICAR SI ARCHIVO EXISTE
+  // VERIFICAR SI ARCHIVO EXISTE (SOLO EN RED)
   // ============================================================
   async fileExists(filePath: string): Promise<boolean> {
-    return this.existsInLocal(filePath);
-  }
-
-  private existsInLocal(filePath: string): boolean {
     const fullPath = this.getFullPath(filePath);
     return fs.existsSync(fullPath);
   }
 
   // ============================================================
-  // ELIMINAR ARCHIVO
+  // ELIMINAR ARCHIVO (SOLO DE RED)
   // ============================================================
   async deleteFile(filePath: string): Promise<boolean> {
-    return this.deleteFromLocal(filePath);
-  }
-
-  private async deleteFromLocal(filePath: string): Promise<boolean> {
     const fullPath = this.getFullPath(filePath);
     if (fs.existsSync(fullPath)) {
       fs.unlinkSync(fullPath);
-      this.logger.log(`🗑️ Archivo eliminado localmente: ${fullPath}`);
+      this.logger.log(`🗑️ Archivo eliminado de la red: ${fullPath}`);
       return true;
     }
-    this.logger.warn(`⚠️ Archivo no encontrado para eliminar: ${fullPath}`);
+    this.logger.warn(`⚠️ Archivo no encontrado en red para eliminar: ${fullPath}`);
     return false;
   }
 
@@ -362,7 +304,6 @@ export class StorageService implements OnModuleInit {
   // OBTENER URL PÚBLICA
   // ============================================================
   getFileUrl(filePath: string): string {
-    // Para local, devolver la ruta completa
     return this.getFullPath(filePath);
   }
 
@@ -370,10 +311,6 @@ export class StorageService implements OnModuleInit {
   // LISTAR ARCHIVOS EN DIRECTORIO
   // ============================================================
   async listFiles(folderPath: string): Promise<string[]> {
-    return this.listFromLocal(folderPath);
-  }
-
-  private async listFromLocal(folderPath: string): Promise<string[]> {
     const fullPath = this.getFullPath(folderPath);
     if (!fs.existsSync(fullPath)) {
       return [];
@@ -401,13 +338,14 @@ export class StorageService implements OnModuleInit {
   // MÉTODOS DE COMPATIBILIDAD
   // ============================================================
   isUsingSupabase(): boolean {
-    return false; // Siempre false, usamos local
+    return false; // Siempre false, usamos red
   }
 
   getStorageInfo(): { type: string; path?: string; bucket?: string } {
     return {
-      type: 'local',
-      path: this.localPath,
+      type: 'network',
+      path: this.networkPath,
+      bucket: undefined // Para compatibilidad con código que espera bucket
     };
   }
 

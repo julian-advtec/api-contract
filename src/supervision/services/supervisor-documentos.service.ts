@@ -90,7 +90,6 @@ async obtenerDocumentosDisponibles(supervisorId: string): Promise<any[]> {
     throw error;
   }
 }
-
   /**
    * ✅ TOMAR DOCUMENTO PARA REVISIÓN
    */

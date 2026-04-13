@@ -507,4 +507,37 @@ export class SupervisorRevisionService {
       throw error;
     }
   }
+
+  async obtenerRevisionPorDocumento(documentoId: string, supervisorId: string): Promise<any> {
+    this.logger.log(`🔍 Buscando revisión de supervisor para documento ${documentoId}, supervisor ${supervisorId}`);
+
+    const revision = await this.supervisorRepository.findOne({
+      where: {
+        documento: { id: documentoId },
+        supervisor: { id: supervisorId }
+      }
+    });
+
+    this.logger.log(`📊 Resultado de búsqueda: ${revision ? 'Encontrado' : 'No encontrado'}`);
+
+    if (!revision) {
+      this.logger.warn(`⚠️ No se encontró revisión para documento ${documentoId} y supervisor ${supervisorId}`);
+      return null;
+    }
+
+    this.logger.log(`✅ Revisión encontrada: nombreArchivoSupervisor=${revision.nombreArchivoSupervisor}, pazSalvo=${revision.pazSalvo}`);
+
+    return {
+      id: revision.id,
+      estado: revision.estado,
+      observacion: revision.observacion,
+      correcciones: revision.correcciones,
+      nombreArchivoSupervisor: revision.nombreArchivoSupervisor,
+      pazSalvo: revision.pazSalvo,
+      fechaInicioRevision: revision.fechaInicioRevision,
+      fechaFinRevision: revision.fechaFinRevision,
+      fechaAprobacion: revision.fechaAprobacion,
+      fechaActualizacion: revision.fechaActualizacion
+    };
+  }
 }

@@ -92,4 +92,8 @@ export class SupervisorService {
   verificarInconsistencias() {
     return this.estadisticasService.verificarInconsistencias();
   }
+
+  obtenerRevisionPorDocumento(documentoId: string, supervisorId: string) {
+  return this.revisionService.obtenerRevisionPorDocumento(documentoId, supervisorId);
+}
 }

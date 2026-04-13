@@ -103,13 +103,7 @@ export class Documento {
   @OneToMany(() => SupervisorDocumento, supervisorDocumento => supervisorDocumento.documento)
   supervisorDocumentos: SupervisorDocumento[];
 
-  // ❌ COMENTA TEMPORALMENTE hasta que soluciones el problema
-  // @OneToMany(() => AuditorDocumento, auditorDocumento => auditorDocumento.documento)
-  // auditorDocumentos: AuditorDocumento[];
-
-  // @OneToMany(() => ContabilidadDocumento, contabilidadDocumento => contabilidadDocumento.documento)
-  // contabilidadDocumentos: ContabilidadDocumento[];
-
+  
   // RELACIÓN AGREGADA: Asesor Gerencia (solo esto se añadió)
   @OneToMany(() => AsesorGerenciaDocumento, asesorGerenciaDocumento => asesorGerenciaDocumento.documento)
   asesorGerenciaDocumentos: AsesorGerenciaDocumento[];

@@ -758,7 +758,7 @@ export class JuridicaController {
   @Roles(UserRole.ADMIN, UserRole.JURIDICA, UserRole.SUPERVISOR, UserRole.RADICADOR)
   async descargarDocumentoContrato(
     @Param('documentoId') documentoId: string,
-    @Res() res: Response, // ✅ Usar Response de express
+    @Res() res: Response,
     @Req() req?: any,
   ) {
     try {

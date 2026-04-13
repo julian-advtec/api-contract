@@ -55,6 +55,8 @@ async function seedUsers() {
           createdBy: 'system_seed'
         });
 
+        
+
         await usersRepository.save(user);
         console.log(`✅ Usuario creado: ${userData.username} (${userData.role})`);
       }

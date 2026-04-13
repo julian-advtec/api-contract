@@ -29,57 +29,60 @@ export class ContratistaService {
   // GESTIÓN DE DOCUMENTOS USANDO STORAGE SERVICE
   // ===============================
 
-  async subirDocumento(
-    contratistaId: string,
-    tipo: TipoDocumento,
-    archivo: Express.Multer.File,
-    usuario: string
-  ): Promise<DocumentoContratista> {
-    try {
-      const contratista = await this.buscarPorId(contratistaId);
+ async subirDocumento(
+  contratistaId: string,
+  tipo: TipoDocumento,
+  archivo: Express.Multer.File,
+  usuario: string
+): Promise<DocumentoContratista> {
+  try {
+    const contratista = await this.buscarPorId(contratistaId);
 
-      // ✅ Generar nombre de carpeta legible: [numeroContrato]_[razonSocial]
-      const numeroContrato = contratista.numeroContrato || 'SIN_CONTRATO';
-      const razonSocialLimpia = contratista.razonSocial
-        .replace(/[^a-zA-Z0-9]/g, '_')
-        .substring(0, 50);
+    // ✅ Generar nombre de archivo único basado en el tipo
+    const extension = path.extname(archivo.originalname).toLowerCase();
+    const timestamp = Date.now();
+    const nombreUnico = `${tipo}_${timestamp}${extension}`;
+    
+    // Generar nombre de carpeta
+    const numeroContrato = contratista.numeroContrato || 'SIN_CONTRATO';
+    const razonSocialLimpia = contratista.razonSocial
+      .replace(/[^a-zA-Z0-9]/g, '_')
+      .substring(0, 50);
 
-      // Si no tiene número de contrato, usar el ID
-      const folderName = contratista.numeroContrato
-        ? `${numeroContrato}_${razonSocialLimpia}`
-        : `${contratistaId}`;
+    const folderName = contratista.numeroContrato
+      ? `${numeroContrato}_${razonSocialLimpia}`
+      : `${contratistaId}`;
 
-      const extension = path.extname(archivo.originalname).toLowerCase();
-      const nombreUnico = `${tipo}_${Date.now()}${extension}`;
-      const folder = `contratistas/${folderName}`;
+    const folder = `contratistas/${folderName}`;
 
-      // ✅ Usar StorageService
-      const result = await this.storageService.uploadFile(
-        archivo,
-        folder,
-        nombreUnico
-      );
+    // ✅ Usar StorageService con el nombre único
+    const result = await this.storageService.uploadFile(
+      archivo,
+      folder,
+      nombreUnico
+    );
 
-      this.logger.log(`✅ Archivo subido a: ${result.provider} - ${result.path}`);
+    this.logger.log(`✅ Archivo subido a: ${result.provider} - ${result.path}`);
 
-      const documento = new DocumentoContratista();
-      documento.contratistaId = contratistaId;
-      documento.tipo = tipo;
-      documento.nombreArchivo = archivo.originalname;
-      documento.rutaArchivo = result.path;
-      documento.tipoMime = archivo.mimetype;
-      documento.tamanoBytes = archivo.size;
-      documento.subidoPor = usuario;
+    // ✅ GUARDAR EN BD CON EL NOMBRE REAL DEL ARCHIVO (nombreUnico)
+    const documento = new DocumentoContratista();
+    documento.contratistaId = contratistaId;
+    documento.tipo = tipo;
+    documento.nombreArchivo = nombreUnico;  // ← AHORA USA EL NOMBRE REAL
+    documento.rutaArchivo = result.path;
+    documento.tipoMime = archivo.mimetype;
+    documento.tamanoBytes = archivo.size;
+    documento.subidoPor = usuario;
 
-      const saved = await this.documentoRepository.save(documento);
-      this.logger.log(`✅ Documento subido: ${tipo} para contratista ${contratista.razonSocial}`);
+    const saved = await this.documentoRepository.save(documento);
+    this.logger.log(`✅ Documento guardado en BD: ${tipo} - nombreArchivo: ${nombreUnico}`);
 
-      return saved;
-    } catch (error) {
-      this.logger.error(`❌ Error subiendo documento: ${error.message}`);
-      throw error;
-    }
+    return saved;
+  } catch (error) {
+    this.logger.error(`❌ Error subiendo documento: ${error.message}`);
+    throw error;
   }
+}
 
   async descargarDocumento(documentoId: string, contratistaId: string): Promise<{ buffer: Buffer; nombre: string; mimeType: string }> {
     const documento = await this.obtenerDocumentoPorId(documentoId, contratistaId);
@@ -616,32 +619,39 @@ export class ContratistaService {
     }
   }
 
-  async crearConDocumentos(
-    data: any,
-    documentos?: Array<{ tipo: TipoDocumento; archivo: Express.Multer.File }>,
-    usuario?: string
-  ): Promise<{ contratista: Contratista; documentos: DocumentoContratista[] }> {
-    try {
-      const contratista = await this.crear(data);
-      const documentosSubidos: DocumentoContratista[] = [];
+ async crearConDocumentos(
+  data: any,
+  documentos?: Array<{ tipo: TipoDocumento; archivo: Express.Multer.File }>,
+  usuario?: string
+): Promise<{ contratista: Contratista; documentos: DocumentoContratista[] }> {
+  try {
+    // Primero crear el contratista
+    const contratista = await this.crear(data);
+    const documentosSubidos: DocumentoContratista[] = [];
 
-      if (documentos && documentos.length > 0) {
-        for (const doc of documentos) {
-          try {
-            const docSubido = await this.subirDocumento(contratista.id, doc.tipo, doc.archivo, usuario || 'sistema');
-            documentosSubidos.push(docSubido);
-          } catch (error) {
-            this.logger.error(`Error subiendo documento ${doc.tipo}: ${error.message}`);
-          }
+    if (documentos && documentos.length > 0) {
+      for (const doc of documentos) {
+        try {
+          // ✅ Usar el método subirDocumento que ya tiene la corrección
+          const docSubido = await this.subirDocumento(
+            contratista.id, 
+            doc.tipo, 
+            doc.archivo, 
+            usuario || 'sistema'
+          );
+          documentosSubidos.push(docSubido);
+        } catch (error) {
+          this.logger.error(`Error subiendo documento ${doc.tipo}: ${error.message}`);
         }
       }
-
-      return { contratista, documentos: documentosSubidos };
-    } catch (error) {
-      this.logger.error(`❌ Error creando contratista con documentos: ${error.message}`);
-      throw error;
     }
+
+    return { contratista, documentos: documentosSubidos };
+  } catch (error) {
+    this.logger.error(`❌ Error creando contratista con documentos: ${error.message}`);
+    throw error;
   }
+}
 
 
   async actualizarConDocumentos(

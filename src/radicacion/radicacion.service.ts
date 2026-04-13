@@ -636,49 +636,49 @@ Ruta servidor: ${rutaCarpeta}
     }
 
     async obtenerRutaArchivo(id: string, numeroDocumento: number, user: User): Promise<string> {
-    this.logger.log(`📥 Usuario ${user.username} solicitando archivo ${numeroDocumento} del documento ${id}`);
+        this.logger.log(`📥 Usuario ${user.username} solicitando archivo ${numeroDocumento} del documento ${id}`);
 
-    // Buscar el documento
-    let documento: Documento | null = null;
-    const rolUsuario = user.role?.toString().toLowerCase();
-    const esAdminOrSupervisorOrAuditor = ['admin', 'supervisor', 'auditor_cuentas'].includes(rolUsuario);
+        // Buscar el documento
+        let documento: Documento | null = null;
+        const rolUsuario = user.role?.toString().toLowerCase();
+        const esAdminOrSupervisorOrAuditor = ['admin', 'supervisor', 'auditor_cuentas'].includes(rolUsuario);
 
-    if (esAdminOrSupervisorOrAuditor) {
-        documento = await this.documentoRepository.findOne({ where: { id } });
-    } else {
-        documento = await this.documentoRepository.findOne({
-            where: { id, radicador: { id: user.id } }
-        });
+        if (esAdminOrSupervisorOrAuditor) {
+            documento = await this.documentoRepository.findOne({ where: { id } });
+        } else {
+            documento = await this.documentoRepository.findOne({
+                where: { id, radicador: { id: user.id } }
+            });
+        }
+
+        if (!documento) {
+            throw new NotFoundException('Documento no encontrado o sin permisos');
+        }
+
+        let nombreArchivo: string;
+        switch (numeroDocumento) {
+            case 1: nombreArchivo = documento.cuentaCobro; break;
+            case 2: nombreArchivo = documento.seguridadSocial; break;
+            case 3: nombreArchivo = documento.informeActividades; break;
+            default:
+                throw new BadRequestException('Número de documento inválido (1-3)');
+        }
+
+        if (!nombreArchivo) {
+            throw new NotFoundException(`Archivo ${numeroDocumento} no registrado en este documento`);
+        }
+
+        // ✅ VERIFICAR QUE EL ARCHIVO REALMENTE EXISTE usando StorageService
+        const existe = await this.storageService.fileExists(nombreArchivo);
+        this.logger.log(`📁 Archivo relativo: ${nombreArchivo} | ¿Existe en storage? ${existe}`);
+
+        if (!existe) {
+            this.logger.error(`❌ Archivo no encontrado en storage: ${nombreArchivo}`);
+            throw new NotFoundException('El archivo físico no existe en el servidor');
+        }
+
+        return nombreArchivo;   // ← Devolvemos solo la ruta RELATIVA
     }
-
-    if (!documento) {
-        throw new NotFoundException('Documento no encontrado o sin permisos');
-    }
-
-    let nombreArchivo: string;
-    switch (numeroDocumento) {
-        case 1: nombreArchivo = documento.cuentaCobro; break;
-        case 2: nombreArchivo = documento.seguridadSocial; break;
-        case 3: nombreArchivo = documento.informeActividades; break;
-        default:
-            throw new BadRequestException('Número de documento inválido (1-3)');
-    }
-
-    if (!nombreArchivo) {
-        throw new NotFoundException(`Archivo ${numeroDocumento} no registrado en este documento`);
-    }
-
-    // ✅ VERIFICAR QUE EL ARCHIVO REALMENTE EXISTE usando StorageService
-    const existe = await this.storageService.fileExists(nombreArchivo);
-    this.logger.log(`📁 Archivo relativo: ${nombreArchivo} | ¿Existe en storage? ${existe}`);
-
-    if (!existe) {
-        this.logger.error(`❌ Archivo no encontrado en storage: ${nombreArchivo}`);
-        throw new NotFoundException('El archivo físico no existe en el servidor');
-    }
-
-    return nombreArchivo;   // ← Devolvemos solo la ruta RELATIVA
-}
 
     async obtenerRutaArchivoPublico(
         documento: Documento,
@@ -1045,11 +1045,15 @@ Ruta servidor: ${rutaCarpeta}
             });
 
             if (!documento) {
-                this.logger.warn(`⚠️ Documento ${id} no encontrado`);
                 throw new NotFoundException(`Documento con ID ${id} no encontrado`);
             }
 
+            // ✅ Asegurar que los campos de archivos se devuelvan
             this.logger.log(`✅ Documento encontrado: ${documento.numeroRadicado}`);
+            this.logger.log(`   cuentaCobro: ${documento.cuentaCobro}`);
+            this.logger.log(`   seguridadSocial: ${documento.seguridadSocial}`);
+            this.logger.log(`   informeActividades: ${documento.informeActividades}`);
+
             return documento;
         } catch (error) {
             this.logger.error(`❌ Error en obtenerDocumentoPorId: ${error.message}`);

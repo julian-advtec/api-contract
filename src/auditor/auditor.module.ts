@@ -1,5 +1,4 @@
-// En auditor.module.ts - alternativa sin BitacoraSistemaModule
-
+// src/auditor/auditor.module.ts
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditorController } from './auditor.controller';
@@ -12,10 +11,20 @@ import { User } from '../users/entities/user.entity';
 import { JuridicaModule } from '../juridica/juridica.module';
 import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.service';
 import { BitacoraSistema } from '../bitacora-sistema/entities/bitacora-sistema.entity';
+import { Contratista } from '../contratista/entities/contratista.entity';
+import { DocumentoContratista } from '../contratista/entities/documento-contratista.entity'; // ← AGREGAR
+import { ContratistaService } from '../contratista/contratista.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([AuditorDocumento, Documento, User, BitacoraSistema]),
+    TypeOrmModule.forFeature([
+      AuditorDocumento,
+      Documento,
+      User,
+      BitacoraSistema,
+      Contratista,
+      DocumentoContratista, // ← AGREGAR
+    ]),
     JuridicaModule,
   ],
   controllers: [
@@ -25,7 +34,8 @@ import { BitacoraSistema } from '../bitacora-sistema/entities/bitacora-sistema.e
   providers: [
     AuditorService,
     AuditorEstadisticasService,
-    BitacoraSistemaService, // ✅ Agregar directamente
+    BitacoraSistemaService,
+    ContratistaService,
   ],
   exports: [AuditorService],
 })

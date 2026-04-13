@@ -574,18 +574,26 @@ export class ContratistasController {
     }
   }
 
+
   @Post('completo')
-  @Roles(UserRole.RADICADOR, UserRole.ADMIN)
-  @UseInterceptors(FilesInterceptor('documentos', 20))
-  async crearContratistaCompleto(
-    @Body() body: any,
-    @UploadedFiles() files: Express.Multer.File[],
-    @Req() req: any
-  ) {
-    const inicio = Date.now();
-    try {
-      this.logger.log('📝 Creando contratista con documentos');
-      this.logger.log('📥 Body recibido:', JSON.stringify(body, null, 2));
+@Roles(UserRole.RADICADOR, UserRole.ADMIN)
+@UseInterceptors(FilesInterceptor('documentos', 20))
+async crearContratistaCompleto(
+  @Body() body: any,
+  @UploadedFiles() files: Express.Multer.File[],
+  @Req() req: any
+) {
+  const inicio = Date.now();
+  try {
+    this.logger.log('📝 Creando contratista con documentos');
+    
+    // ✅ LOG para ver los archivos recibidos
+    if (files && files.length > 0) {
+      this.logger.log(`📎 Archivos recibidos: ${files.length}`);
+      files.forEach((file, index) => {
+        this.logger.log(`   ${index}: ${file.originalname} - ${file.mimetype} - ${file.size} bytes`);
+      });
+    }
 
       const datosContratista = {
         tipoDocumento: body.tipoDocumento || 'CC',
@@ -611,18 +619,22 @@ export class ContratistasController {
         throw new BadRequestException('Documento y razón social son requeridos');
       }
 
-      const documentos = [];
-      if (files && files.length > 0) {
-        for (let i = 0; i < files.length; i++) {
-          const tipo = body[`tipo_documento_${i}`];
-          if (tipo && Object.values(TipoDocumento).includes(tipo as TipoDocumento)) {
-            documentos.push({
-              tipo: tipo as TipoDocumento,
-              archivo: files[i]
-            });
-          }
+     const documentos = [];
+    if (files && files.length > 0) {
+      for (let i = 0; i < files.length; i++) {
+        const tipo = body[`tipo_documento_${i}`];
+        this.logger.log(`📄 Procesando archivo ${i}: tipo=${tipo}, archivo=${files[i].originalname}`);
+        
+        if (tipo && Object.values(TipoDocumento).includes(tipo as TipoDocumento)) {
+          documentos.push({
+            tipo: tipo as TipoDocumento,
+            archivo: files[i]
+          });
+        } else {
+          this.logger.warn(`⚠️ Tipo de documento inválido para archivo ${i}: ${tipo}`);
         }
       }
+    }
 
       const resultado = await this.contratistaService.crearConDocumentos(
         datosContratista,
@@ -1455,58 +1467,58 @@ export class ContratistasController {
     }
   }
 
-@Get('buscar-por-contrato/:numeroContrato')
-@Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)
-async buscarPorNumeroContrato(@Param('numeroContrato') numeroContrato: string, @Req() req?: any) {
-  const inicio = Date.now();
-  try {
-    this.logger.log(`🔍 Buscando contratista por número de contrato: "${numeroContrato}"`);
+  @Get('buscar-por-contrato/:numeroContrato')
+  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)
+  async buscarPorNumeroContrato(@Param('numeroContrato') numeroContrato: string, @Req() req?: any) {
+    const inicio = Date.now();
+    try {
+      this.logger.log(`🔍 Buscando contratista por número de contrato: "${numeroContrato}"`);
 
-    if (!numeroContrato || numeroContrato.trim().length < 1) {
+      if (!numeroContrato || numeroContrato.trim().length < 1) {
+        return {
+          ok: true,
+          data: {
+            success: true,
+            data: null,
+            message: 'Número de contrato requerido'
+          }
+        };
+      }
+
+      // ✅ USAR el método que ya tiene relaciones
+      const contratista = await this.contratistaService.buscarPorNumeroContratoExacto(numeroContrato);
+
+      if (!contratista) {
+        return {
+          ok: true,
+          data: {
+            success: true,
+            data: null,
+            message: 'No se encontró ningún contratista con ese número de contrato'
+          }
+        };
+      }
+
+      // ✅ La respuesta YA incluye documentos porque buscarPorNumeroContratoExacto tiene relations: ['documentos']
+      this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial} con ${contratista.documentos?.length || 0} documentos`);
+
       return {
         ok: true,
         data: {
           success: true,
-          data: null,
-          message: 'Número de contrato requerido'
+          data: contratista
         }
       };
-    }
-
-    // ✅ USAR el método que ya tiene relaciones
-    const contratista = await this.contratistaService.buscarPorNumeroContratoExacto(numeroContrato);
-
-    if (!contratista) {
+    } catch (error) {
+      this.logger.error(`❌ Error buscando contratista por número de contrato: ${error.message}`);
       return {
         ok: true,
         data: {
-          success: true,
-          data: null,
-          message: 'No se encontró ningún contratista con ese número de contrato'
+          success: false,
+          message: error.message,
+          data: null
         }
       };
     }
-
-    // ✅ La respuesta YA incluye documentos porque buscarPorNumeroContratoExacto tiene relations: ['documentos']
-    this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial} con ${contratista.documentos?.length || 0} documentos`);
-
-    return {
-      ok: true,
-      data: {
-        success: true,
-        data: contratista
-      }
-    };
-  } catch (error) {
-    this.logger.error(`❌ Error buscando contratista por número de contrato: ${error.message}`);
-    return {
-      ok: true,
-      data: {
-        success: false,
-        message: error.message,
-        data: null
-      }
-    };
   }
-}
 }
