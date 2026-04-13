@@ -11,10 +11,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as jwt from 'jsonwebtoken';   // ← agregar si no lo tienes
 
 import { SupervisorDocumento, SupervisorEstado } from '../entities/supervisor.entity';
 import { Documento } from '../../radicacion/entities/documento.entity';
 import { User } from '../../users/entities/user.entity';
+import { AuditorDocumento } from 'src/auditor/entities/auditor-documento.entity';
 
 @Injectable()
 export class SupervisorArchivosService {
@@ -29,9 +31,11 @@ export class SupervisorArchivosService {
 
     @InjectRepository(User)
     private userRepository: Repository<User>,
-  ) {}
+    @InjectRepository(AuditorDocumento)  // ← AGREGAR
+    private auditorDocumentoRepository: Repository<AuditorDocumento>,  // ← AGREGAR
+  ) { }
 
-  
+
 
   /**
    * ✅ DESCARGAR ARCHIVO RADICADO – PERMISO RELAJADO
@@ -127,9 +131,9 @@ export class SupervisorArchivosService {
 
       // 3. Si no se encuentra en BD, buscar en rutas alternativas
       this.logger.log(`🔍 Buscando archivo de paz y salvo en rutas alternativas: ${nombreArchivo}`);
-      
+
       const posiblesRutas = this.obtenerPosiblesRutasArchivo(nombreArchivo, 'paz-salvo');
-      
+
       for (const rutaCompleta of posiblesRutas) {
         if (fs.existsSync(rutaCompleta)) {
           this.logger.log(`✅ Archivo encontrado en ruta alternativa: ${rutaCompleta}`);
@@ -143,7 +147,7 @@ export class SupervisorArchivosService {
       // 4. Si aún no se encuentra, buscar archivos similares
       const archivoSinExtension = this.obtenerNombreSinExtension(nombreArchivo);
       const archivosSimilares = this.buscarArchivosSimilares(archivoSinExtension, 'paz-salvo');
-      
+
       if (archivosSimilares.length > 0) {
         this.logger.log(`🔄 Archivos similares encontrados: ${archivosSimilares.join(', ')}`);
         const primeraRuta = archivosSimilares[0];
@@ -207,9 +211,9 @@ export class SupervisorArchivosService {
 
       // 3. Si no se encuentra en BD, buscar en rutas alternativas
       this.logger.log(`🔍 Buscando archivo supervisor en rutas alternativas: ${nombreArchivo}`);
-      
+
       const posiblesRutas = this.obtenerPosiblesRutasArchivo(nombreArchivo, 'supervisor');
-      
+
       for (const rutaCompleta of posiblesRutas) {
         if (fs.existsSync(rutaCompleta)) {
           this.logger.log(`✅ Archivo encontrado en ruta alternativa: ${rutaCompleta}`);
@@ -223,7 +227,7 @@ export class SupervisorArchivosService {
       // 4. Buscar archivos con nombres similares
       const archivoSinExtension = this.obtenerNombreSinExtension(nombreArchivo);
       const archivosSimilares = this.buscarArchivosSimilares(archivoSinExtension, 'supervisor');
-      
+
       if (archivosSimilares.length > 0) {
         this.logger.log(`🔄 Archivos similares encontrados: ${archivosSimilares.join(', ')}`);
         const primeraRuta = archivosSimilares[0];
@@ -298,7 +302,7 @@ export class SupervisorArchivosService {
     const ano = fecha.getFullYear();
     const mes = String(fecha.getMonth() + 1).padStart(2, '0');
     const dia = String(fecha.getDate()).padStart(2, '0');
-    
+
     if (tipo === 'supervisor') {
       rutas.push(path.join(baseDir, 'uploads', 'supervisor', `${ano}-${mes}-${dia}`, nombreArchivo));
     }
@@ -315,7 +319,7 @@ export class SupervisorArchivosService {
   private buscarArchivosSimilares(archivoSinExtension: string, tipo: 'supervisor' | 'paz-salvo'): string[] {
     const archivosEncontrados: string[] = [];
     const baseDir = process.cwd();
-    
+
     const carpetasBusqueda = [
       path.join(baseDir, 'uploads'),
       path.join(baseDir, 'uploads', tipo === 'supervisor' ? 'supervisor' : 'paz-salvo'),
@@ -324,16 +328,16 @@ export class SupervisorArchivosService {
 
     for (const carpeta of carpetasBusqueda) {
       if (!fs.existsSync(carpeta)) continue;
-      
+
       const archivos = this.buscarArchivosRecursivos(carpeta);
-      
+
       for (const archivo of archivos) {
         const nombreArchivo = path.basename(archivo);
         const nombreSinExtension = this.obtenerNombreSinExtension(nombreArchivo);
-        
+
         // Verificar si el nombre contiene el patrón buscado
-        if (nombreSinExtension.includes(archivoSinExtension) || 
-            archivoSinExtension.includes(nombreSinExtension)) {
+        if (nombreSinExtension.includes(archivoSinExtension) ||
+          archivoSinExtension.includes(nombreSinExtension)) {
           archivosEncontrados.push(archivo);
         }
       }
@@ -349,13 +353,13 @@ export class SupervisorArchivosService {
     const archivosEncontrados: string[] = [];
     const baseDir = process.cwd();
     const uploadsDir = path.join(baseDir, 'uploads');
-    
+
     if (!fs.existsSync(uploadsDir)) {
       return archivosEncontrados;
     }
 
     const archivos = this.buscarArchivosRecursivos(uploadsDir);
-    
+
     for (const archivo of archivos) {
       if (path.basename(archivo) === nombreArchivo) {
         archivosEncontrados.push(archivo);
@@ -370,13 +374,13 @@ export class SupervisorArchivosService {
    */
   private buscarArchivosRecursivos(carpeta: string): string[] {
     const archivos: string[] = [];
-    
+
     try {
       const items = fs.readdirSync(carpeta, { withFileTypes: true });
-      
+
       for (const item of items) {
         const rutaCompleta = path.join(carpeta, item.name);
-        
+
         if (item.isDirectory()) {
           // Buscar recursivamente en subcarpetas
           archivos.push(...this.buscarArchivosRecursivos(rutaCompleta));
@@ -409,10 +413,10 @@ export class SupervisorArchivosService {
       }
 
       const archivos: string[] = [];
-      
+
       const listarRecursivo = (dir: string, prefix = '') => {
         const items = fs.readdirSync(dir, { withFileTypes: true });
-        
+
         for (const item of items) {
           const itemPath = path.join(dir, item.name);
           if (item.isDirectory()) {
@@ -430,9 +434,8 @@ export class SupervisorArchivosService {
     }
   }
 
-  /**
-   * ✅ REGISTRAR ACCESO DEL SUPERVISOR
-   */
+  
+
   private async registrarAccesoSupervisor(
     rutaCarpeta: string,
     supervisorId: string,
@@ -468,4 +471,83 @@ export class SupervisorArchivosService {
       this.logger.error(`⚠️ Error actualizando registro de supervisor: ${error.message}`);
     }
   }
+
+  /**
+   * ✅ OBTENER ARCHIVO DEL AUDITOR (para que supervisor pueda verlos)
+   */
+  async obtenerArchivoAuditor(
+    documentoId: string,
+    tipo: string,
+    supervisorId: string
+  ): Promise<{ ruta: string; nombre: string }> {
+    this.logger.log(`🔍 Supervisor ${supervisorId} solicitando archivo auditor ${tipo} de documento ${documentoId}`);
+
+    // Tipos válidos de archivos de auditor
+    const tiposValidos = ['rp', 'cdp', 'poliza', 'certificadoBancario', 'minuta', 'actaInicio'];
+    if (!tiposValidos.includes(tipo.toLowerCase())) {
+      throw new BadRequestException(`Tipo de archivo no válido: ${tipo}`);
+    }
+
+    // Buscar el documento
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId }
+    });
+
+    if (!documento) {
+      throw new NotFoundException(`Documento ${documentoId} no encontrado`);
+    }
+
+    // Verificar que el supervisor tenga acceso (documento debe estar en estado APROBADO_AUDITOR o superior)
+    const estadosPermitidos = ['APROBADO_AUDITOR', 'EN_REVISION_SUPERVISOR', 'APROBADO_SUPERVISOR', 'OBSERVADO_SUPERVISOR', 'RECHAZADO_SUPERVISOR'];
+    if (!estadosPermitidos.includes(documento.estado)) {
+      throw new ForbiddenException(`No tienes acceso a los archivos de auditor de este documento (estado: ${documento.estado})`);
+    }
+
+    // Buscar el registro de auditor
+    const auditorDoc = await this.auditorDocumentoRepository.findOne({
+      where: { documento: { id: documentoId } }
+    });
+
+    if (!auditorDoc) {
+      throw new NotFoundException('No hay registros de auditoría para este documento');
+    }
+
+    // Mapear tipo a campo
+    const campoMap: Record<string, string> = {
+      'rp': 'rpPath',
+      'cdp': 'cdpPath',
+      'poliza': 'polizaPath',
+      'certificadobancario': 'certificadoBancarioPath',
+      'minuta': 'minutaPath',
+      'actainicio': 'actaInicioPath'
+    };
+
+    const campo = campoMap[tipo.toLowerCase()];
+    const nombreArchivo = (auditorDoc as any)[campo];
+
+    if (!nombreArchivo) {
+      throw new NotFoundException(`El auditor no ha subido el archivo de tipo ${tipo}`);
+    }
+
+    // Construir ruta absoluta
+    const rutaAbsoluta = path.join(documento.rutaCarpetaRadicado, nombreArchivo);
+
+    if (!fs.existsSync(rutaAbsoluta)) {
+      throw new NotFoundException(`Archivo físico no encontrado: ${nombreArchivo}`);
+    }
+
+    // Registrar acceso
+    await this.registrarAccesoSupervisor(
+      documento.rutaCarpetaRadicado,
+      supervisorId,
+      `ACCEDIÓ a archivo de auditor (${tipo}): ${path.basename(nombreArchivo)}`
+    );
+
+    return {
+      ruta: rutaAbsoluta,
+      nombre: path.basename(nombreArchivo)
+    };
+  }
+
+
 }

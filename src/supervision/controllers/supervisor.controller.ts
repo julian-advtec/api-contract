@@ -17,11 +17,13 @@ import {
   Logger,
   BadRequestException,
   ValidationPipe,
+  
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { FileInterceptor, FileFieldsInterceptor } from '@nestjs/platform-express';
 import * as fs from 'fs';  // ← AÑADIR ESTO
 import * as path from 'path';  // ← AÑADIR ESTO
+import { Public } from '../../common/decorators/public.decorator';
 
 // Importar servicios especializados
 import { SupervisorService } from '../services/supervisor.service';
@@ -216,4 +218,96 @@ export class SupervisorController {
       data: resultado
     };
   }
+
+ @Public()  // ← AGREGAR ESTO
+  @Get('ver-paz-salvo/:nombreArchivo')
+  async verPazSalvoPublico(
+    @Param('nombreArchivo') nombreArchivo: string,
+    @Res() res: Response,
+    @Query('download') download?: string,
+  ) {
+    return this.servirArchivoPublico(nombreArchivo, download, res, 'paz-salvo');
+  }
+
+  @Public()  // ← AGREGAR ESTO
+  @Get('ver-archivo-supervisor/:nombreArchivo')
+  async verArchivoAprobacionPublico(
+    @Param('nombreArchivo') nombreArchivo: string,
+    @Res() res: Response,
+    @Query('download') download?: string,
+  ) {
+    return this.servirArchivoPublico(nombreArchivo, download, res, 'aprobacion');
+  }
+
+private async servirArchivoPublico(
+  nombreArchivo: string,
+  download: string | undefined,
+  res: Response,
+  tipo: string
+) {
+  try {
+    this.logger.log(`📄 Previsualización pública (${tipo}): ${nombreArchivo}`);
+
+    // Decodificar el nombre del archivo
+    const nombreDecodificado = decodeURIComponent(nombreArchivo);
+    
+    // Buscar en múltiples rutas
+    const rutasBusqueda = [
+      // Ruta donde realmente están los archivos (según tu ls)
+      path.join('R:\\api-contract', '55667788', '2026', '1231234', 'R2026-001222', 'supervisor', nombreDecodificado),
+      // O usar una ruta más dinámica si tienes múltiples carpetas
+      path.join('R:\\api-contract', '**', '**', '**', '**', 'supervisor', nombreDecodificado),
+      // Rutas originales
+      path.join(process.cwd(), 'uploads', nombreDecodificado),
+      path.join(process.cwd(), 'uploads', 'supervisor', nombreDecodificado),
+      path.join(process.cwd(), 'uploads', 'paz-salvo', nombreDecodificado),
+      path.join(process.cwd(), 'uploads', 'supervisor', 'aprobaciones', nombreDecodificado),
+      path.join(process.cwd(), 'uploads', 'supervisor', 'paz-salvo', nombreDecodificado),
+      path.join('\\\\R2-D2\\api-contract', nombreDecodificado),
+    ];
+
+    let fullPath = null;
+    for (const ruta of rutasBusqueda) {
+      if (fs.existsSync(ruta)) {
+        fullPath = ruta;
+        this.logger.log(`✅ Archivo encontrado en: ${ruta}`);
+        break;
+      }
+    }
+
+    if (!fullPath) {
+      this.logger.warn(`❌ Archivo no encontrado en ninguna ruta: ${nombreDecodificado}`);
+      this.logger.warn(`Rutas buscadas: ${rutasBusqueda.join(', ')}`);
+      return res.status(404).json({ ok: false, message: 'Archivo no encontrado' });
+    }
+
+    const buffer = fs.readFileSync(fullPath);
+    const ext = path.extname(nombreDecodificado).toLowerCase();
+
+    const mimeTypes: Record<string, string> = {
+      '.pdf': 'application/pdf',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    };
+
+    res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+
+    if (download === 'true') {
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreDecodificado)}"`);
+    } else {
+      res.setHeader('Content-Disposition', 'inline');
+    }
+
+    res.end(buffer);
+
+  } catch (error: any) {
+    this.logger.error(`❌ Error sirviendo archivo público (${tipo}): ${error.message}`);
+    if (!res.headersSent) {
+      res.status(404).json({ ok: false, message: 'Archivo no encontrado' });
+    }
+  }
+}
 }

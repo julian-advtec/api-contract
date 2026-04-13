@@ -131,24 +131,24 @@ export class ContabilidadDocumento {
   /**
    * Verifica si están subidos todos los documentos requeridos según tipoProceso
    */
-  tieneDocumentosCompletos(): boolean {
-    // Caso glosa
-    if (this.tipoProceso === 'glosa') {
-      return !!this.glosaPath && !!this.extractoPath;
-    }
-
-    // Caso causación
-    if (this.tipoProceso === 'causacion') {
-      return !!this.causacionPath && !!this.extractoPath;
-    }
-
-    // Caso nada → solo requiere comprobante de egreso para aprobar
-    if (this.tipoProceso === 'nada' || !this.tipoProceso) {
-      return !!this.comprobanteEgresoPath;
-    }
-
-    return false;
+tieneDocumentosCompletos(): boolean {
+  // Caso glosa
+  if (this.tipoProceso === 'glosa') {
+    return !!this.glosaPath && !!this.extractoPath;
   }
+
+  // Caso causación
+  if (this.tipoProceso === 'causacion') {
+    return !!this.causacionPath && !!this.extractoPath;
+  }
+
+  // ✅ Caso nada o sin tipo → NO requiere comprobante de egreso
+  if (this.tipoProceso === 'nada' || !this.tipoProceso) {
+    return true;  // ← CAMBIADO: ya no requiere comprobante de egreso
+  }
+
+  return false;
+}
 
   /**
    * Lista clara de qué falta subir
@@ -164,10 +164,7 @@ export class ContabilidadDocumento {
       if (!this.extractoPath) faltantes.push('Extracto Bancario');
     }
 
-    // Siempre se valida el comprobante de egreso para aprobar
-    if (!this.comprobanteEgresoPath) {
-      faltantes.push('Comprobante de Egreso');
-    }
+  
 
     return faltantes;
   }

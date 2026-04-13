@@ -3,6 +3,11 @@ import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDa
 import { Contrato } from './contrato.entity';
 
 export enum TipoDocumento {
+  CDP = 'CDP',
+  RP = 'RP',
+  POLIZA_CUMPLIMIENTO = 'POLIZA_CUMPLIMIENTO',
+  POLIZA_CALIDAD = 'POLIZA_CALIDAD',
+  POLIZA_RC = 'POLIZA_RC',
   MINUTA = 'MINUTA',
   ACTA_INICIO = 'ACTA_INICIO',
   POLIZA = 'POLIZA',
@@ -24,7 +29,7 @@ export class DocumentoContrato {
   @Column({ name: 'ruta_archivo', type: 'text' })
   rutaArchivo: string;
 
-  
+
   @Column({
     name: 'tipo_documento',
     type: 'enum',

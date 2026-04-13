@@ -56,118 +56,117 @@ export class ContabilidadService {
     // ───────────────────────────────────────────────────────────────
     // 1. DOCUMENTOS DISPONIBLES
     // ───────────────────────────────────────────────────────────────
-    async obtenerDocumentosDisponibles(contadorId: string): Promise<any[]> {
-        this.logger.log(`[START] Obteniendo documentos disponibles para contador ${contadorId}`);
+  async obtenerDocumentosDisponibles(contadorId: string): Promise<any[]> {
+    this.logger.log(`[START] Obteniendo documentos APROBADOS POR SUPERVISOR para contador ${contadorId}`);
 
-        try {
-            const qb = this.documentoRepository.createQueryBuilder('d')
-                .where("d.estado IN ('APROBADO_AUDITOR', 'COMPLETADO_AUDITOR')");
+    try {
+        const qb = this.documentoRepository.createQueryBuilder('d')
+            .where("d.estado IN ('APROBADO_SUPERVISOR')")  // ← CAMBIO CLAVE: solo aprobados por supervisor
+            .andWhere(`NOT EXISTS (
+                SELECT 1 
+                FROM contabilidad_documentos cd
+                WHERE cd."documento_id" = d.id 
+                AND cd.estado NOT IN ('DISPONIBLE')
+            )`);
 
-            qb.andWhere(
-                `NOT EXISTS (
-          SELECT 1 
-          FROM contabilidad_documentos cd
-          WHERE cd."documento_id" = d.id 
-          AND cd.estado NOT IN ('DISPONIBLE')
-        )`
-            );
+        qb.leftJoinAndSelect('d.radicador', 'radicador')
+            .leftJoinAndSelect('d.usuarioAsignado', 'asignado')
+            .orderBy('d.fechaRadicacion', 'ASC');
 
-            qb.leftJoinAndSelect('d.radicador', 'radicador')
-                .leftJoinAndSelect('d.usuarioAsignado', 'asignado')
-                .orderBy('d.fechaRadicacion', 'ASC');
+        const documentos = await qb.getMany();
 
-            const documentos = await qb.getMany();
+        this.logger.log(`[SUCCESS] Encontrados ${documentos.length} documentos APROBADOS POR SUPERVISOR`);
 
-            this.logger.log(`[SUCCESS] Encontrados ${documentos.length} documentos disponibles`);
-
-            return documentos.map(doc => ({
-                id: doc.id,
-                numeroRadicado: doc.numeroRadicado,
-                numeroContrato: doc.numeroContrato,
-                nombreContratista: doc.nombreContratista,
-                documentoContratista: doc.documentoContratista,
-                fechaRadicacion: doc.fechaRadicacion,
-                fechaInicio: doc.fechaInicio,
-                fechaFin: doc.fechaFin,
-                estado: doc.estado,
-                observacion: doc.observacion || '',
-                radicador: doc.radicador?.fullName || doc.radicador?.username || 'Sistema',
-                supervisor: doc.usuarioAsignadoNombre || 'No asignado',
-                disponible: true,
-                enRevisionPorMi: false,
-                tipo: 'disponible'
-            }));
-        } catch (error: any) {
-            this.logger.error(`[ERROR CRÍTICO] Falló obtenerDocumentosDisponibles`, error.stack);
-            throw new InternalServerErrorException('Error interno al cargar documentos disponibles');
-        }
+        return documentos.map(doc => ({
+            id: doc.id,
+            numeroRadicado: doc.numeroRadicado,
+            numeroContrato: doc.numeroContrato,
+            nombreContratista: doc.nombreContratista,
+            documentoContratista: doc.documentoContratista,
+            fechaRadicacion: doc.fechaRadicacion,
+            fechaInicio: doc.fechaInicio,
+            fechaFin: doc.fechaFin,
+            estado: doc.estado,
+            observacion: doc.observacion || '',
+            radicador: doc.radicador?.fullName || doc.radicador?.username || 'Sistema',
+            supervisor: doc.usuarioAsignadoNombre || 'No asignado',
+            disponible: true,
+            enRevisionPorMi: false,
+            tipo: 'disponible'
+        }));
+    } catch (error: any) {
+        this.logger.error(`[ERROR CRÍTICO] Falló obtenerDocumentosDisponibles`, error.stack);
+        throw new InternalServerErrorException('Error interno al cargar documentos aprobados por supervisor');
     }
+}
 
     // ───────────────────────────────────────────────────────────────
     // 2. TOMAR DOCUMENTO PARA REVISIÓN
     // ───────────────────────────────────────────────────────────────
-    async tomarDocumentoParaRevision(
-        documentoId: string,
-        contadorId: string,
-    ): Promise<{ success: boolean; message: string; documento: any }> {
-        const queryRunner = this.contabilidadRepository.manager.connection.createQueryRunner();
-        await queryRunner.connect();
-        await queryRunner.startTransaction();
+ async tomarDocumentoParaRevision(
+    documentoId: string,
+    contadorId: string,
+): Promise<{ success: boolean; message: string; documento: any }> {
+    const queryRunner = this.contabilidadRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-        try {
-            const documento = await queryRunner.manager
-                .createQueryBuilder(Documento, 'd')
-                .where('d.id = :id', { id: documentoId })
-                .andWhere("d.estado IN ('APROBADO_AUDITOR', 'COMPLETADO_AUDITOR')")
-                .setLock('pessimistic_write')
-                .getOne();
+    try {
+        // ✅ CORREGIDO: Buscar APROBADO_SUPERVISOR en lugar de APROBADO_AUDITOR
+        const documento = await queryRunner.manager
+            .createQueryBuilder(Documento, 'd')
+            .where('d.id = :id', { id: documentoId })
+            .andWhere("d.estado = 'APROBADO_SUPERVISOR'")  // ← Cambio clave
+            .setLock('pessimistic_write')
+            .getOne();
 
-            if (!documento) {
-                throw new NotFoundException('Documento no disponible para contabilidad');
-            }
-
-            const contador = await queryRunner.manager.findOne(User, { where: { id: contadorId } });
-            if (!contador) throw new NotFoundException('Usuario no encontrado');
-
-            let contabilidadDoc = await queryRunner.manager.findOne(ContabilidadDocumento, {
-                where: { documento: { id: documentoId }, contador: { id: contadorId } },
-            });
-
-            if (contabilidadDoc) {
-                contabilidadDoc.estado = ContabilidadEstado.EN_REVISION;
-                contabilidadDoc.fechaInicioRevision = new Date();
-            } else {
-                contabilidadDoc = queryRunner.manager.create(ContabilidadDocumento, {
-                    documento,
-                    contador,
-                    estado: ContabilidadEstado.EN_REVISION,
-                    fechaCreacion: new Date(),
-                    fechaInicioRevision: new Date(),
-                });
-            }
-
-            documento.estado = ContabilidadEstado.EN_REVISION;
-            documento.usuarioAsignado = contador;
-            documento.usuarioAsignadoNombre = contador.fullName || contador.username;
-            documento.fechaActualizacion = new Date();
-
-            await queryRunner.manager.save(documento);
-            await queryRunner.manager.save(contabilidadDoc);
-
-            await queryRunner.commitTransaction();
-
-            return {
-                success: true,
-                message: 'Documento tomado para revisión contable',
-                documento: { id: documento.id, numeroRadicado: documento.numeroRadicado, estado: documento.estado },
-            };
-        } catch (error) {
-            await queryRunner.rollbackTransaction();
-            throw error;
-        } finally {
-            await queryRunner.release();
+        if (!documento) {
+            this.logger.error(`Documento ${documentoId} no está en estado APROBADO_SUPERVISOR`);
+            throw new NotFoundException('Documento no disponible para contabilidad. Debe estar aprobado por supervisor.');
         }
+
+        const contador = await queryRunner.manager.findOne(User, { where: { id: contadorId } });
+        if (!contador) throw new NotFoundException('Usuario no encontrado');
+
+        let contabilidadDoc = await queryRunner.manager.findOne(ContabilidadDocumento, {
+            where: { documento: { id: documentoId }, contador: { id: contadorId } },
+        });
+
+        if (contabilidadDoc) {
+            contabilidadDoc.estado = ContabilidadEstado.EN_REVISION;
+            contabilidadDoc.fechaInicioRevision = new Date();
+        } else {
+            contabilidadDoc = queryRunner.manager.create(ContabilidadDocumento, {
+                documento,
+                contador,
+                estado: ContabilidadEstado.EN_REVISION,
+                fechaCreacion: new Date(),
+                fechaInicioRevision: new Date(),
+            });
+        }
+
+        documento.estado = 'EN_REVISION_CONTABILIDAD';
+        documento.usuarioAsignado = contador;
+        documento.usuarioAsignadoNombre = contador.fullName || contador.username;
+        documento.fechaActualizacion = new Date();
+
+        await queryRunner.manager.save(documento);
+        await queryRunner.manager.save(contabilidadDoc);
+
+        await queryRunner.commitTransaction();
+
+        return {
+            success: true,
+            message: 'Documento tomado para revisión contable',
+            documento: { id: documento.id, numeroRadicado: documento.numeroRadicado, estado: documento.estado },
+        };
+    } catch (error) {
+        await queryRunner.rollbackTransaction();
+        throw error;
+    } finally {
+        await queryRunner.release();
     }
+}
 
     // ───────────────────────────────────────────────────────────────
     // 3. OBTENER DOCUMENTOS EN REVISIÓN
@@ -401,9 +400,7 @@ export class ContabilidadService {
             if (datos.tipoCausacion) contabilidadDoc.tipoCausacion = datos.tipoCausacion;
 
             if (datos.estadoFinal?.toUpperCase() === 'APROBADO') {
-                if (!contabilidadDoc.comprobanteEgresoPath) {
-                    throw new BadRequestException('Obligatorio subir comprobante de egreso para aprobar');
-                }
+            
             }
 
             if (datos.estadoFinal) {

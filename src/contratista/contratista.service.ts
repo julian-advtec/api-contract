@@ -363,7 +363,7 @@ export class ContratistaService {
     }
   }
 
- 
+
   async buscarPorTermino(termino: string): Promise<Contratista[]> {
     try {
       if (!termino || termino.trim() === '') {
@@ -434,38 +434,45 @@ export class ContratistaService {
     }
   }
 
-// src/contratista/contratista.service.ts
+  async buscarPorNumeroContratoExacto(numeroContrato: string): Promise<Contratista | null> {
+    try {
+      this.logger.log(`🔍 Buscando contratista por número de contrato exacto: "${numeroContrato}"`);
 
-async buscarPorNumeroContratoExacto(numeroContrato: string): Promise<Contratista | null> {
-  try {
-    this.logger.log(`🔍 Buscando contratista por número de contrato exacto: "${numeroContrato}"`);
-    
-    if (!numeroContrato || numeroContrato.trim().length < 1) {
+      if (!numeroContrato || numeroContrato.trim().length < 1) {
+        return null;
+      }
+
+      const contratista = await this.contratistaRepository.findOne({
+        where: {
+          numeroContrato: numeroContrato.trim(),
+          estado: 'ACTIVO'
+        },
+        relations: ['documentos'], // ✅ Esto ya está bien
+        order: {
+          documentos: {
+            fechaSubida: 'DESC'  // ✅ Ordenar documentos por fecha
+          }
+        }
+      });
+
+      if (!contratista) {
+        this.logger.log(`❌ No se encontró contratista con número de contrato: ${numeroContrato}`);
+        return null;
+      }
+
+      this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial} (${contratista.id}) con ${contratista.documentos?.length || 0} documentos`);
+
+      // Log para debugging
+      if (contratista.documentos && contratista.documentos.length > 0) {
+        this.logger.log(`📎 Tipos de documentos: ${contratista.documentos.map(d => d.tipo).join(', ')}`);
+      }
+
+      return contratista;
+    } catch (error) {
+      this.logger.error(`❌ Error buscando por número de contrato: ${error.message}`);
       return null;
     }
-
-    const contratista = await this.contratistaRepository.findOne({
-      where: { 
-        numeroContrato: numeroContrato.trim(),
-        estado: 'ACTIVO'
-      },
-      relations: ['documentos'] // ✅ Esto ya está, pero asegúrate que existe
-    });
-
-    if (!contratista) {
-      this.logger.log(`❌ No se encontró contratista con número de contrato: ${numeroContrato}`);
-      return null;
-    }
-
-    // ✅ Log para verificar documentos
-    this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial} (${contratista.id}) con ${contratista.documentos?.length || 0} documentos`);
-    
-    return contratista;
-  } catch (error) {
-    this.logger.error(`❌ Error buscando por número de contrato: ${error.message}`);
-    return null;
   }
-}
 
   async buscarPorId(id: string): Promise<Contratista> {
     try {
@@ -492,121 +499,122 @@ async buscarPorNumeroContratoExacto(numeroContrato: string): Promise<Contratista
     }
   }
 
+
   async crear(data: {
-  tipoDocumento?: string;
-  documentoIdentidad: string;
-  razonSocial: string;
-  representanteLegal?: string;
-  documentoRepresentante?: string;
-  telefono?: string;
-  email?: string;
-  direccion?: string;
-  departamento?: string;
-  ciudad?: string;
-  tipoContratista?: string;
-  estado?: string;
-  numeroContrato?: string;
-  cargo?: string;
-  objetivoContrato?: string;  // ✅ CAMBIADO DE observaciones A objetivoContrato
-}): Promise<Contratista> {
-  try {
-    if (!data.documentoIdentidad || !data.razonSocial) {
-      throw new BadRequestException('Documento de identidad y razón social son requeridos');
+    tipoDocumento?: string;
+    documentoIdentidad: string;
+    razonSocial: string;
+    representanteLegal?: string;
+    documentoRepresentante?: string;
+    telefono?: string;
+    email?: string;
+    direccion?: string;
+    departamento?: string;
+    ciudad?: string;
+    tipoContratista?: string;
+    estado?: string;
+    numeroContrato?: string;
+    cargo?: string;
+    objetivoContrato?: string;  // ✅ CAMBIADO DE observaciones A objetivoContrato
+  }): Promise<Contratista> {
+    try {
+      if (!data.documentoIdentidad || !data.razonSocial) {
+        throw new BadRequestException('Documento de identidad y razón social son requeridos');
+      }
+
+      const existente = await this.contratistaRepository.findOne({
+        where: { documentoIdentidad: data.documentoIdentidad, estado: 'ACTIVO' },
+      });
+      if (existente) {
+        throw new ConflictException(`Ya existe un contratista activo con el documento ${data.documentoIdentidad}`);
+      }
+
+      const contratista = new Contratista();
+      contratista.tipoDocumento = data.tipoDocumento || 'CC';
+      contratista.documentoIdentidad = data.documentoIdentidad.trim();
+      contratista.razonSocial = data.razonSocial.trim();
+      contratista.representanteLegal = data.representanteLegal?.trim() ?? null;
+      contratista.documentoRepresentante = data.documentoRepresentante?.trim() ?? null;
+      contratista.telefono = data.telefono?.trim() ?? null;
+      contratista.email = data.email?.trim() ?? null;
+      contratista.direccion = data.direccion?.trim() ?? null;
+      contratista.departamento = data.departamento?.trim() ?? null;
+      contratista.ciudad = data.ciudad?.trim() ?? null;
+      contratista.tipoContratista = data.tipoContratista?.trim() ?? null;
+      contratista.estado = data.estado || 'ACTIVO';
+      contratista.numeroContrato = data.numeroContrato?.trim() ?? null;
+      contratista.cargo = data.cargo?.trim() ?? null;
+      contratista.objetivoContrato = data.objetivoContrato?.trim() ?? null;  // ✅ CAMBIADO
+
+      const saved = await this.contratistaRepository.save(contratista);
+      this.logger.log(`✅ Contratista creado: ${saved.id} - ${saved.razonSocial}`);
+      return saved;
+    } catch (error) {
+      this.logger.error(`❌ Error creando contratista: ${error.message}`);
+      throw error;
     }
+  }
 
-    const existente = await this.contratistaRepository.findOne({
-      where: { documentoIdentidad: data.documentoIdentidad, estado: 'ACTIVO' },
-    });
-    if (existente) {
-      throw new ConflictException(`Ya existe un contratista activo con el documento ${data.documentoIdentidad}`);
+  // CORREGIR el método actualizar para usar objetivoContrato
+  async actualizar(id: string, data: any): Promise<Contratista> {
+    try {
+      const contratista = await this.buscarPorId(id);
+
+      // Mapear campos correctamente
+      if (data.tipoDocumento !== undefined) contratista.tipoDocumento = data.tipoDocumento;
+      if (data.documentoIdentidad !== undefined) contratista.documentoIdentidad = data.documentoIdentidad;
+      if (data.razonSocial !== undefined) contratista.razonSocial = data.razonSocial;
+      if (data.representanteLegal !== undefined) contratista.representanteLegal = data.representanteLegal;
+      if (data.documentoRepresentante !== undefined) contratista.documentoRepresentante = data.documentoRepresentante;
+      if (data.telefono !== undefined) contratista.telefono = data.telefono;
+      if (data.email !== undefined) contratista.email = data.email;
+      if (data.direccion !== undefined) contratista.direccion = data.direccion;
+      if (data.departamento !== undefined) contratista.departamento = data.departamento;
+      if (data.ciudad !== undefined) contratista.ciudad = data.ciudad;
+      if (data.tipoContratista !== undefined) contratista.tipoContratista = data.tipoContratista;
+      if (data.estado !== undefined) contratista.estado = data.estado;
+      if (data.numeroContrato !== undefined) contratista.numeroContrato = data.numeroContrato;
+      if (data.cargo !== undefined) contratista.cargo = data.cargo;
+      if (data.objetivoContrato !== undefined) contratista.objetivoContrato = data.objetivoContrato;  // ✅ CAMBIADO
+      if (data.observaciones !== undefined) contratista.objetivoContrato = data.observaciones; // Compatibilidad con datos antiguos
+
+      const updated = await this.contratistaRepository.save(contratista);
+      this.logger.log(`✅ Contratista actualizado: ${updated.id}`);
+      return updated;
+    } catch (error) {
+      this.logger.error(`❌ Error actualizando contratista: ${error.message}`);
+      throw error;
     }
-
-    const contratista = new Contratista();
-    contratista.tipoDocumento = data.tipoDocumento || 'CC';
-    contratista.documentoIdentidad = data.documentoIdentidad.trim();
-    contratista.razonSocial = data.razonSocial.trim();
-    contratista.representanteLegal = data.representanteLegal?.trim() ?? null;
-    contratista.documentoRepresentante = data.documentoRepresentante?.trim() ?? null;
-    contratista.telefono = data.telefono?.trim() ?? null;
-    contratista.email = data.email?.trim() ?? null;
-    contratista.direccion = data.direccion?.trim() ?? null;
-    contratista.departamento = data.departamento?.trim() ?? null;
-    contratista.ciudad = data.ciudad?.trim() ?? null;
-    contratista.tipoContratista = data.tipoContratista?.trim() ?? null;
-    contratista.estado = data.estado || 'ACTIVO';
-    contratista.numeroContrato = data.numeroContrato?.trim() ?? null;
-    contratista.cargo = data.cargo?.trim() ?? null;
-    contratista.objetivoContrato = data.objetivoContrato?.trim() ?? null;  // ✅ CAMBIADO
-
-    const saved = await this.contratistaRepository.save(contratista);
-    this.logger.log(`✅ Contratista creado: ${saved.id} - ${saved.razonSocial}`);
-    return saved;
-  } catch (error) {
-    this.logger.error(`❌ Error creando contratista: ${error.message}`);
-    throw error;
   }
-}
 
-// CORREGIR el método actualizar para usar objetivoContrato
-async actualizar(id: string, data: any): Promise<Contratista> {
-  try {
-    const contratista = await this.buscarPorId(id);
-    
-    // Mapear campos correctamente
-    if (data.tipoDocumento !== undefined) contratista.tipoDocumento = data.tipoDocumento;
-    if (data.documentoIdentidad !== undefined) contratista.documentoIdentidad = data.documentoIdentidad;
-    if (data.razonSocial !== undefined) contratista.razonSocial = data.razonSocial;
-    if (data.representanteLegal !== undefined) contratista.representanteLegal = data.representanteLegal;
-    if (data.documentoRepresentante !== undefined) contratista.documentoRepresentante = data.documentoRepresentante;
-    if (data.telefono !== undefined) contratista.telefono = data.telefono;
-    if (data.email !== undefined) contratista.email = data.email;
-    if (data.direccion !== undefined) contratista.direccion = data.direccion;
-    if (data.departamento !== undefined) contratista.departamento = data.departamento;
-    if (data.ciudad !== undefined) contratista.ciudad = data.ciudad;
-    if (data.tipoContratista !== undefined) contratista.tipoContratista = data.tipoContratista;
-    if (data.estado !== undefined) contratista.estado = data.estado;
-    if (data.numeroContrato !== undefined) contratista.numeroContrato = data.numeroContrato;
-    if (data.cargo !== undefined) contratista.cargo = data.cargo;
-    if (data.objetivoContrato !== undefined) contratista.objetivoContrato = data.objetivoContrato;  // ✅ CAMBIADO
-    if (data.observaciones !== undefined) contratista.objetivoContrato = data.observaciones; // Compatibilidad con datos antiguos
+  // CORREGIR el método obtenerTodos
+  async obtenerTodos(options?: { limit?: number; offset?: number }): Promise<Contratista[]> {
+    try {
+      const queryOptions: any = {
+        order: { estado: 'DESC', razonSocial: 'ASC' },
+        relations: ['documentos'],
+        select: [
+          'id', 'tipoDocumento', 'documentoIdentidad', 'razonSocial',
+          'representanteLegal', 'documentoRepresentante', 'telefono', 'email',
+          'direccion', 'departamento', 'ciudad', 'tipoContratista', 'estado',
+          'numeroContrato', 'cargo', 'objetivoContrato', 'createdAt', 'updatedAt'  // ✅ CAMBIADO
+        ]
+      };
 
-    const updated = await this.contratistaRepository.save(contratista);
-    this.logger.log(`✅ Contratista actualizado: ${updated.id}`);
-    return updated;
-  } catch (error) {
-    this.logger.error(`❌ Error actualizando contratista: ${error.message}`);
-    throw error;
+      if (options?.limit) queryOptions.take = options.limit;
+      if (options?.offset) queryOptions.skip = options.offset;
+
+      const contratistas = await this.contratistaRepository.find(queryOptions);
+      return contratistas.map(contratista => ({
+        ...contratista,
+        documentosCount: contratista.documentos?.length || 0,
+        documentos: undefined
+      })) as any;
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo todos los contratistas: ${error.message}`);
+      throw error;
+    }
   }
-}
-
-// CORREGIR el método obtenerTodos
-async obtenerTodos(options?: { limit?: number; offset?: number }): Promise<Contratista[]> {
-  try {
-    const queryOptions: any = {
-      order: { estado: 'DESC', razonSocial: 'ASC' },
-      relations: ['documentos'],
-      select: [
-        'id', 'tipoDocumento', 'documentoIdentidad', 'razonSocial',
-        'representanteLegal', 'documentoRepresentante', 'telefono', 'email',
-        'direccion', 'departamento', 'ciudad', 'tipoContratista', 'estado',
-        'numeroContrato', 'cargo', 'objetivoContrato', 'createdAt', 'updatedAt'  // ✅ CAMBIADO
-      ]
-    };
-
-    if (options?.limit) queryOptions.take = options.limit;
-    if (options?.offset) queryOptions.skip = options.offset;
-
-    const contratistas = await this.contratistaRepository.find(queryOptions);
-    return contratistas.map(contratista => ({
-      ...contratista,
-      documentosCount: contratista.documentos?.length || 0,
-      documentos: undefined
-    })) as any;
-  } catch (error) {
-    this.logger.error(`❌ Error obteniendo todos los contratistas: ${error.message}`);
-    throw error;
-  }
-}
 
   async crearConDocumentos(
     data: any,

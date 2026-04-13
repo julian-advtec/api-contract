@@ -30,6 +30,7 @@ export class DocumentoContratista {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  
   @Column({ name: 'contratista_id' })
   contratistaId: string;
 

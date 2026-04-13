@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { SupervisorDocumento } from './entities/supervisor.entity';
 import { Documento } from '../radicacion/entities/documento.entity';
 import { User } from '../users/entities/user.entity';
+import { AuditorDocumento } from '../auditor/entities/auditor-documento.entity'; // ✅ IMPORTAR LA ENTIDAD
 
 // Controllers
 import { SupervisorController } from './controllers/supervisor.controller';
@@ -21,10 +22,15 @@ import { SupervisorEstadisticasService } from './services/supervisor-estadistica
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([SupervisorDocumento, Documento, User]),
+    TypeOrmModule.forFeature([
+      SupervisorDocumento,
+      Documento,
+      User,
+      AuditorDocumento, // ✅ AGREGAR AQUÍ
+    ]),
   ],
   controllers: [
-    SupervisorController, // Mantener para compatibilidad
+    SupervisorController,
     SupervisorDocumentosController,
     SupervisorRevisionController,
     SupervisorArchivosController,

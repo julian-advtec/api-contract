@@ -19,11 +19,12 @@ import { CambiarEstadoDto } from './dto/cambiar-estado.dto';
 import { FiltrosContratoDto } from './dto/filtros-contrato.dto';
 import * as path from 'path';
 import * as fs from 'fs';
+import { StorageService } from '../common/storage/storage.service';
 
 @Injectable()
 export class JuridicaService {
     private readonly logger = new Logger(JuridicaService.name);
-    private readonly basePath = '\\\\R2-D2\\api-contract\\juridica';
+    private readonly basePath = path.join(process.env.LOCAL_STORAGE_PATH || 'C:\\R2-D2\\api-contract', 'juridica');
 
     constructor(
         @InjectRepository(Contrato)
@@ -36,6 +37,7 @@ export class JuridicaService {
         private modificacionRepository: Repository<ModificacionContrato>,
         @InjectRepository(DocumentoContrato)
         private documentoRepository: Repository<DocumentoContrato>,
+        private readonly storageService: StorageService,
     ) {
         this.verificarRutaServidor();
     }
@@ -53,80 +55,173 @@ export class JuridicaService {
 
     // ==================== CONTRATOS ====================
 
-    async create(createContratoDto: CreateContratoDto): Promise<Contrato> {
-        try {
-            this.logger.log(`📝 Creando nuevo contrato: ${createContratoDto.numeroContrato}`);
 
-            // ✅ Convertir fechas strings a objetos Date
-            const fechaInicio = new Date(createContratoDto.fechaInicio);
-            const fechaTerminacion = new Date(createContratoDto.fechaTerminacion);
-            const fechaFirma = new Date(createContratoDto.fechaFirma);
+   async create(
+  createContratoDto: any, 
+  files?: {
+    minutaFile?: Express.Multer.File[];           // ← AGREGAR
+    actaInicioFile?: Express.Multer.File[];       // ← AGREGAR
+    cdpFile?: Express.Multer.File[];
+    rpFile?: Express.Multer.File[];
+    polizaCumplimientoFile?: Express.Multer.File[];
+    polizaCalidadFile?: Express.Multer.File[];
+    polizaRCFile?: Express.Multer.File[];
+  }
+): Promise<Contrato> {
+  try {
+    this.logger.log(`📝 Creando nuevo contrato: ${createContratoDto.numeroContrato}`);
 
-            const existente = await this.contratoRepository.findOne({
-                where: { numeroContrato: createContratoDto.numeroContrato },
-            });
+    const fechaInicio = new Date(createContratoDto.fechaInicio);
+    const fechaTerminacion = new Date(createContratoDto.fechaTerminacion);
+    const fechaFirma = new Date(createContratoDto.fechaFirma);
 
-            if (existente) {
-                throw new BadRequestException(`El contrato ${createContratoDto.numeroContrato} ya existe`);
-            }
+    const existente = await this.contratoRepository.findOne({
+      where: { numeroContrato: createContratoDto.numeroContrato },
+    });
 
-            let proveedor: Proveedor;
-
-            if (createContratoDto.proveedorId) {
-                const proveedorEncontrado = await this.proveedorRepository.findOneBy({
-                    id: createContratoDto.proveedorId,
-                });
-                if (!proveedorEncontrado) {
-                    throw new NotFoundException('Proveedor no encontrado');
-                }
-                proveedor = proveedorEncontrado;
-            } else if (createContratoDto.proveedor) {
-                proveedor = await this.proveedorRepository.save(createContratoDto.proveedor);
-            } else {
-                throw new BadRequestException('Debe especificar un proveedor');
-            }
-
-            const valorTotal = createContratoDto.valor + (createContratoDto.adiciones || 0);
-
-            const contrato = this.contratoRepository.create({
-                ...createContratoDto,
-                fechaInicio,
-                fechaTerminacion,
-                fechaFirma,
-                proveedor,
-                valorTotal,
-                saldoDisponible: valorTotal,
-                creadoPor: createContratoDto.creadoPor || 'Sistema',
-                ultimoUsuario: createContratoDto.creadoPor || 'Sistema',
-                historialCambios: [{
-                    fecha: new Date(),
-                    usuario: createContratoDto.creadoPor || 'Sistema',
-                    accion: 'CREACIÓN',
-                    detalles: createContratoDto,
-                }],
-            });
-
-
-            const savedContrato = await this.contratoRepository.save(contrato);
-
-            if (createContratoDto.polizas?.length) {
-                for (const polizaDto of createContratoDto.polizas) {
-                    const poliza = this.polizaRepository.create({
-                        ...polizaDto,
-                        contrato: savedContrato,
-                        contratoId: savedContrato.id,
-                    });
-                    await this.polizaRepository.save(poliza);
-                }
-            }
-
-            this.logger.log(`✅ Contrato creado: ${savedContrato.numeroContrato}`);
-            return this.findOne(savedContrato.id);
-        } catch (error) {
-            this.logger.error(`❌ Error creando contrato: ${error.message}`);
-            throw error;
-        }
+    if (existente) {
+      throw new BadRequestException(`El contrato ${createContratoDto.numeroContrato} ya existe`);
     }
+
+    // Buscar proveedor existente o crear uno nuevo
+    let proveedor: Proveedor;
+    if (createContratoDto.proveedor) {
+      const { numeroIdentificacion } = createContratoDto.proveedor;
+      const proveedorExistente = await this.proveedorRepository.findOne({
+        where: { numeroIdentificacion }
+      });
+      
+      if (proveedorExistente) {
+        proveedor = proveedorExistente;
+        this.logger.log(`✅ Proveedor existente encontrado: ${proveedor.nombreRazonSocial}`);
+      } else {
+        proveedor = await this.proveedorRepository.save(createContratoDto.proveedor);
+        this.logger.log(`✅ Nuevo proveedor creado: ${proveedor.nombreRazonSocial}`);
+      }
+    } else {
+      throw new BadRequestException('Debe especificar un proveedor');
+    }
+
+    const valorTotal = Number(createContratoDto.valor || 0) + Number(createContratoDto.adiciones || 0);
+
+    const contratoEntity = this.contratoRepository.create({
+      ...createContratoDto,
+      fechaInicio,
+      fechaTerminacion,
+      fechaFirma,
+      proveedor,
+      valorTotal,
+      saldoDisponible: valorTotal,
+      creadoPor: createContratoDto.creadoPor || 'Sistema',
+      ultimoUsuario: createContratoDto.creadoPor || 'Sistema',
+      historialCambios: [{
+        fecha: new Date(),
+        usuario: createContratoDto.creadoPor || 'Sistema',
+        accion: 'CREACIÓN',
+        detalles: createContratoDto,
+      }],
+    });
+
+    // Guardar y forzar que sea un solo objeto (no array)
+    const savedContrato = await this.contratoRepository.save(contratoEntity);
+    const contratoGuardado = Array.isArray(savedContrato) ? savedContrato[0] : savedContrato;
+
+    if (!contratoGuardado || !contratoGuardado.id) {
+      throw new BadRequestException('No se pudo guardar el contrato correctamente');
+    }
+
+    // ==================== SUBIR ARCHIVOS ====================
+    if (files) {
+      const usuario = createContratoDto.creadoPor || 'Sistema';
+
+      // ✅ MINUTA
+      if (files.minutaFile?.[0]) {
+        await this.subirDocumentoContrato(
+          contratoGuardado.id,
+          files.minutaFile[0],
+          TipoDocumento.MINUTA,
+          'Minuta de Contrato',
+          usuario
+        );
+        this.logger.log(`✅ Minuta subida correctamente`);
+      }
+
+      // ✅ ACTA INICIO
+      if (files.actaInicioFile?.[0]) {
+        await this.subirDocumentoContrato(
+          contratoGuardado.id,
+          files.actaInicioFile[0],
+          TipoDocumento.ACTA_INICIO,
+          'Acta de Inicio',
+          usuario
+        );
+        this.logger.log(`✅ Acta de Inicio subida correctamente`);
+      }
+
+      // CDP
+      if (files.cdpFile?.[0]) {
+        await this.subirDocumentoContrato(
+          contratoGuardado.id,
+          files.cdpFile[0],
+          TipoDocumento.CDP,
+          'Certificado de Disponibilidad Presupuestal',
+          usuario
+        );
+      }
+
+      // RP
+      if (files.rpFile?.[0]) {
+        await this.subirDocumentoContrato(
+          contratoGuardado.id,
+          files.rpFile[0],
+          TipoDocumento.RP,
+          'Registro Presupuestal',
+          usuario
+        );
+      }
+
+      // Póliza de Cumplimiento
+      if (files.polizaCumplimientoFile?.[0]) {
+        await this.subirDocumentoContrato(
+          contratoGuardado.id,
+          files.polizaCumplimientoFile[0],
+          TipoDocumento.POLIZA_CUMPLIMIENTO,
+          'Póliza de Cumplimiento',
+          usuario
+        );
+      }
+
+      // Póliza de Calidad
+      if (files.polizaCalidadFile?.[0]) {
+        await this.subirDocumentoContrato(
+          contratoGuardado.id,
+          files.polizaCalidadFile[0],
+          TipoDocumento.POLIZA_CALIDAD,
+          'Póliza de Calidad',
+          usuario
+        );
+      }
+
+      // Póliza RC
+      if (files.polizaRCFile?.[0]) {
+        await this.subirDocumentoContrato(
+          contratoGuardado.id,
+          files.polizaRCFile[0],
+          TipoDocumento.POLIZA_RC,
+          'Póliza de Responsabilidad Civil',
+          usuario
+        );
+      }
+    }
+
+    this.logger.log(`✅ Contrato creado exitosamente: ${contratoGuardado.numeroContrato}`);
+    return this.findOne(contratoGuardado.id);
+
+  } catch (error) {
+    this.logger.error(`❌ Error creando contrato: ${error.message}`);
+    throw error;
+  }
+}
 
     async findAll(filtros: FiltrosContratoDto): Promise<Contrato[]> {
         try {
@@ -699,52 +794,164 @@ export class JuridicaService {
 
 
 
-async obtenerDocumentosContrato(contratoId: string): Promise<DocumentoContrato[]> {
-    try {
-        this.logger.log(`📄 Buscando documentos del contrato: ${contratoId}`);
 
-        const documentos = await this.documentoRepository.find({
-            where: {
-                contratoId: contratoId,
-                esVersionActual: true
-            },
-            order: { 
-                fechaCreacion: 'DESC' 
-            } as any
-        });
+    async buscarContratoPorNumero(numeroContrato: string): Promise<Contrato | null> {
+        try {
+            this.logger.log(`🔍 Buscando contrato por número: "${numeroContrato}"`);
 
-        this.logger.log(`✅ ${documentos.length} documentos encontrados`);
-        return documentos;
-    } catch (error) {
-        this.logger.error(`❌ Error obteniendo documentos: ${error.message}`);
-        return [];
-    }
-}
-  
-async buscarContratoPorNumero(numeroContrato: string): Promise<Contrato | null> {
-  try {
-    this.logger.log(`🔍 Buscando contrato por número: "${numeroContrato}"`);
+            const contrato = await this.contratoRepository.findOne({
+                where: { numeroContrato: numeroContrato.trim() },
+                relations: ['proveedor']
+            });
 
-    // ✅ Buscar exactamente por el número de contrato
-    const contrato = await this.contratoRepository.findOne({
-      where: { 
-        numeroContrato: numeroContrato.trim() 
-      }
-    });
+            if (!contrato) {
+                this.logger.warn(`⚠️ No se encontró contrato con número: "${numeroContrato}"`);
+                return null;
+            }
 
-    if (!contrato) {
-      this.logger.warn(`⚠️ No se encontró contrato con número: "${numeroContrato}"`);
-      return null;
+            this.logger.log(`✅ Contrato encontrado: ${contrato.numeroContrato}`);
+            return contrato;
+        } catch (error) {
+            this.logger.error(`❌ Error buscando contrato: ${error.message}`);
+            return null;
+        }
     }
 
-    this.logger.log(`✅ Contrato encontrado: ${contrato.numeroContrato}`);
-    this.logger.log(`📅 Fecha Inicio: ${contrato.fechaInicio}`);
-    this.logger.log(`📅 Fecha Fin: ${contrato.fechaTerminacion}`);
-    
-    return contrato;
-  } catch (error) {
-    this.logger.error(`❌ Error buscando contrato: ${error.message}`);
-    return null;
-  }
-}
+    async obtenerDocumentosContrato(contratoId: string): Promise<DocumentoContrato[]> {
+        try {
+            return await this.documentoRepository.find({
+                where: { contratoId: contratoId, esVersionActual: true },
+                order: { fechaCarga: 'DESC' }
+            });
+        } catch (error) {
+            this.logger.error(`❌ Error obteniendo documentos: ${error.message}`);
+            return [];
+        }
+    }
+
+
+    // src/juridica/juridica.service.ts
+
+    async subirDocumentoContrato(
+        contratoId: string,
+        file: Express.Multer.File,
+        tipoDocumento: TipoDocumento,
+        descripcion: string,
+        usuario: string,
+    ): Promise<DocumentoContrato> {
+        try {
+            const contrato = await this.findOne(contratoId);
+
+            // Para el nombre del archivo en el servidor (minúsculas)
+            const tipoDocumentoLower = tipoDocumento.toLowerCase();
+
+            this.logger.log(`📄 Subiendo documento tipo: ${tipoDocumento}`);
+
+            // Crear carpeta en el servidor
+            const folder = `juridica/${contrato.vigencia}/${contrato.numeroContrato}/documentos`;
+            const extension = path.extname(file.originalname);
+            const nombreArchivo = `${tipoDocumentoLower}_${Date.now()}${extension}`;
+
+            // Usar StorageService para guardar el archivo
+            const result = await this.storageService.uploadFile(
+                file,
+                folder,
+                nombreArchivo
+            );
+
+            this.logger.log(`✅ Archivo subido a: ${result.provider} - ${result.path}`);
+
+            // Si no es OTRO, marcar versiones anteriores como no actuales
+            if (tipoDocumento !== TipoDocumento.OTRO) {
+                await this.documentoRepository.update(
+                    { contratoId, tipoDocumento, esVersionActual: true },
+                    { esVersionActual: false },
+                );
+            }
+
+            // Crear el documento
+            const documento = this.documentoRepository.create({
+                nombreArchivo: file.originalname,
+                rutaArchivo: result.path,
+                tipoDocumento: tipoDocumento,
+                descripcion,
+                version: 1,
+                esVersionActual: true,
+                tamanoBytes: file.size,
+                mimeType: file.mimetype,
+                contrato,
+                contratoId,
+                cargadoPor: usuario,
+            });
+
+            // ✅ Guardar y asegurar que obtenemos un solo objeto
+            const documentoGuardado = await this.documentoRepository.save(documento);
+
+            // ✅ Si devuelve array, tomar el primer elemento
+            const resultado = Array.isArray(documentoGuardado) ? documentoGuardado[0] : documentoGuardado;
+
+            return resultado;
+        } catch (error) {
+            this.logger.error(`❌ Error subiendo documento: ${error.message}`);
+            throw error;
+        }
+    }
+
+
+
+    // Método para descargar documento
+    async descargarDocumentoContrato(documentoId: string): Promise<{ buffer: Buffer; nombre: string; mimeType: string }> {
+        return this.previsualizarDocumentoContrato(documentoId);
+    }
+
+    // Método para actualizar campos RP/CDP en el contrato
+    async actualizarCampoRpCdp(contratoId: string, campo: 'rp' | 'cdp', valor: string): Promise<void> {
+        const contrato = await this.findOne(contratoId);
+        if (campo === 'rp') {
+            contrato.rp = valor;
+        } else {
+            contrato.cdp = valor;
+        }
+        await this.contratoRepository.save(contrato);
+    }
+
+    async obtenerDocumentoContratoPorId(documentoId: string): Promise<DocumentoContrato> {
+        try {
+            this.logger.log(`🔍 Buscando documento de contrato por ID: ${documentoId}`);
+
+            const documento = await this.documentoRepository.findOne({
+                where: { id: documentoId }
+            });
+
+            if (!documento) {
+                throw new NotFoundException(`Documento de contrato con ID ${documentoId} no encontrado`);
+            }
+
+            this.logger.log(`✅ Documento de contrato encontrado: ${documento.nombreArchivo}`);
+            return documento;
+        } catch (error) {
+            this.logger.error(`❌ Error obteniendo documento de contrato: ${error.message}`);
+            throw error;
+        }
+    }
+
+    // También asegúrate de que el método previsualizarDocumentoContrato exista:
+
+    async previsualizarDocumentoContrato(documentoId: string): Promise<{ buffer: Buffer; nombre: string; mimeType: string }> {
+        try {
+            const documento = await this.obtenerDocumentoContratoPorId(documentoId);
+
+            // Usar StorageService para obtener el archivo
+            const buffer = await this.storageService.getFile(documento.rutaArchivo);
+
+            return {
+                buffer,
+                nombre: documento.nombreArchivo,
+                mimeType: documento.mimeType || 'application/pdf',
+            };
+        } catch (error) {
+            this.logger.error(`❌ Error previsualizando documento: ${error.message}`);
+            throw error;
+        }
+    }
 }

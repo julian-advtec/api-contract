@@ -9,6 +9,7 @@ import {
   HttpException,
   HttpStatus,
   Logger,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import * as fs from 'fs';
@@ -116,7 +117,7 @@ export class SupervisorArchivosController {
     const userId = this.getUserIdFromRequest(req);
     this.logger.log(`👁️ Usuario ${userId} viendo archivo ${numeroArchivo} del documento ${documentoId}`);
 
-    
+
     try {
       const { ruta, nombre } = await this.supervisorArchivosService.descargarArchivoRadicado(
         documentoId,
@@ -400,6 +401,54 @@ export class SupervisorArchivosController {
         success: false,
         message: error.message || 'Error verificando archivo'
       });
+    }
+  }
+
+  @Get('ver-archivo-auditor/:documentoId/:tipo')
+  async verArchivoAuditor(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @Param('tipo') tipo: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`👁️ Supervisor ${userId} viendo archivo auditor ${tipo} del documento ${documentoId}`);
+
+    try {
+      const { ruta, nombre } = await this.supervisorArchivosService.obtenerArchivoAuditor(
+        documentoId,
+        tipo,
+        userId,
+      );
+
+      if (!fs.existsSync(ruta)) {
+        throw new HttpException(`Archivo ${nombre} no encontrado`, HttpStatus.NOT_FOUND);
+      }
+
+      const ext = path.extname(nombre).toLowerCase();
+      const mime = {
+        '.pdf': 'application/pdf',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      }[ext] || 'application/octet-stream';
+
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Content-Disposition', `inline; filename="${nombre}"`);
+
+      const stream = fs.createReadStream(ruta);
+      stream.pipe(res);
+    } catch (error) {
+      this.logger.error(`❌ Error viendo archivo auditor: ${error.message}`);
+      if (!res.headersSent) {
+        const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
+        res.status(status).json({
+          success: false,
+          message: error.message || 'Error al ver archivo'
+        });
+      }
     }
   }
 }

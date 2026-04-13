@@ -1,4 +1,3 @@
-// src/juridica/juridica.controller.ts
 import {
   Controller,
   Get,
@@ -11,14 +10,18 @@ import {
   Query,
   UseInterceptors,
   UploadedFile,
+  UploadedFiles,
   HttpException,
   HttpStatus,
   Logger,
   BadRequestException,
+  NotFoundException,
   UseGuards,
   Req,
+  Res,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor, FileFieldsInterceptor } from '@nestjs/platform-express';
+
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -32,6 +35,8 @@ import { UpdateContratoDto } from './dto/update-contrato.dto';
 import { CambiarEstadoDto } from './dto/cambiar-estado.dto';
 import { FiltrosContratoDto } from './dto/filtros-contrato.dto';
 import { TipoDocumento } from './entities/documento-contrato.entity';
+
+import { Response } from 'express';
 
 @Controller('juridica')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -48,10 +53,36 @@ export class JuridicaController {
   // ==================== CONTRATOS ====================
 
   @Post('contratos')
-  async createContrato(@Body() createContratoDto: CreateContratoDto, @Req() req?: any) {
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'minutaFile', maxCount: 1 },        // ← DEBE ESTAR
+      { name: 'actaInicioFile', maxCount: 1 },    // ← DEBE ESTAR
+      { name: 'cdpFile', maxCount: 1 },
+      { name: 'rpFile', maxCount: 1 },
+      { name: 'polizaCumplimientoFile', maxCount: 1 },
+      { name: 'polizaCalidadFile', maxCount: 1 },
+      { name: 'polizaRCFile', maxCount: 1 },
+    ])
+  )
+  async createContrato(
+    @Body('contrato') contratoStr: string,
+    @UploadedFiles() files: {
+      minutaFile?: Express.Multer.File[];
+      actaInicioFile?: Express.Multer.File[];
+      cdpFile?: Express.Multer.File[];
+      rpFile?: Express.Multer.File[];
+      polizaCumplimientoFile?: Express.Multer.File[];
+      polizaCalidadFile?: Express.Multer.File[];
+      polizaRCFile?: Express.Multer.File[];
+    },
+    @Req() req?: any,
+  ) {
     try {
+      const createContratoDto = JSON.parse(contratoStr);
+
       this.logger.log(`📝 Creando contrato: ${createContratoDto.numeroContrato}`);
-      const contrato = await this.juridicaService.create(createContratoDto);
+
+      const contrato = await this.juridicaService.create(createContratoDto, files);
 
       await this.bitacoraService.registrar(
         AccionBitacora.ADMIN_CREAR_USUARIO,
@@ -600,6 +631,153 @@ export class JuridicaController {
           data: null
         }
       };
+    }
+  }
+
+  @Get('contratos/numero/:numeroContrato')
+  @Roles(UserRole.ADMIN, UserRole.JURIDICA, UserRole.SUPERVISOR, UserRole.RADICADOR)
+  async findContratoByNumero(@Param('numeroContrato') numeroContrato: string, @Req() req?: any) {
+    try {
+      this.logger.log(`🔍 Buscando contrato por número: ${numeroContrato}`);
+
+      const contrato = await this.juridicaService.buscarContratoPorNumero(numeroContrato);
+
+      if (!contrato) {
+        return {
+          success: false,
+          message: `Contrato ${numeroContrato} no encontrado`,
+          data: null
+        };
+      }
+
+      // Cargar documentos del contrato
+      const documentos = await this.juridicaService.obtenerDocumentosContrato(contrato.id);
+
+      const resultado = {
+        ...contrato,
+        documentos: documentos || []
+      };
+
+      return {
+        success: true,
+        data: resultado
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error buscando contrato: ${error.message}`);
+      return {
+        success: false,
+        message: error.message,
+        data: null
+      };
+    }
+  }
+
+  @Post('contratos/:contratoId/documentos/rp-cdp')
+  @UseInterceptors(FilesInterceptor('archivos', 2))
+  @Roles(UserRole.ADMIN, UserRole.JURIDICA, UserRole.SUPERVISOR)
+  async subirDocumentosRPCdp(
+    @Param('contratoId') contratoId: string,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body('tipoDocumento') tipoDocumento: string,
+    @Body('descripcion') descripcion: string,
+    @Body('usuario') usuario: string,
+    @Req() req?: any,
+  ) {
+    try {
+      this.logger.log(`📄 Subiendo documentos RP/CDP para contrato ${contratoId}`);
+
+      if (!files || files.length === 0) {
+        throw new BadRequestException('Debe adjuntar al menos un archivo');
+      }
+
+      const tipos = JSON.parse(tipoDocumento);
+      const resultados = [];
+
+      for (let i = 0; i < files.length; i++) {
+        const documento = await this.juridicaService.subirDocumentoContrato(
+          contratoId,
+          files[i],
+          tipos[i] as TipoDocumento,
+          descripcion || '',
+          usuario || req.user?.email || 'Sistema',
+        );
+
+        // Actualizar el contrato con el número si es necesario
+        if (tipos[i] === 'RP') {
+          // Opcional: actualizar el campo rp del contrato
+          await this.juridicaService.actualizarCampoRpCdp(contratoId, 'rp', documento.rutaArchivo);
+        } else if (tipos[i] === 'CDP') {
+          await this.juridicaService.actualizarCampoRpCdp(contratoId, 'cdp', documento.rutaArchivo);
+        }
+
+        resultados.push(documento);
+      }
+
+      return {
+        success: true,
+        message: `${resultados.length} documento(s) subido(s) exitosamente`,
+        data: resultados,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error subiendo documentos RP/CDP: ${error.message}`);
+      throw new HttpException(
+        { success: false, message: error.message },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('contratos/documentos/:documentoId/previsualizar')
+  @Roles(UserRole.ADMIN, UserRole.JURIDICA, UserRole.SUPERVISOR, UserRole.RADICADOR)
+  async previsualizarDocumentoContrato(
+    @Param('documentoId') documentoId: string,
+    @Res() res: Response, // ✅ Usar Response de express
+    @Req() req?: any,
+  ) {
+    try {
+      const { buffer, nombre, mimeType } = await this.juridicaService.previsualizarDocumentoContrato(documentoId);
+
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Disposition', 'inline');
+      res.setHeader('Content-Length', buffer.length);
+
+      res.send(buffer);
+    } catch (error) {
+      this.logger.error(`❌ Error previsualizando documento: ${error.message}`);
+      if (!res.headersSent) {
+        const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
+        return res.status(status).json({
+          success: false,
+          message: error.message,
+        });
+      }
+    }
+  }
+
+  @Get('contratos/documentos/:documentoId/descargar')
+  @Roles(UserRole.ADMIN, UserRole.JURIDICA, UserRole.SUPERVISOR, UserRole.RADICADOR)
+  async descargarDocumentoContrato(
+    @Param('documentoId') documentoId: string,
+    @Res() res: Response, // ✅ Usar Response de express
+    @Req() req?: any,
+  ) {
+    try {
+      const { buffer, nombre, mimeType } = await this.juridicaService.descargarDocumentoContrato(documentoId);
+
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombre)}"`);
+      res.setHeader('Content-Length', buffer.length);
+
+      res.send(buffer);
+    } catch (error) {
+      this.logger.error(`❌ Error descargando documento: ${error.message}`);
+      if (!res.headersSent) {
+        const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
+        return res.status(status).json({
+          success: false,
+          message: error.message,
+        });
+      }
     }
   }
 }

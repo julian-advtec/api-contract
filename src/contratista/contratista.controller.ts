@@ -1455,7 +1455,7 @@ export class ContratistasController {
     }
   }
 
-  @Get('buscar-por-contrato/:numeroContrato')
+@Get('buscar-por-contrato/:numeroContrato')
 @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)
 async buscarPorNumeroContrato(@Param('numeroContrato') numeroContrato: string, @Req() req?: any) {
   const inicio = Date.now();
@@ -1473,6 +1473,7 @@ async buscarPorNumeroContrato(@Param('numeroContrato') numeroContrato: string, @
       };
     }
 
+    // ✅ USAR el método que ya tiene relaciones
     const contratista = await this.contratistaService.buscarPorNumeroContratoExacto(numeroContrato);
 
     if (!contratista) {
@@ -1486,49 +1487,14 @@ async buscarPorNumeroContrato(@Param('numeroContrato') numeroContrato: string, @
       };
     }
 
-    // ✅ Asegurar que los documentos estén incluidos en la respuesta
-    const responseData = {
-      id: contratista.id,
-      documentoIdentidad: contratista.documentoIdentidad,
-      razonSocial: contratista.razonSocial,
-      nombreRazonSocial: contratista.razonSocial,
-      numeroContrato: contratista.numeroContrato,
-      email: contratista.email,
-      telefono: contratista.telefono,
-      direccion: contratista.direccion,
-      departamento: contratista.departamento,
-      ciudad: contratista.ciudad,
-      cargo: contratista.cargo,
-      tipoContratista: contratista.tipoContratista,
-      estado: contratista.estado,
-      objetivoContrato: contratista.objetivoContrato,
-      representanteLegal: contratista.representanteLegal,
-      documentoRepresentante: contratista.documentoRepresentante,
-      tipoDocumento: contratista.tipoDocumento,
-      // ✅ INCLUIR LOS DOCUMENTOS
-      documentos: contratista.documentos || []
-    };
-
-    this.logger.log(`📎 Enviando ${responseData.documentos.length} documentos en la respuesta`);
-
-    await this.bitacoraService.registrar(
-      AccionBitacora.VER_DOCUMENTO,
-      ModuloBitacora.ADMINISTRACION,
-      req.user,
-      undefined,
-      {
-        detalles: `Búsqueda de contratista por número de contrato: ${numeroContrato}`,
-        duracionMs: Date.now() - inicio,
-        metadata: { numeroContrato, encontrado: true, documentos: contratista.documentos?.length || 0 }
-      },
-      req,
-    );
+    // ✅ La respuesta YA incluye documentos porque buscarPorNumeroContratoExacto tiene relations: ['documentos']
+    this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial} con ${contratista.documentos?.length || 0} documentos`);
 
     return {
       ok: true,
       data: {
         success: true,
-        data: responseData
+        data: contratista
       }
     };
   } catch (error) {

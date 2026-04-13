@@ -24,9 +24,11 @@ import * as jwt from 'jsonwebtoken';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { EstadosService } from '../estados/estados.service';
-import { SupervisorService } from '../supervision/services/supervisor.service';
+import { AuditorService } from '../auditor/auditor.service'; // ✅ IMPORTAR AuditorService
 import { ContratistaService } from '../contratista/contratista.service';
 import { StorageService } from '../common/storage/storage.service';
+import { ModuloBitacora, AccionBitacora } from '../bitacora-sistema/entities/bitacora-sistema.entity'; // ✅ AGREGAR
+import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.service';
 
 const execAsync = promisify(exec);
 
@@ -43,10 +45,11 @@ export class RadicacionService {
         @InjectRepository(Contratista)
         private contratistaRepository: Repository<Contratista>,
         private estadosService: EstadosService,
-        @Inject(forwardRef(() => SupervisorService))
-        private supervisorService: SupervisorService,
+        @Inject(forwardRef(() => AuditorService))
+        private readonly auditorService: AuditorService,
         private readonly contratistaService: ContratistaService,
         private readonly storageService: StorageService,
+        private readonly bitacoraService: BitacoraSistemaService,
 
     ) {
         this.logger.log(`📁 ======= CONFIGURACIÓN DE ALMACENAMIENTO =======`);
@@ -154,6 +157,8 @@ export class RadicacionService {
             throw new Error(`No hay permisos de escritura en el servidor R2-D2: ${error.message}`);
         }
     }
+
+
 
     async create(
         createDocumentoDto: CreateDocumentoDto,
@@ -325,10 +330,31 @@ export class RadicacionService {
             this.logger.log(`   Primer radicado: ${savedDocumento.primerRadicadoDelAno ? 'SÍ' : 'NO'}`);
             this.logger.log(`   Tipo almacenamiento: ${this.storageService.getStorageInfo().type}`);
 
+            // ✅ REGISTRAR EN BITÁCORA - RADICACIÓN EXITOSA
             try {
-                await this.asignarDocumentoASupervisores(savedDocumento);
+                await this.bitacoraService.registrar(
+                    AccionBitacora.RADICAR_DOCUMENTO,
+                    ModuloBitacora.RADICACION,
+                    usuarioCompleto,
+                    savedDocumento,
+                    {
+                        detalles: `Documento radicado exitosamente - Contratista: ${savedDocumento.nombreContratista}`,
+                        numeroRadicado: savedDocumento.numeroRadicado,
+                        numeroContrato: savedDocumento.numeroContrato,
+                        documentosSubidos: nombresArchivos.length,
+                        primerRadicado: esPrimerRadicado
+                    },
+                );
+                this.logger.log(`✅ Bitácora registrada: RADICAR_DOCUMENTO - ${savedDocumento.numeroRadicado}`);
+            } catch (bitacoraError) {
+                this.logger.warn(`⚠️ Error registrando bitácora (no crítico): ${bitacoraError.message}`);
+            }
+
+            // ✅ CAMBIAR: Asignar a AUDITORES en lugar de SUPERVISORES
+            try {
+                await this.asignarDocumentoAAuditores(savedDocumento);
             } catch (e) {
-                this.logger.warn(`No se pudo asignar a supervisores: ${e.message}`);
+                this.logger.warn(`No se pudo asignar a auditores: ${e.message}`);
             }
 
             return savedDocumento;
@@ -338,6 +364,39 @@ export class RadicacionService {
             throw error instanceof HttpException
                 ? error
                 : new InternalServerErrorException('Error interno al crear documento');
+        }
+    }
+
+    private async asignarDocumentoAAuditores(documento: Documento): Promise<void> {
+        try {
+            this.logger.log(`🔄 Asignando documento ${documento.numeroRadicado} a auditores...`);
+            await this.auditorService.asignarDocumentoAAuditoresAutomaticamente(documento.id);
+            this.logger.log(`✅ Documento asignado a auditores automáticamente`);
+        } catch (error) {
+            this.logger.error(`❌ Error asignando documento a auditores: ${error.message}`);
+        }
+    }
+
+
+
+    // ✅ MÉTODO AUXILIAR PARA REGISTRAR EN BITÁCORA
+    private async registrarBitacora(
+        accion: AccionBitacora | string,
+        documento: Documento,
+        usuario: User,
+        metadata: any = {}
+    ): Promise<void> {
+        try {
+            await this.bitacoraService.registrar(
+                accion,
+                ModuloBitacora.RADICACION,
+                usuario,
+                documento,
+                metadata,
+            );
+            this.logger.log(`✅ Bitácora registrada: ${accion} - Documento ${documento.numeroRadicado}`);
+        } catch (error) {
+            this.logger.error(`❌ Error registrando bitácora: ${error.message}`);
         }
     }
 
@@ -490,15 +549,7 @@ Ruta servidor: ${rutaCarpeta}
         }
     }
 
-    private async asignarDocumentoASupervisores(documento: Documento): Promise<void> {
-        try {
-            this.logger.log(`🔄 Asignando documento ${documento.numeroRadicado} a supervisores...`);
-            await this.supervisorService.asignarDocumentoASupervisoresAutomaticamente(documento.id);
-            this.logger.log(`✅ Documento asignado a supervisores automáticamente`);
-        } catch (error) {
-            this.logger.error(`❌ Error asignando documento a supervisores: ${error.message}`);
-        }
-    }
+
 
     async findAll(user: any): Promise<Documento[]> {
         const role = user.role?.toLowerCase();
@@ -585,52 +636,49 @@ Ruta servidor: ${rutaCarpeta}
     }
 
     async obtenerRutaArchivo(id: string, numeroDocumento: number, user: User): Promise<string> {
-        try {
-            this.logger.log(`📥 Usuario ${user.username} descargando documento ${id}, archivo ${numeroDocumento}`);
-            let documento: Documento | null = null;
-            const rolUsuario = user.role?.toString().toLowerCase();
-            const esAdmin = rolUsuario === UserRole.ADMIN.toLowerCase();
-            const esSupervisor = rolUsuario === UserRole.SUPERVISOR.toLowerCase();
-            const esAuditor = rolUsuario === UserRole.AUDITOR_CUENTAS.toLowerCase();
+    this.logger.log(`📥 Usuario ${user.username} solicitando archivo ${numeroDocumento} del documento ${id}`);
 
-            if (esAdmin || esSupervisor || esAuditor) {
-                documento = await this.documentoRepository.findOne({
-                    where: { id },
-                });
-            } else {
-                documento = await this.documentoRepository.findOne({
-                    where: {
-                        id,
-                        radicador: { id: user.id }
-                    },
-                });
-            }
+    // Buscar el documento
+    let documento: Documento | null = null;
+    const rolUsuario = user.role?.toString().toLowerCase();
+    const esAdminOrSupervisorOrAuditor = ['admin', 'supervisor', 'auditor_cuentas'].includes(rolUsuario);
 
-            if (!documento) {
-                throw new NotFoundException('Documento no encontrado');
-            }
-
-            let nombreArchivo: string;
-            switch (numeroDocumento) {
-                case 1:
-                    nombreArchivo = documento.cuentaCobro;
-                    break;
-                case 2:
-                    nombreArchivo = documento.seguridadSocial;
-                    break;
-                case 3:
-                    nombreArchivo = documento.informeActividades;
-                    break;
-                default:
-                    throw new BadRequestException('Número de documento inválido (1-3)');
-            }
-
-            return this.storageService.getFileUrl(nombreArchivo);
-        } catch (error) {
-            this.logger.error(`❌ Error en obtenerRutaArchivo: ${error.message}`);
-            throw error;
-        }
+    if (esAdminOrSupervisorOrAuditor) {
+        documento = await this.documentoRepository.findOne({ where: { id } });
+    } else {
+        documento = await this.documentoRepository.findOne({
+            where: { id, radicador: { id: user.id } }
+        });
     }
+
+    if (!documento) {
+        throw new NotFoundException('Documento no encontrado o sin permisos');
+    }
+
+    let nombreArchivo: string;
+    switch (numeroDocumento) {
+        case 1: nombreArchivo = documento.cuentaCobro; break;
+        case 2: nombreArchivo = documento.seguridadSocial; break;
+        case 3: nombreArchivo = documento.informeActividades; break;
+        default:
+            throw new BadRequestException('Número de documento inválido (1-3)');
+    }
+
+    if (!nombreArchivo) {
+        throw new NotFoundException(`Archivo ${numeroDocumento} no registrado en este documento`);
+    }
+
+    // ✅ VERIFICAR QUE EL ARCHIVO REALMENTE EXISTE usando StorageService
+    const existe = await this.storageService.fileExists(nombreArchivo);
+    this.logger.log(`📁 Archivo relativo: ${nombreArchivo} | ¿Existe en storage? ${existe}`);
+
+    if (!existe) {
+        this.logger.error(`❌ Archivo no encontrado en storage: ${nombreArchivo}`);
+        throw new NotFoundException('El archivo físico no existe en el servidor');
+    }
+
+    return nombreArchivo;   // ← Devolvemos solo la ruta RELATIVA
+}
 
     async obtenerRutaArchivoPublico(
         documento: Documento,
@@ -958,14 +1006,7 @@ Ruta servidor: ${rutaCarpeta}
 
             const documentoActualizado = await this.documentoRepository.save(documento);
 
-            if (nuevoEstado === 'RADICADO' || nuevoEstado === 'SUPERVISADO') {
-                try {
-                    await this.supervisorService.onDocumentoCambiaEstado(documentoId, nuevoEstado);
-                    this.logger.log(`✅ Notificación enviada a supervisor sobre cambio de estado`);
-                } catch (error) {
-                    this.logger.error(`⚠️ Error notificando cambio de estado a supervisor: ${error.message}`);
-                }
-            }
+
 
             this.logger.log(`✅ Estado del documento ${documento.numeroRadicado} cambiado de ${estadoAnterior} a ${nuevoEstado}`);
 
@@ -992,5 +1033,27 @@ Ruta servidor: ${rutaCarpeta}
         }
 
         return await this.contratistaService.buscarPorId(documento.contratistaId);
+    }
+
+    async obtenerDocumentoPorId(id: string): Promise<Documento> {
+        try {
+            this.logger.log(`🔍 Buscando documento por ID: ${id}`);
+
+            const documento = await this.documentoRepository.findOne({
+                where: { id },
+                relations: ['radicador', 'usuarioAsignado']
+            });
+
+            if (!documento) {
+                this.logger.warn(`⚠️ Documento ${id} no encontrado`);
+                throw new NotFoundException(`Documento con ID ${id} no encontrado`);
+            }
+
+            this.logger.log(`✅ Documento encontrado: ${documento.numeroRadicado}`);
+            return documento;
+        } catch (error) {
+            this.logger.error(`❌ Error en obtenerDocumentoPorId: ${error.message}`);
+            throw error;
+        }
     }
 }
