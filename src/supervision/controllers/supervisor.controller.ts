@@ -219,25 +219,7 @@ export class SupervisorController {
     };
   }
 
-  @Public()  // ← AGREGAR ESTO
-  @Get('ver-paz-salvo/:nombreArchivo')
-  async verPazSalvoPublico(
-    @Param('nombreArchivo') nombreArchivo: string,
-    @Res() res: Response,
-    @Query('download') download?: string,
-  ) {
-    return this.servirArchivoPublico(nombreArchivo, download, res, 'paz-salvo');
-  }
-
-  @Public()  // ← AGREGAR ESTO
-  @Get('ver-archivo-supervisor/:nombreArchivo')
-  async verArchivoAprobacionPublico(
-    @Param('nombreArchivo') nombreArchivo: string,
-    @Res() res: Response,
-    @Query('download') download?: string,
-  ) {
-    return this.servirArchivoPublico(nombreArchivo, download, res, 'aprobacion');
-  }
+ 
 
   private async servirArchivoPublico(
     nombreArchivo: string,

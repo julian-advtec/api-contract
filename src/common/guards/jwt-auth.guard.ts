@@ -21,11 +21,28 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       return true;
     }
 
+    // 🔑 IMPORTANTE: Extraer token de query params y agregarlo al header
+    const request = context.switchToHttp().getRequest();
+    
+    // Verificar si hay token en query params
+    if (request.query && request.query.token) {
+      const token = request.query.token;
+      // Agregar el token al header Authorization para que passport lo pueda usar
+      request.headers.authorization = `Bearer ${token}`;
+      console.log('[JWT GUARD] Token extraído de query params y agregado a headers');
+    }
+    
+    // También verificar en body (para POST)
+    if (request.body && request.body.token && !request.headers.authorization) {
+      const token = request.body.token;
+      request.headers.authorization = `Bearer ${token}`;
+      console.log('[JWT GUARD] Token extraído del body y agregado a headers');
+    }
+
     // Ruta normal → validar JWT
     console.log('[JWT GUARD] Validando JWT...');
     return super.canActivate(context);
   }
-  
 
   // Corregido: tipos explícitos + import de UnauthorizedException
   handleRequest(err: any, user: any, info: any): any {

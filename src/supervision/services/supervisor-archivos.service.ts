@@ -100,167 +100,148 @@ export class SupervisorArchivosService {
 
   /**
    * ✅ OBTENER ARCHIVO DE PAZ Y SALVO - BÚSQUEDA MEJORADA
-   */
-  async obtenerArchivoPazSalvo(
-    supervisorId: string,
-    nombreArchivo: string
-  ): Promise<{ ruta: string; nombre: string }> {
-    try {
-      // 1. Primero buscar en la base de datos
-      const supervisorDoc = await this.supervisorRepository.findOne({
-        where: {
-          supervisor: { id: supervisorId },
-          pazSalvo: nombreArchivo
-        },
-        relations: ['documento']
-      });
 
-      // 2. Si se encuentra en BD, usar esa ruta
-      if (supervisorDoc && supervisorDoc.documento) {
-        const documento = supervisorDoc.documento;
-        const rutaSupervisor = path.join(documento.rutaCarpetaRadicado, 'supervisor');
-        const rutaCompleta = path.join(rutaSupervisor, nombreArchivo);
-
-        if (fs.existsSync(rutaCompleta)) {
-          return {
-            ruta: rutaCompleta,
-            nombre: nombreArchivo
-          };
-        }
-      }
-
-      // 3. Si no se encuentra en BD, buscar en rutas alternativas
-      this.logger.log(`🔍 Buscando archivo de paz y salvo en rutas alternativas: ${nombreArchivo}`);
-
-      const posiblesRutas = this.obtenerPosiblesRutasArchivo(nombreArchivo, 'paz-salvo');
-
-      for (const rutaCompleta of posiblesRutas) {
-        if (fs.existsSync(rutaCompleta)) {
-          this.logger.log(`✅ Archivo encontrado en ruta alternativa: ${rutaCompleta}`);
-          return {
-            ruta: rutaCompleta,
-            nombre: nombreArchivo
-          };
-        }
-      }
-
-      // 4. Si aún no se encuentra, buscar archivos similares
-      const archivoSinExtension = this.obtenerNombreSinExtension(nombreArchivo);
-      const archivosSimilares = this.buscarArchivosSimilares(archivoSinExtension, 'paz-salvo');
-
-      if (archivosSimilares.length > 0) {
-        this.logger.log(`🔄 Archivos similares encontrados: ${archivosSimilares.join(', ')}`);
-        const primeraRuta = archivosSimilares[0];
-        return {
-          ruta: primeraRuta,
-          nombre: path.basename(primeraRuta)
-        };
-      }
-
-      // 5. Último recurso: buscar en toda la carpeta uploads
-      const archivosEncontrados = this.buscarEnTodaCarpetaUploads(nombreArchivo);
-      if (archivosEncontrados.length > 0) {
-        const primeraRuta = archivosEncontrados[0];
-        return {
-          ruta: primeraRuta,
-          nombre: path.basename(primeraRuta)
-        };
-      }
-
-      throw new NotFoundException(`Archivo de paz y salvo "${nombreArchivo}" no encontrado. Rutas verificadas: ${posiblesRutas.join(', ')}`);
-
-    } catch (error) {
-      this.logger.error(`❌ Error obteniendo archivo de paz y salvo: ${error.message}`);
-      throw new HttpException(
-        error.message || 'Error obteniendo archivo de paz y salvo',
-        HttpStatus.NOT_FOUND
-      );
-    }
-  }
 
   /**
    * ✅ OBTENER ARCHIVO DEL SUPERVISOR (APROBACIÓN) - BÚSQUEDA MEJORADA
    */
   async obtenerArchivoSupervisor(
-    supervisorId: string,
-    nombreArchivo: string
-  ): Promise<{ ruta: string; nombre: string }> {
-    try {
-      // 1. Primero buscar en la base de datos
-      const supervisorDoc = await this.supervisorRepository.findOne({
-        where: {
-          supervisor: { id: supervisorId },
-          nombreArchivoSupervisor: nombreArchivo
-        },
-        relations: ['documento']
-      });
-
-      // 2. Si se encuentra en BD, usar esa ruta
-      if (supervisorDoc && supervisorDoc.documento) {
-        const documento = supervisorDoc.documento;
-        const rutaSupervisor = path.join(documento.rutaCarpetaRadicado, 'supervisor');
-        const rutaCompleta = path.join(rutaSupervisor, nombreArchivo);
-
-        if (fs.existsSync(rutaCompleta)) {
-          return {
-            ruta: rutaCompleta,
-            nombre: nombreArchivo
-          };
-        }
-      }
-
-      // 3. Si no se encuentra en BD, buscar en rutas alternativas
-      this.logger.log(`🔍 Buscando archivo supervisor en rutas alternativas: ${nombreArchivo}`);
-
-      const posiblesRutas = this.obtenerPosiblesRutasArchivo(nombreArchivo, 'supervisor');
-
-      for (const rutaCompleta of posiblesRutas) {
-        if (fs.existsSync(rutaCompleta)) {
-          this.logger.log(`✅ Archivo encontrado en ruta alternativa: ${rutaCompleta}`);
-          return {
-            ruta: rutaCompleta,
-            nombre: nombreArchivo
-          };
-        }
-      }
-
-      // 4. Buscar archivos con nombres similares
-      const archivoSinExtension = this.obtenerNombreSinExtension(nombreArchivo);
-      const archivosSimilares = this.buscarArchivosSimilares(archivoSinExtension, 'supervisor');
-
-      if (archivosSimilares.length > 0) {
-        this.logger.log(`🔄 Archivos similares encontrados: ${archivosSimilares.join(', ')}`);
-        const primeraRuta = archivosSimilares[0];
+  supervisorId: string,
+  nombreArchivo: string
+): Promise<{ ruta: string; nombre: string }> {
+  try {
+    // 1. Buscar SOLO por nombre de archivo (sin filtrar por supervisor)
+    const supervisorDoc = await this.supervisorRepository.findOne({
+      where: {
+        nombreArchivoSupervisor: nombreArchivo
+      },
+      relations: ['documento']
+    });
+    // 2. Si se encuentra en BD, usar esa ruta
+    if (supervisorDoc && supervisorDoc.documento) {
+      const documento = supervisorDoc.documento;
+      
+      // Construir ruta correcta usando la ruta del documento
+      const rutaSupervisor = path.join(documento.rutaCarpetaRadicado, 'supervisor');
+      const rutaCompleta = path.join(rutaSupervisor, nombreArchivo);
+      
+      this.logger.log(`✅ Archivo encontrado en BD: ${rutaCompleta}`);
+      
+      if (fs.existsSync(rutaCompleta)) {
         return {
-          ruta: primeraRuta,
-          nombre: path.basename(primeraRuta)
+          ruta: rutaCompleta,
+          nombre: nombreArchivo
         };
       }
-
-      // 5. Último recurso: buscar en toda la carpeta uploads
-      const archivosEncontrados = this.buscarEnTodaCarpetaUploads(nombreArchivo);
-      if (archivosEncontrados.length > 0) {
-        const primeraRuta = archivosEncontrados[0];
+      
+      // Si no existe en esa ruta, buscar en la carpeta de supervisor
+      const rutaAlternativa = path.join(documento.rutaCarpetaRadicado, 'supervisor', nombreArchivo);
+      if (fs.existsSync(rutaAlternativa)) {
         return {
-          ruta: primeraRuta,
-          nombre: path.basename(primeraRuta)
+          ruta: rutaAlternativa,
+          nombre: nombreArchivo
         };
       }
-
-      // 6. Para debugging: listar qué archivos existen en uploads
-      const archivosDisponibles = this.listarArchivosEnUploads();
-      this.logger.warn(`Archivos disponibles en uploads: ${JSON.stringify(archivosDisponibles.slice(0, 10))}`);
-
-      throw new NotFoundException(`Archivo supervisor "${nombreArchivo}" no encontrado. Rutas verificadas: ${posiblesRutas.join(', ')}`);
-
-    } catch (error) {
-      this.logger.error(`❌ Error obteniendo archivo supervisor: ${error.message}`);
-      throw new HttpException(
-        error.message || 'Error obteniendo archivo supervisor',
-        HttpStatus.NOT_FOUND
-      );
     }
+
+    // 3. Si no se encuentra en BD, buscar en rutas alternativas
+    this.logger.log(`🔍 Buscando archivo supervisor en rutas alternativas: ${nombreArchivo}`);
+
+    const posiblesRutas = this.obtenerPosiblesRutasArchivo(nombreArchivo, 'supervisor');
+
+    for (const rutaCompleta of posiblesRutas) {
+      if (fs.existsSync(rutaCompleta)) {
+        this.logger.log(`✅ Archivo encontrado en ruta alternativa: ${rutaCompleta}`);
+        return {
+          ruta: rutaCompleta,
+          nombre: nombreArchivo
+        };
+      }
+    }
+
+    // 4. Buscar archivos con nombres similares
+    const archivoSinExtension = this.obtenerNombreSinExtension(nombreArchivo);
+    const archivosSimilares = this.buscarArchivosSimilares(archivoSinExtension, 'supervisor');
+
+    if (archivosSimilares.length > 0) {
+      this.logger.log(`🔄 Archivos similares encontrados: ${archivosSimilares.join(', ')}`);
+      const primeraRuta = archivosSimilares[0];
+      return {
+        ruta: primeraRuta,
+        nombre: path.basename(primeraRuta)
+      };
+    }
+
+    throw new NotFoundException(`Archivo supervisor "${nombreArchivo}" no encontrado`);
+
+  } catch (error) {
+    this.logger.error(`❌ Error obteniendo archivo supervisor: ${error.message}`);
+    throw new HttpException(
+      error.message || 'Error obteniendo archivo supervisor',
+      HttpStatus.NOT_FOUND
+    );
   }
+}
+
+/**
+ * ✅ OBTENER ARCHIVO DE PAZ Y SALVO - SIN FILTRAR POR SUPERVISOR
+ */
+async obtenerArchivoPazSalvo(
+  supervisorId: string,
+  nombreArchivo: string
+): Promise<{ ruta: string; nombre: string }> {
+  try {
+    // 1. Buscar SOLO por nombre de archivo (sin filtrar por supervisor)
+    const supervisorDoc = await this.supervisorRepository.findOne({
+      where: {
+        pazSalvo: nombreArchivo
+      },
+      relations: ['documento']
+    });
+
+    // 2. Si se encuentra en BD, usar esa ruta
+    if (supervisorDoc && supervisorDoc.documento) {
+      const documento = supervisorDoc.documento;
+      
+      // Construir ruta correcta
+      const rutaSupervisor = path.join(documento.rutaCarpetaRadicado, 'supervisor');
+      const rutaCompleta = path.join(rutaSupervisor, nombreArchivo);
+      
+      this.logger.log(`✅ Paz y salvo encontrado en BD: ${rutaCompleta}`);
+      
+      if (fs.existsSync(rutaCompleta)) {
+        return {
+          ruta: rutaCompleta,
+          nombre: nombreArchivo
+        };
+      }
+    }
+
+    // 3. Buscar en rutas alternativas
+    this.logger.log(`🔍 Buscando paz y salvo en rutas alternativas: ${nombreArchivo}`);
+
+    const posiblesRutas = this.obtenerPosiblesRutasArchivo(nombreArchivo, 'paz-salvo');
+
+    for (const rutaCompleta of posiblesRutas) {
+      if (fs.existsSync(rutaCompleta)) {
+        this.logger.log(`✅ Paz y salvo encontrado en ruta alternativa: ${rutaCompleta}`);
+        return {
+          ruta: rutaCompleta,
+          nombre: nombreArchivo
+        };
+      }
+    }
+
+    throw new NotFoundException(`Paz y salvo "${nombreArchivo}" no encontrado`);
+
+  } catch (error) {
+    this.logger.error(`❌ Error obteniendo paz y salvo: ${error.message}`);
+    throw new HttpException(
+      error.message || 'Error obteniendo paz y salvo',
+      HttpStatus.NOT_FOUND
+    );
+  }
+}
 
   /**
    * ✅ OBTENER POSIBLES RUTAS PARA UN ARCHIVO

@@ -46,7 +46,7 @@ export class SupervisorArchivosController {
   }
 
   // ===============================
-  // DESCARGAR / VER ARCHIVOS RADICADOS
+  // DESCARGAR ARCHIVOS RADICADOS
   // ===============================
   @Get('descargar/:documentoId/archivo/:numeroArchivo')
   async descargarArchivoRadicado(
@@ -77,132 +77,15 @@ export class SupervisorArchivosController {
         res.setHeader('Content-Type', 'application/octet-stream');
         res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
       } else {
-        // Para previsualización inline
-        const ext = path.extname(nombre).toLowerCase();
-        const mime = {
-          '.pdf': 'application/pdf',
-          '.jpg': 'image/jpeg',
-          '.jpeg': 'image/jpeg',
-          '.png': 'image/png',
-          '.doc': 'application/msword',
-          '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        }[ext] || 'application/octet-stream';
-        res.setHeader('Content-Type', mime);
-        res.setHeader('Content-Disposition', `inline; filename="${nombre}"`);
+        // Solo descarga, sin previsualización
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
       }
 
       const stream = fs.createReadStream(ruta);
       stream.pipe(res);
     } catch (error) {
       this.logger.error(`❌ Error descargando archivo: ${error.message}`);
-      if (!res.headersSent) {
-        res.status(HttpStatus.NOT_FOUND).json({
-          success: false,
-          message: error.message || 'Archivo no encontrado',
-        });
-      }
-    }
-  }
-
-  // ===============================
-  // VER ARCHIVO RADICADO (visualización inline)
-  // ===============================
-  @Get('ver/:documentoId/archivo/:numeroArchivo')
-  async verArchivoRadicado(
-    @Param('documentoId') documentoId: string,
-    @Param('numeroArchivo') numeroArchivo: number,
-    @Req() req: Request,
-    @Res() res: Response
-  ) {
-    const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`👁️ Usuario ${userId} viendo archivo ${numeroArchivo} del documento ${documentoId}`);
-
-
-    try {
-      const { ruta, nombre } = await this.supervisorArchivosService.descargarArchivoRadicado(
-        documentoId,
-        numeroArchivo,
-        userId
-      );
-
-      // Verificar si el archivo existe
-      if (!fs.existsSync(ruta)) {
-        throw new HttpException(`Archivo ${nombre} no encontrado`, HttpStatus.NOT_FOUND);
-      }
-
-      const extension = path.extname(nombre).toLowerCase();
-      const mimeTypes: Record<string, string> = {
-        '.pdf': 'application/pdf',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.doc': 'application/msword',
-        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      };
-
-      res.setHeader('Content-Type', mimeTypes[extension] || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${nombre}"`);
-
-      const fileStream = fs.createReadStream(ruta);
-      fileStream.pipe(res);
-
-    } catch (error) {
-      this.logger.error(`❌ Error viendo archivo: ${error.message}`);
-
-      if (!res.headersSent) {
-        const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
-        res.status(status).json({
-          success: false,
-          message: error.message || 'Error al ver archivo'
-        });
-      }
-    }
-  }
-
-  // ===============================
-  // VER ARCHIVO DEL SUPERVISOR (APROBACIÓN)
-  // ===============================
-  @Get('ver-archivo-supervisor/:nombreArchivo')
-  async verArchivoSupervisor(
-    @Param('nombreArchivo') nombreArchivo: string,
-    @Req() req: Request,
-    @Res() res: Response,
-  ) {
-    const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`👁️ Usuario ${userId} viendo archivo supervisor: ${nombreArchivo}`);
-
-    try {
-      // Decodificar el nombre del archivo (puede venir codificado en URL)
-      const nombreArchivoDecodificado = decodeURIComponent(nombreArchivo);
-
-      const { ruta, nombre } = await this.supervisorArchivosService.obtenerArchivoSupervisor(
-        userId,
-        nombreArchivoDecodificado,
-      );
-
-      // Verificar si el archivo existe
-      if (!fs.existsSync(ruta)) {
-        this.logger.warn(`❌ Archivo no encontrado en ruta: ${ruta}`);
-        throw new HttpException(`Archivo ${nombre} no encontrado`, HttpStatus.NOT_FOUND);
-      }
-
-      const ext = path.extname(nombre).toLowerCase();
-      const mime = {
-        '.pdf': 'application/pdf',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.doc': 'application/msword',
-        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      }[ext] || 'application/octet-stream';
-
-      res.setHeader('Content-Type', mime);
-      res.setHeader('Content-Disposition', `inline; filename="${nombre}"`);
-
-      const fileStream = fs.createReadStream(ruta);
-      fileStream.pipe(res);
-    } catch (error) {
-      this.logger.error(`❌ Error viendo archivo supervisor: ${error.message}`);
       if (!res.headersSent) {
         res.status(HttpStatus.NOT_FOUND).json({
           success: false,
@@ -249,62 +132,6 @@ export class SupervisorArchivosController {
         success: false,
         message: error.message || 'Archivo no encontrado',
       });
-    }
-  }
-
-  // ===============================
-  // VER PAZ Y SALVO
-  // ===============================
-  @Get('ver-paz-salvo/:nombreArchivo')
-  async verPazSalvo(
-    @Param('nombreArchivo') nombreArchivo: string,
-    @Req() req: Request,
-    @Res() res: Response
-  ) {
-    const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`👁️ Usuario ${userId} viendo paz y salvo: ${nombreArchivo}`);
-
-    try {
-      // Decodificar el nombre del archivo
-      const nombreArchivoDecodificado = decodeURIComponent(nombreArchivo);
-
-      const { ruta, nombre } = await this.supervisorArchivosService.obtenerArchivoPazSalvo(
-        userId,
-        nombreArchivoDecodificado
-      );
-
-      // Verificar si el archivo existe
-      if (!fs.existsSync(ruta)) {
-        this.logger.warn(`❌ Archivo de paz y salvo no encontrado en ruta: ${ruta}`);
-        throw new HttpException(`Archivo ${nombre} no encontrado`, HttpStatus.NOT_FOUND);
-      }
-
-      const extension = path.extname(nombre).toLowerCase();
-      const mimeTypes: Record<string, string> = {
-        '.pdf': 'application/pdf',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.doc': 'application/msword',
-        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      };
-
-      res.setHeader('Content-Type', mimeTypes[extension] || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${nombre}"`);
-
-      const fileStream = fs.createReadStream(ruta);
-      fileStream.pipe(res);
-
-    } catch (error) {
-      this.logger.error(`❌ Error viendo paz y salvo: ${error.message}`);
-
-      if (!res.headersSent) {
-        const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
-        res.status(status).json({
-          success: false,
-          message: error.message || 'Error al ver archivo'
-        });
-      }
     }
   }
 
@@ -425,23 +252,124 @@ export class SupervisorArchivosController {
         throw new HttpException(`Archivo ${nombre} no encontrado`, HttpStatus.NOT_FOUND);
       }
 
+      // Forzar descarga en lugar de vista previa
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
+
+      const stream = fs.createReadStream(ruta);
+      stream.pipe(res);
+    } catch (error) {
+      this.logger.error(`❌ Error descargando archivo auditor: ${error.message}`);
+      if (!res.headersSent) {
+        const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
+        res.status(status).json({
+          success: false,
+          message: error.message || 'Error al descargar archivo'
+        });
+      }
+    }
+  }
+
+  // ===============================
+  // VER ARCHIVO DEL SUPERVISOR (APROBACIÓN) - Con autenticación
+  // ===============================
+  @Get('ver-archivo-supervisor/:nombreArchivo')
+  async verArchivoSupervisor(
+    @Param('nombreArchivo') nombreArchivo: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`👁️ Usuario ${userId} previsualizando archivo supervisor: ${nombreArchivo}`);
+
+    try {
+      const nombreArchivoDecodificado = decodeURIComponent(nombreArchivo);
+
+      const { ruta, nombre } = await this.supervisorArchivosService.obtenerArchivoSupervisor(
+        userId,
+        nombreArchivoDecodificado,
+      );
+
+      if (!fs.existsSync(ruta)) {
+        throw new HttpException(`Archivo ${nombre} no encontrado`, HttpStatus.NOT_FOUND);
+      }
+
       const ext = path.extname(nombre).toLowerCase();
-      const mime = {
+      const mimeTypes: Record<string, string> = {
         '.pdf': 'application/pdf',
         '.jpg': 'image/jpeg',
         '.jpeg': 'image/jpeg',
         '.png': 'image/png',
         '.doc': 'application/msword',
         '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      }[ext] || 'application/octet-stream';
+      };
 
-      res.setHeader('Content-Type', mime);
+      const mimeType = mimeTypes[ext] || 'application/octet-stream';
+
+      res.setHeader('Content-Type', mimeType);
       res.setHeader('Content-Disposition', `inline; filename="${nombre}"`);
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
 
       const stream = fs.createReadStream(ruta);
       stream.pipe(res);
+
     } catch (error) {
-      this.logger.error(`❌ Error viendo archivo auditor: ${error.message}`);
+      this.logger.error(`❌ Error previsualizando archivo supervisor: ${error.message}`);
+      if (!res.headersSent) {
+        res.status(HttpStatus.NOT_FOUND).json({
+          success: false,
+          message: error.message || 'Archivo no encontrado',
+        });
+      }
+    }
+  }
+
+  // ===============================
+  // VER PAZ Y SALVO - Con autenticación
+  // ===============================
+  @Get('ver-paz-salvo/:nombreArchivo')
+  async verPazSalvo(
+    @Param('nombreArchivo') nombreArchivo: string,
+    @Req() req: Request,
+    @Res() res: Response
+  ) {
+    const userId = this.getUserIdFromRequest(req);
+    this.logger.log(`👁️ Usuario ${userId} previsualizando paz y salvo: ${nombreArchivo}`);
+
+    try {
+      const nombreArchivoDecodificado = decodeURIComponent(nombreArchivo);
+
+      const { ruta, nombre } = await this.supervisorArchivosService.obtenerArchivoPazSalvo(
+        userId,
+        nombreArchivoDecodificado
+      );
+
+      if (!fs.existsSync(ruta)) {
+        this.logger.warn(`❌ Paz y salvo no encontrado en: ${ruta}`);
+        throw new HttpException(`Archivo ${nombre} no encontrado`, HttpStatus.NOT_FOUND);
+      }
+
+      const ext = path.extname(nombre).toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        '.pdf': 'application/pdf',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      };
+
+      const mimeType = mimeTypes[ext] || 'application/octet-stream';
+
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Disposition', `inline; filename="${nombre}"`);
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+
+      const stream = fs.createReadStream(ruta);
+      stream.pipe(res);
+
+    } catch (error) {
+      this.logger.error(`❌ Error previsualizando paz y salvo: ${error.message}`);
       if (!res.headersSent) {
         const status = error instanceof HttpException ? error.getStatus() : HttpStatus.NOT_FOUND;
         res.status(status).json({
