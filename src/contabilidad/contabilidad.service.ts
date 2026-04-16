@@ -1271,5 +1271,4 @@ export class ContabilidadService {
         };
     }
 
-
 }

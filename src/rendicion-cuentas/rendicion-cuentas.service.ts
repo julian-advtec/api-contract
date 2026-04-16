@@ -102,109 +102,109 @@ export class RendicionCuentasService {
   /**
    * 2. TOMAR DOCUMENTO PARA REVISIÓN
    */
-// src/rendicion-cuentas/rendicion-cuentas.service.ts
-async tomarDocumento(documentoId: string, usuarioId: string) {
-  this.logger.log(`📥 Recibida solicitud para tomar documento: ${documentoId}`);
-  this.logger.log(`👤 Usuario: ${usuarioId}`);
+  // src/rendicion-cuentas/rendicion-cuentas.service.ts
+  async tomarDocumento(documentoId: string, usuarioId: string) {
+    this.logger.log(`📥 Recibida solicitud para tomar documento: ${documentoId}`);
+    this.logger.log(`👤 Usuario: ${usuarioId}`);
 
-  const queryRunner = this.documentoRepo.manager.connection.createQueryRunner();
-  await queryRunner.connect();
-  await queryRunner.startTransaction();
+    const queryRunner = this.documentoRepo.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-  try {
-    // Paso 1: Buscar documento
-    const documento = await queryRunner.manager
-      .createQueryBuilder(Documento, 'doc')
-      .where('doc.id = :id', { id: documentoId })
-      .andWhere('doc.estado = :estado', { estado: 'COMPLETADO_ASESOR_GERENCIA' })
-      .setLock('pessimistic_write')
-      .getOne();
-
-    if (!documento) {
-      throw new NotFoundException('Documento no encontrado o no disponible');
-    }
-
-    // Paso 2: Verificar si ya está en revisión
-    const existeEnRevision = await queryRunner.manager.findOne(RendicionCuentasDocumento, {
-      where: {
-        documento: { id: documentoId },
-        estado: RendicionCuentasEstado.EN_REVISION
-      }
-    });
-
-    if (existeEnRevision) {
-      throw new BadRequestException('El documento ya está siendo revisado por otro usuario');
-    }
-
-    // Paso 3: Buscar usuario responsable
-    const responsable = await queryRunner.manager.findOneOrFail(User, { where: { id: usuarioId } });
-
-    // Paso 4: Crear registro en rendición
-    const rendicionDoc = queryRunner.manager.create(RendicionCuentasDocumento, {
-      documento,
-      documentoId: documento.id,
-      responsable,
-      responsableId: responsable.id,
-      estado: RendicionCuentasEstado.EN_REVISION,
-      fechaInicioRevision: new Date(),
-    });
-
-    // Paso 5: Actualizar estado del documento original
-    documento.estado = 'EN_REVISION_RENDICION_CUENTAS';
-    documento.usuarioAsignado = responsable;
-    documento.usuarioAsignadoNombre = responsable.fullName || responsable.username;
-    documento.ultimoUsuario = `Rendición Cuentas: ${responsable.fullName || responsable.username}`;
-
-    // Paso 6: Agregar al historial del documento original
-    const historial = documento.historialEstados || [];
-    historial.push({
-      fecha: new Date(),
-      estado: 'EN_REVISION_RENDICION_CUENTAS',
-      usuarioId: responsable.id,
-      usuarioNombre: responsable.fullName || responsable.username,
-      rolUsuario: responsable.role,
-      observacion: `Documento tomado para rendición de cuentas por ${responsable.username}`,
-    });
-    documento.historialEstados = historial;
-
-    // Paso 7: Guardar documento original
-    await queryRunner.manager.save(documento);
-
-    // Paso 8: Guardar registro de rendición
-    const savedRendicion = await queryRunner.manager.save(rendicionDoc);
-
-    // Paso 9: Confirmar transacción PRIMERO
-    await queryRunner.commitTransaction();
-
-    // Paso 10: AHORA registrar en historial de rendición (fuera de la transacción)
     try {
-      await this.registrarHistorial({
-        documentoId: savedRendicion.id,
-        usuarioId: responsable.id,
-        estadoAnterior: null,
-        estadoNuevo: RendicionCuentasEstado.EN_REVISION,
-        accion: 'TOMAR_REVISION',
-        observacion: `Documento tomado para revisión`,
-      });
-      this.logger.log(`✅ Historial de rendición registrado`);
-    } catch (historialError) {
-      // Solo loguear el error, no fallar la operación principal
-      this.logger.error(`❌ Error registrando historial (no crítico): ${historialError.message}`);
-    }
+      // Paso 1: Buscar documento
+      const documento = await queryRunner.manager
+        .createQueryBuilder(Documento, 'doc')
+        .where('doc.id = :id', { id: documentoId })
+        .andWhere('doc.estado = :estado', { estado: 'COMPLETADO_ASESOR_GERENCIA' })
+        .setLock('pessimistic_write')
+        .getOne();
 
-    return {
-      success: true,
-      message: `Documento ${documento.numeroRadicado} tomado para revisión`,
-      rendicionId: savedRendicion.id,
-    };
-  } catch (error) {
-    this.logger.error(`❌ Error en tomarDocumento: ${error.message}`, error.stack);
-    await queryRunner.rollbackTransaction();
-    throw error;
-  } finally {
-    await queryRunner.release();
+      if (!documento) {
+        throw new NotFoundException('Documento no encontrado o no disponible');
+      }
+
+      // Paso 2: Verificar si ya está en revisión
+      const existeEnRevision = await queryRunner.manager.findOne(RendicionCuentasDocumento, {
+        where: {
+          documento: { id: documentoId },
+          estado: RendicionCuentasEstado.EN_REVISION
+        }
+      });
+
+      if (existeEnRevision) {
+        throw new BadRequestException('El documento ya está siendo revisado por otro usuario');
+      }
+
+      // Paso 3: Buscar usuario responsable
+      const responsable = await queryRunner.manager.findOneOrFail(User, { where: { id: usuarioId } });
+
+      // Paso 4: Crear registro en rendición
+      const rendicionDoc = queryRunner.manager.create(RendicionCuentasDocumento, {
+        documento,
+        documentoId: documento.id,
+        responsable,
+        responsableId: responsable.id,
+        estado: RendicionCuentasEstado.EN_REVISION,
+        fechaInicioRevision: new Date(),
+      });
+
+      // Paso 5: Actualizar estado del documento original
+      documento.estado = 'EN_REVISION_RENDICION_CUENTAS';
+      documento.usuarioAsignado = responsable;
+      documento.usuarioAsignadoNombre = responsable.fullName || responsable.username;
+      documento.ultimoUsuario = `Rendición Cuentas: ${responsable.fullName || responsable.username}`;
+
+      // Paso 6: Agregar al historial del documento original
+      const historial = documento.historialEstados || [];
+      historial.push({
+        fecha: new Date(),
+        estado: 'EN_REVISION_RENDICION_CUENTAS',
+        usuarioId: responsable.id,
+        usuarioNombre: responsable.fullName || responsable.username,
+        rolUsuario: responsable.role,
+        observacion: `Documento tomado para rendición de cuentas por ${responsable.username}`,
+      });
+      documento.historialEstados = historial;
+
+      // Paso 7: Guardar documento original
+      await queryRunner.manager.save(documento);
+
+      // Paso 8: Guardar registro de rendición
+      const savedRendicion = await queryRunner.manager.save(rendicionDoc);
+
+      // Paso 9: Confirmar transacción PRIMERO
+      await queryRunner.commitTransaction();
+
+      // Paso 10: AHORA registrar en historial de rendición (fuera de la transacción)
+      try {
+        await this.registrarHistorial({
+          documentoId: savedRendicion.id,
+          usuarioId: responsable.id,
+          estadoAnterior: null,
+          estadoNuevo: RendicionCuentasEstado.EN_REVISION,
+          accion: 'TOMAR_REVISION',
+          observacion: `Documento tomado para revisión`,
+        });
+        this.logger.log(`✅ Historial de rendición registrado`);
+      } catch (historialError) {
+        // Solo loguear el error, no fallar la operación principal
+        this.logger.error(`❌ Error registrando historial (no crítico): ${historialError.message}`);
+      }
+
+      return {
+        success: true,
+        message: `Documento ${documento.numeroRadicado} tomado para revisión`,
+        rendicionId: savedRendicion.id,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error en tomarDocumento: ${error.message}`, error.stack);
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
-}
   /**
    * 3. OBTENER TODOS LOS DOCUMENTOS (lista completa)
    */
@@ -236,7 +236,7 @@ async tomarDocumento(documentoId: string, usuarioId: string) {
     }));
   }
 
-  
+
   /**
    * 4. OBTENER MIS DOCUMENTOS EN REVISIÓN
    */
@@ -365,16 +365,46 @@ async tomarDocumento(documentoId: string, usuarioId: string) {
   async obtenerRutaCarpeta(documentoId: string, usuarioId: string): Promise<{ rutaCarpeta: string; documentoInfo: any }> {
     this.logger.log(`📂 Buscando carpeta para documento ${documentoId}, usuario ${usuarioId}`);
 
-    const documento = await this.documentoRadicacionRepo.findOne({
-      where: { id: documentoId }
+    // Buscar en la tabla de rendición de cuentas primero
+    const rendicion = await this.documentoRepo.findOne({
+      where: {
+        documento: { id: documentoId }
+      },
+      relations: ['documento'],
     });
 
-    if (!documento) {
-      this.logger.error(`❌ Documento ${documentoId} no encontrado en radicacion`);
-      throw new NotFoundException('Documento no encontrado');
+    let documento: Documento | null = null;
+    let documentoInfo: any = null;
+
+    if (rendicion && rendicion.documento) {
+      documento = rendicion.documento;
+      documentoInfo = {
+        id: documento.id,
+        numeroRadicado: documento.numeroRadicado,
+        numeroContrato: documento.numeroContrato,
+        nombreContratista: documento.nombreContratista,
+      };
+      this.logger.log(`✅ Documento encontrado vía rendición: ${documento.numeroRadicado}`);
+    } else {
+      // Fallback: buscar directamente en la tabla de documentos
+      documento = await this.documentoRadicacionRepo.findOne({
+        where: { id: documentoId }
+      });
+
+      if (!documento) {
+        this.logger.error(`❌ Documento ${documentoId} no encontrado`);
+        throw new NotFoundException('Documento no encontrado');
+      }
+
+      documentoInfo = {
+        id: documento.id,
+        numeroRadicado: documento.numeroRadicado,
+        numeroContrato: documento.numeroContrato,
+        nombreContratista: documento.nombreContratista,
+      };
+      this.logger.log(`📁 Documento encontrado directamente: ${documento.numeroRadicado}`);
     }
 
-    this.logger.log(`📁 Documento encontrado: ${documento.numeroRadicado}`);
     this.logger.log(`📁 Ruta configurada: ${documento.rutaCarpetaRadicado}`);
 
     if (!documento.rutaCarpetaRadicado) {
@@ -387,24 +417,34 @@ async tomarDocumento(documentoId: string, usuarioId: string) {
       throw new NotFoundException(`La carpeta no existe: ${documento.rutaCarpetaRadicado}`);
     }
 
+    // Listar archivos para debug
     try {
-      const archivos = fs.readdirSync(documento.rutaCarpetaRadicado);
-      this.logger.log(`📄 Archivos encontrados (${archivos.length}):`, archivos);
+      const archivos = this.listarArchivosRecursivo(documento.rutaCarpetaRadicado);
+      this.logger.log(`📄 Archivos encontrados (${archivos.length}):`, archivos.slice(0, 10));
     } catch (error) {
       this.logger.error(`Error listando archivos: ${error.message}`);
     }
 
     return {
       rutaCarpeta: documento.rutaCarpetaRadicado,
-      documentoInfo: {
-        id: documento.id,
-        numeroRadicado: documento.numeroRadicado,
-        numeroContrato: documento.numeroContrato,
-        nombreContratista: documento.nombreContratista,
-      }
+      documentoInfo,
     };
   }
 
+  private listarArchivosRecursivo(dir: string, archivos: string[] = []): string[] {
+    const items = fs.readdirSync(dir);
+    for (const item of items) {
+      const rutaCompleta = path.join(dir, item);
+      const stat = fs.statSync(rutaCompleta);
+      if (stat.isDirectory()) {
+        this.listarArchivosRecursivo(rutaCompleta, archivos);
+      } else {
+        archivos.push(rutaCompleta);
+      }
+    }
+    return archivos;
+  }
+  
   /**
    * 7. OBTENER HISTORIAL DEL USUARIO
    */
@@ -529,30 +569,30 @@ async tomarDocumento(documentoId: string, usuarioId: string) {
   /**
    * 9. REGISTRAR HISTORIAL
    */
- private async registrarHistorial(data: {
-  documentoId: string;
-  usuarioId: string;
-  estadoAnterior: RendicionCuentasEstado | null;
-  estadoNuevo: RendicionCuentasEstado;
-  accion: string;
-  observacion?: string | null;
-}): Promise<RendicionCuentasHistorial> {
-  this.logger.log(`📝 Registrando historial:`, data);
-  const historial = new RendicionCuentasHistorial();
-  historial.documentoId = data.documentoId;
-  historial.usuarioId = data.usuarioId;
-  historial.estadoAnterior = data.estadoAnterior;
-  historial.estadoNuevo = data.estadoNuevo;
-  historial.accion = data.accion;
-  historial.observacion = data.observacion || null;
+  private async registrarHistorial(data: {
+    documentoId: string;
+    usuarioId: string;
+    estadoAnterior: RendicionCuentasEstado | null;
+    estadoNuevo: RendicionCuentasEstado;
+    accion: string;
+    observacion?: string | null;
+  }): Promise<RendicionCuentasHistorial> {
+    this.logger.log(`📝 Registrando historial:`, data);
+    const historial = new RendicionCuentasHistorial();
+    historial.documentoId = data.documentoId;
+    historial.usuarioId = data.usuarioId;
+    historial.estadoAnterior = data.estadoAnterior;
+    historial.estadoNuevo = data.estadoNuevo;
+    historial.accion = data.accion;
+    historial.observacion = data.observacion || null;
 
-  try {
-    const saved = await this.historialRepo.save(historial);
-    this.logger.log(`✅ Historial guardado con ID: ${saved.id}`);
-    return saved;
-  } catch (error) {
-    this.logger.error(`❌ Error guardando historial: ${error.message}`, error.stack);
-    throw error;
+    try {
+      const saved = await this.historialRepo.save(historial);
+      this.logger.log(`✅ Historial guardado con ID: ${saved.id}`);
+      return saved;
+    } catch (error) {
+      this.logger.error(`❌ Error guardando historial: ${error.message}`, error.stack);
+      throw error;
+    }
   }
-}
 }

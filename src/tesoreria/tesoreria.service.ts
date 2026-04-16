@@ -29,211 +29,267 @@ import * as mime from 'mime-types';
 import { TesoreriaSignatureService } from './tesoreria-signature.service';
 import { Signature } from '../signatures/entities/signature.entity';
 
+import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.service';
+
 const execAsync = promisify(exec);
 
 @Injectable()
 export class TesoreriaService {
     private readonly logger = new Logger(TesoreriaService.name);
 
-    constructor(
-        @InjectRepository(TesoreriaDocumento)
-        private tesoreriaRepository: Repository<TesoreriaDocumento>,
-        @InjectRepository(Documento)
-        private documentoRepository: Repository<Documento>,
-        @InjectRepository(User)
-        private userRepository: Repository<User>,
-        @InjectRepository(ContabilidadDocumento)
-        private contabilidadDocumentoRepository: Repository<ContabilidadDocumento>,
-        private readonly configService: ConfigService,
-        @InjectRepository(Signature) // 👈 AGREGAR ESTA LÍNEA
-        private signaturesRepository: Repository<Signature>,
-        private readonly tesoreriaSignatureService: TesoreriaSignatureService, // 👈 NUEVO SERVICIO
-    ) {
-        this.logger.log('💰 TesoreriaService inicializado');
+constructor(
+    @InjectRepository(TesoreriaDocumento)
+    private tesoreriaRepository: Repository<TesoreriaDocumento>,
+    @InjectRepository(Documento)
+    private documentoRepository: Repository<Documento>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
+    @InjectRepository(ContabilidadDocumento)
+    private contabilidadDocumentoRepository: Repository<ContabilidadDocumento>,
+    private readonly configService: ConfigService,
+    @InjectRepository(Signature)
+    private signaturesRepository: Repository<Signature>,
+    private readonly tesoreriaSignatureService: TesoreriaSignatureService,
+    private readonly bitacoraService: BitacoraSistemaService,
+) {
+    this.logger.log('💰 TesoreriaService inicializado');
+}
+
+// src/tesoreria/tesoreria.service.ts
+
+async obtenerDocumentosDisponibles(tesoreroId: string): Promise<any[]> {
+    this.logger.log(`📋 Tesorero ${tesoreroId} solicitando documentos disponibles`);
+
+    const usuario = await this.userRepository.findOne({ where: { id: tesoreroId } });
+    const esAdmin = usuario?.role === UserRole.ADMIN;
+
+    let documentos: Documento[] = [];
+
+    if (esAdmin) {
+        this.logger.log(`👑 Usuario ADMIN - Mostrando documentos de múltiples flujos`);
+        
+        documentos = await this.documentoRepository
+            .createQueryBuilder('documento')
+            .leftJoinAndSelect('documento.radicador', 'radicador')
+            .leftJoinAndSelect('documento.usuarioAsignado', 'usuarioAsignado')
+            .where("documento.estado IN (:...estados)", {
+                estados: [
+                    'COMPLETADO_CONTABILIDAD',
+         
+                ]
+            })
+            .orderBy('documento.fechaRadicacion', 'ASC')
+            .getMany();
+            
+        this.logger.log(`✅ ADMIN: Encontrados ${documentos.length} documentos`);
+    } else {
+        documentos = await this.documentoRepository
+            .createQueryBuilder('documento')
+            .leftJoinAndSelect('documento.radicador', 'radicador')
+            .leftJoinAndSelect('documento.usuarioAsignado', 'usuarioAsignado')
+            .where("documento.estado IN (:...estados)", {
+                estados: ['COMPLETADO_CONTABILIDAD']
+            })
+            .orderBy('documento.fechaRadicacion', 'ASC')
+            .getMany();
+            
+        this.logger.log(`✅ Tesorero: Encontrados ${documentos.length} documentos`);
     }
 
-    async obtenerDocumentosDisponibles(tesoreroId: string): Promise<any[]> {
-        this.logger.log(`📋 Tesorero ${tesoreroId} solicitando documentos disponibles`);
+    // ✅ CORRECCIÓN: Usar 'documento' en lugar de 'documentoId'
+    const tesoreriaDocs = await this.tesoreriaRepository.find({
+        where: {
+            tesorero: { id: tesoreroId },
+            estado: TesoreriaEstado.EN_REVISION
+        },
+        relations: ['documento']
+    });
 
-        try {
-            const documentos = await this.documentoRepository
-                .createQueryBuilder('documento')
-                .leftJoinAndSelect('documento.radicador', 'radicador')
-                .leftJoinAndSelect('documento.usuarioAsignado', 'usuarioAsignado')
-                .where("documento.estado IN (:...estados)", {
-                    estados: ['COMPLETADO_CONTABILIDAD']
-                })
-                .orderBy('documento.fechaRadicacion', 'ASC')
-                .getMany();
+    // ✅ CORRECCIÓN: Acceder a través de 'documento.id'
+    const documentosEnRevisionIds = tesoreriaDocs.map(td => td.documento.id);
 
-            this.logger.log(`✅ Encontrados ${documentos.length} documentos completados por contabilidad`);
+    // ✅ CORRECCIÓN: Para el select, usar 'documento' en lugar de 'documentoId'
+    const tesoreriaDocsExistentes = await this.tesoreriaRepository.find({
+        where: { tesorero: { id: tesoreroId } },
+        select: ['documento'],  // ← Cambiado de 'documentoId' a 'documento'
+        relations: ['documento']
+    });
 
-            const tesoreriaDocs = await this.tesoreriaRepository.find({
-                where: {
-                    tesorero: { id: tesoreroId },
-                    estado: TesoreriaEstado.EN_REVISION
-                },
-                relations: ['documento']
-            });
+    // ✅ CORRECCIÓN: Acceder a través de 'documento.id'
+    const documentosConTesoreriaIds = tesoreriaDocsExistentes.map(td => td.documento.id);
 
-            const documentosEnRevisionIds = tesoreriaDocs.map(td => td.documento.id);
+    const documentosFiltrados = documentos.filter(documento => {
+        if (documento.estado === 'EN_REVISION_TESORERIA') {
+            const tesoreriaDoc = tesoreriaDocs.find(td => td.documento.id === documento.id);
+            return tesoreriaDoc !== undefined;
+        }
+        return true;
+    });
 
-            const documentosFiltrados = documentos.filter(documento => {
-                if (documento.estado === 'EN_REVISION_TESORERIA') {
-                    const tesoreriaDoc = tesoreriaDocs.find(td => td.documento.id === documento.id);
-                    return tesoreriaDoc !== undefined;
+    const documentosConEstado = documentosFiltrados.map(documento => {
+        const estaRevisandoYo = documentosEnRevisionIds.includes(documento.id);
+        const yaEstaEnTesoreria = documento.estado === 'EN_REVISION_TESORERIA';
+
+        let disponible = true;
+        let mensajeDisponibilidad = '';
+
+        if (yaEstaEnTesoreria && !estaRevisandoYo) {
+            disponible = false;
+            mensajeDisponibilidad = 'Documento en revisión por otro tesorero';
+        }
+
+        if (esAdmin) {
+            disponible = true;
+            mensajeDisponibilidad = '';
+        }
+
+        return {
+            id: documento.id,
+            numeroRadicado: documento.numeroRadicado,
+            numeroContrato: documento.numeroContrato,
+            nombreContratista: documento.nombreContratista,
+            documentoContratista: documento.documentoContratista,
+            fechaInicio: documento.fechaInicio,
+            fechaFin: documento.fechaFin,
+            estado: documento.estado,
+            estadoOriginal: documento.estado,
+            fechaRadicacion: documento.fechaRadicacion,
+            radicador: documento.nombreRadicador,
+            supervisor: documento.usuarioAsignadoNombre,
+            contador: documento.usuarioAsignadoNombre,
+            observacion: documento.observacion || '',
+            disponible: disponible,
+            mensajeDisponibilidad: mensajeDisponibilidad,
+            esAdmin: esAdmin,
+            asignacion: {
+                enRevision: estaRevisandoYo,
+                puedoTomar: !yaEstaEnTesoreria,
+                tieneDocumentoSubido: false,
+                contadorAsignado: documento.usuarioAsignadoNombre,
+            }
+        };
+    });
+
+    return documentosConEstado;
+}
+  // src/tesoreria/services/tesoreria.service.ts
+
+async tomarDocumentoParaRevision(documentoId: string, tesoreroId: string): Promise<{
+    success: boolean;
+    message: string;
+    documento: any
+}> {
+    this.logger.log(`🤝 Tesorero ${tesoreroId} tomando documento ${documentoId} para revisión`);
+
+    const queryRunner = this.tesoreriaRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+        // ✅ Verificar que NO tenga proceso de tesorería existente
+        const tesoreriaExistente = await queryRunner.manager.findOne(TesoreriaDocumento, {
+            where: { documento: { id: documentoId } }
+        });
+
+        if (tesoreriaExistente) {
+            // Si ya existe pero está en estado diferente, verificar
+            if (tesoreriaExistente.estado === TesoreriaEstado.EN_REVISION) {
+                // Si es el mismo tesorero, permitir continuar
+                if (tesoreriaExistente.tesorero.id === tesoreroId) {
+                    this.logger.log(`⚠️ Documento ${documentoId} ya estaba en revisión por el mismo tesorero, continuando...`);
+                    
+                    const documento = await queryRunner.manager.findOne(Documento, {
+                        where: { id: documentoId }
+                    });
+                    
+                    await queryRunner.commitTransaction();
+                    
+                    return {
+                        success: true,
+                        message: `Continuando con documento ${documento?.numeroRadicado}`,
+                        documento: this.mapearDocumentoParaRespuesta(documento, tesoreriaExistente)
+                    };
                 }
-                return true;
-            });
-
-            const documentosConEstado = documentosFiltrados.map(documento => {
-                const estaRevisandoYo = documentosEnRevisionIds.includes(documento.id);
-                const yaEstaEnTesoreria = documento.estado === 'EN_REVISION_TESORERIA';
-
-                return {
-                    id: documento.id,
-                    numeroRadicado: documento.numeroRadicado,
-                    numeroContrato: documento.numeroContrato,
-                    nombreContratista: documento.nombreContratista,
-                    documentoContratista: documento.documentoContratista,
-                    fechaInicio: documento.fechaInicio,
-                    fechaFin: documento.fechaFin,
-                    estado: documento.estado,
-                    fechaRadicacion: documento.fechaRadicacion,
-                    radicador: documento.nombreRadicador,
-                    supervisor: documento.usuarioAsignadoNombre,
-                    contador: documento.usuarioAsignadoNombre,
-                    observacion: documento.observacion || '',
-                    disponible: !yaEstaEnTesoreria || estaRevisandoYo,
-                    asignacion: {
-                        enRevision: estaRevisandoYo,
-                        puedoTomar: !yaEstaEnTesoreria,
-                        tieneDocumentoSubido: false,
-                        contadorAsignado: documento.usuarioAsignadoNombre,
-                    }
-                };
-            });
-
-            return documentosConEstado;
-        } catch (error) {
-            this.logger.error(`❌ Error obteniendo documentos disponibles: ${error.message}`);
-            throw error;
+                
+                throw new ConflictException('Este documento ya está siendo procesado por otro tesorero');
+            }
+            
+            // Si está en otro estado (COMPLETADO, OBSERVADO, RECHAZADO), no permitir tomar
+            throw new ConflictException('Este documento ya fue procesado por tesorería');
         }
-    }
 
-    async tomarDocumentoParaRevision(documentoId: string, tesoreroId: string): Promise<{
-        success: boolean;
-        message: string;
-        documento: any
-    }> {
-        this.logger.log(`🤝 Tesorero ${tesoreroId} tomando documento ${documentoId} para revisión`);
+        // ✅ Verificar que el documento esté en COMPLETADO_CONTABILIDAD
+        const documento = await queryRunner.manager
+            .createQueryBuilder(Documento, 'documento')
+            .where('documento.id = :id', { id: documentoId })
+            .andWhere('documento.estado = :estado', { estado: 'COMPLETADO_CONTABILIDAD' })
+            .setLock('pessimistic_write')
+            .getOne();
 
-        const queryRunner = this.tesoreriaRepository.manager.connection.createQueryRunner();
-        await queryRunner.connect();
-        await queryRunner.startTransaction();
-
-        try {
-            const documento = await queryRunner.manager
-                .createQueryBuilder(Documento, 'documento')
-                .where('documento.id = :id', { id: documentoId })
-                .andWhere('documento.estado = :estado', {
-                    estado: 'COMPLETADO_CONTABILIDAD'
-                })
-                .setLock('pessimistic_write')
-                .getOne();
-
-            if (!documento) {
-                throw new NotFoundException(
-                    'Documento no encontrado o no está disponible para tesorería (debe estar completado por contabilidad)'
-                );
-            }
-
-            if (documento.estado === 'EN_REVISION_TESORERIA') {
-                throw new ConflictException(
-                    'Este documento ya está siendo procesado por otro tesorero'
-                );
-            }
-
-            const tesorero = await queryRunner.manager.findOne(User, {
-                where: { id: tesoreroId }
-            });
-
-            if (!tesorero) {
-                throw new NotFoundException('Tesorero no encontrado');
-            }
-
-            const tesoreriaDocExistente = await queryRunner.manager.findOne(TesoreriaDocumento, {
-                where: {
-                    documento: { id: documentoId },
-                    tesorero: { id: tesoreroId }
-                },
-                relations: ['tesorero']
-            });
-
-            if (tesoreriaDocExistente) {
-                tesoreriaDocExistente.estado = TesoreriaEstado.EN_REVISION;
-                tesoreriaDocExistente.fechaActualizacion = new Date();
-                tesoreriaDocExistente.fechaInicioRevision = new Date();
-                await queryRunner.manager.save(TesoreriaDocumento, tesoreriaDocExistente);
-            } else {
-                const tesoreriaDoc = queryRunner.manager.create(TesoreriaDocumento, {
-                    documento: documento,
-                    tesorero: tesorero,
-                    estado: TesoreriaEstado.EN_REVISION,
-                    fechaCreacion: new Date(),
-                    fechaActualizacion: new Date(),
-                    fechaInicioRevision: new Date(),
-                    observaciones: 'Documento tomado para procesamiento de tesorería'
-                });
-                await queryRunner.manager.save(TesoreriaDocumento, tesoreriaDoc);
-            }
-
-            documento.estado = 'EN_REVISION_TESORERIA';
-            documento.fechaActualizacion = new Date();
-            documento.ultimoAcceso = new Date();
-            documento.ultimoUsuario = `Tesoreria: ${tesorero.fullName || tesorero.username}`;
-            documento.usuarioAsignado = tesorero;
-            documento.usuarioAsignadoNombre = tesorero.fullName || tesorero.username;
-
-            const historial = documento.historialEstados || [];
-            historial.push({
-                fecha: new Date(),
-                estado: 'EN_REVISION_TESORERIA',
-                usuarioId: tesorero.id,
-                usuarioNombre: tesorero.fullName || tesorero.username,
-                rolUsuario: tesorero.role,
-                observacion: `Documento tomado para procesamiento por tesorería ${tesorero.username}`
-            });
-            documento.historialEstados = historial;
-
-            await queryRunner.manager.save(Documento, documento);
-
-            if (documento.rutaCarpetaRadicado) {
-                await this.registrarAccesoTesoreria(
-                    documento.rutaCarpetaRadicado,
-                    tesoreroId,
-                    `TOMÓ documento para tesorería`,
-                    `Estado: ${documento.estado}`
-                );
-            }
-
-            await queryRunner.commitTransaction();
-
-            this.logger.log(`✅ Documento ${documento.numeroRadicado} tomado para procesamiento por ${tesorero.username}`);
-
-            return {
-                success: true,
-                message: `Documento ${documento.numeroRadicado} tomado para procesamiento de tesorería`,
-                documento: this.mapearDocumentoParaRespuesta(documento)
-            };
-        } catch (error) {
-            await queryRunner.rollbackTransaction();
-            this.logger.error(`❌ Error tomando documento: ${error.message}`, error.stack);
-            throw error;
-        } finally {
-            await queryRunner.release();
+        if (!documento) {
+            throw new NotFoundException(
+                'Documento no encontrado o no está disponible para tesorería (debe estar completado por contabilidad)'
+            );
         }
+
+        const tesorero = await queryRunner.manager.findOne(User, {
+            where: { id: tesoreroId }
+        });
+
+        if (!tesorero) {
+            throw new NotFoundException('Tesorero no encontrado');
+        }
+
+        // Crear registro en tesoreria_documentos
+        const tesoreriaDoc = queryRunner.manager.create(TesoreriaDocumento, {
+            documento: documento,
+            tesorero: tesorero,
+            estado: TesoreriaEstado.EN_REVISION,
+            fechaCreacion: new Date(),
+            fechaActualizacion: new Date(),
+            fechaInicioRevision: new Date(),
+            observaciones: 'Documento tomado para procesamiento de tesorería'
+        });
+        await queryRunner.manager.save(TesoreriaDocumento, tesoreriaDoc);
+
+        // Actualizar estado del documento
+        documento.estado = 'EN_REVISION_TESORERIA';
+        documento.fechaActualizacion = new Date();
+        documento.ultimoAcceso = new Date();
+        documento.ultimoUsuario = `Tesoreria: ${tesorero.fullName || tesorero.username}`;
+        documento.usuarioAsignado = tesorero;
+        documento.usuarioAsignadoNombre = tesorero.fullName || tesorero.username;
+
+        const historial = documento.historialEstados || [];
+        historial.push({
+            fecha: new Date(),
+            estado: 'EN_REVISION_TESORERIA',
+            usuarioId: tesorero.id,
+            usuarioNombre: tesorero.fullName || tesorero.username,
+            rolUsuario: tesorero.role,
+            observacion: `Documento tomado para procesamiento por tesorería ${tesorero.username}`
+        });
+        documento.historialEstados = historial;
+
+        await queryRunner.manager.save(Documento, documento);
+
+        await queryRunner.commitTransaction();
+
+        this.logger.log(`✅ Documento ${documento.numeroRadicado} tomado para procesamiento por ${tesorero.username}`);
+
+        return {
+            success: true,
+            message: `Documento ${documento.numeroRadicado} tomado para procesamiento de tesorería`,
+            documento: this.mapearDocumentoParaRespuesta(documento, tesoreriaDoc)
+        };
+    } catch (error) {
+        await queryRunner.rollbackTransaction();
+        this.logger.error(`❌ Error tomando documento: ${error.message}`, error.stack);
+        throw error;
+    } finally {
+        await queryRunner.release();
     }
+}
 
     async obtenerDocumentosEnRevision(tesoreroId: string): Promise<any[]> {
         this.logger.log(`📋 Tesorero ${tesoreroId} solicitando documentos en revisión`);
@@ -256,80 +312,165 @@ export class TesoreriaService {
         }
     }
 
-    async obtenerDetalleDocumento(documentoId: string, userId: string): Promise<any> {
-        this.logger.log(`🔍 Usuario ${userId} solicitando detalle del documento ${documentoId}`);
 
-        const user = await this.userRepository.findOne({
-            where: { id: userId },
-            select: ['id', 'username', 'role', 'fullName']
+async obtenerDetalleDocumento(documentoId: string, userId: string): Promise<any> {
+    const inicio = Date.now();
+    this.logger.log(`🔍 Usuario ${userId} solicitando detalle del documento ${documentoId}`);
+
+    const user = await this.userRepository.findOne({
+        where: { id: userId },
+        select: ['id', 'username', 'role', 'fullName']
+    });
+
+    if (!user) {
+        this.logger.warn(`Usuario no encontrado: ${userId}`);
+        throw new NotFoundException('Usuario no encontrado');
+    }
+
+    this.logger.debug(`Usuario encontrado: ${user.username} (${user.role})`);
+
+    const documento = await this.documentoRepository.findOne({
+        where: { id: documentoId },
+        relations: ['radicador', 'usuarioAsignado'],
+    });
+
+    if (!documento) {
+        this.logger.warn(`Documento no encontrado: ${documentoId}`);
+        throw new NotFoundException('Documento no encontrado');
+    }
+
+    const rol = user.role;
+    const estado = documento.estado?.toUpperCase() || '';
+
+    let tieneAcceso = false;
+
+    // ADMIN tiene acceso a TODOS los estados
+    if (rol === UserRole.ADMIN) {
+        this.logger.log(`🔓 ADMIN ${user.username} accediendo a documento ${documentoId} - Estado: ${estado}`);
+        tieneAcceso = true;
+    }
+    // TESORERIA tiene acceso solo a estados específicos
+    else if (rol === UserRole.TESORERIA) {
+        tieneAcceso =
+            estado.includes('TESORERIA') ||
+            estado === 'COMPLETADO_CONTABILIDAD' ||
+            estado.includes('RECHAZADO_TESORERIA') ||
+            estado.includes('COMPLETADO_TESORERIA') ||
+            estado.includes('PAGADO_TESORERIA');
+        
+        this.logger.log(`💰 Tesorero ${user.username} accediendo a documento ${documentoId} - Estado: ${estado} - Acceso: ${tieneAcceso}`);
+    }
+    // CONTABILIDAD tiene acceso solo a estados de contabilidad
+    else if (rol === UserRole.CONTABILIDAD) {
+        tieneAcceso = estado.includes('CONTABILIDAD') || estado === 'COMPLETADO_CONTABILIDAD';
+    }
+    // SUPERVISOR tiene acceso solo a estados de supervisor
+    else if (rol === UserRole.SUPERVISOR) {
+        tieneAcceso = ['RADICADO', 'EN_REVISION_SUPERVISOR'].includes(estado);
+    }
+    // RENDICION_CUENTAS tiene acceso a sus estados
+    else if (rol === UserRole.RENDICION_CUENTAS) {
+        tieneAcceso = estado.includes('RENDICION_CUENTAS') || estado === 'COMPLETADO_ASESOR_GERENCIA';
+    }
+    // ASESOR_GERENCIA tiene acceso a sus estados
+    else if (rol === UserRole.ASESOR_GERENCIA) {
+        tieneAcceso = estado.includes('ASESOR_GERENCIA') || estado === 'COMPLETADO_TESORERIA';
+    }
+
+    if (!tieneAcceso) {
+        this.logger.warn(`Acceso denegado - Estado: ${estado} - Rol: ${rol} - Usuario: ${user.username}`);
+        throw new ForbiddenException(
+            `No tienes permisos para acceder a este documento. Estado actual: ${estado}, Tu rol: ${rol}`
+        );
+    }
+
+    // Buscar registro de tesorería
+    let tesoreriaDoc: TesoreriaDocumento | null = null;
+    if (rol === UserRole.TESORERIA || rol === UserRole.ADMIN) {
+        tesoreriaDoc = await this.tesoreriaRepository.findOne({
+            where: {
+                documento: { id: documentoId },
+                tesorero: { id: userId }
+            },
+            relations: ['tesorero'],
         });
-
-        if (!user) {
-            this.logger.warn(`Usuario no encontrado: ${userId}`);
-            throw new NotFoundException('Usuario no encontrado');
+        
+        // Si es admin y no existe registro, lo creamos temporalmente para la vista
+        if (rol === UserRole.ADMIN && !tesoreriaDoc) {
+            this.logger.log(`🔧 ADMIN: Creando registro temporal de tesorería para vista de ${documentoId}`);
+            
+            // ✅ CORRECTO: Usar solo 'role' sin 'is_active' si no existe en la entidad
+            // Si el campo 'is_active' no existe en User, usar solo role
+            const tesoreroTemp = await this.userRepository.findOne({
+                where: { role: UserRole.TESORERIA }
+            });
+            
+            if (tesoreroTemp) {
+                tesoreriaDoc = this.tesoreriaRepository.create({
+                    documento: documento,
+                    tesorero: tesoreroTemp,
+                    estado: TesoreriaEstado.DISPONIBLE,
+                    fechaCreacion: new Date(),
+                    fechaActualizacion: new Date(),
+                });
+                // No guardamos en BD, solo para mostrar en la respuesta
+            } else {
+                this.logger.warn(`⚠️ No se encontró ningún tesorero activo para crear registro temporal`);
+            }
         }
+    }
 
-        this.logger.debug(`Usuario encontrado: ${user.username} (${user.role})`);
+    // Buscar registro de contabilidad
+    const contabilidadDoc = await this.contabilidadDocumentoRepository.findOne({
+        where: { documento: { id: documentoId } },
+        relations: ['contador'],
+        order: { fechaActualizacion: 'DESC' }
+    });
 
-        const documento = await this.documentoRepository.findOne({
-            where: { id: documentoId },
-            relations: ['radicador', 'usuarioAsignado'],
-        });
+    const respuesta = this.construirRespuestaDetalle(documento, tesoreriaDoc, contabilidadDoc, user);
 
-        if (!documento) {
-            this.logger.warn(`Documento no encontrado: ${documentoId}`);
-            throw new NotFoundException('Documento no encontrado');
-        }
-
-        const rol = user.role?.toLowerCase() || '';
-        const estado = documento.estado?.toUpperCase() || '';
-
-        let tieneAcceso = false;
-
-        if (rol === 'tesoreria' || rol === 'admin') {
-            tieneAcceso =
-                estado.includes('TESORERIA') ||
-                estado === 'COMPLETADO_CONTABILIDAD' ||
-                estado.includes('RECHAZADO_TESORERIA') ||
-                estado.includes('COMPLETADO_TESORERIA') ||
-                estado.includes('PAGADO_TESORERIA');
-        } else if (rol === 'contabilidad') {
-            tieneAcceso = estado.includes('CONTABILIDAD') || estado === 'COMPLETADO_CONTABILIDAD';
-        } else if (rol === 'supervisor') {
-            tieneAcceso = ['RADICADO', 'EN_REVISION_SUPERVISOR'].includes(estado);
-        }
-
-        if (!tieneAcceso) {
-            this.logger.warn(`Acceso denegado - Estado: ${estado} - Rol: ${rol}`);
-            throw new ForbiddenException(
-                `Solo puedes acceder a documentos en estado COMPLETADO_CONTABILIDAD o estados de tesorería (actual: ${estado})`
+    // Registrar acceso en bitácora
+    try {
+        // Importar el servicio de bitácora (debes inyectarlo en el constructor)
+        // Si no tienes el servicio inyectado, puedes comentar esta parte
+        if (this.bitacoraService) {
+            await this.bitacoraService.registrar(
+                'VER_DOCUMENTO',
+                'tesoreria',
+                {
+                    id: user.id,
+                    username: user.username,
+                    fullName: user.fullName,
+                    role: user.role
+                },
+                {
+                    id: documento.id,
+                    numeroRadicado: documento.numeroRadicado,
+                    numeroContrato: documento.numeroContrato,
+                    nombreContratista: documento.nombreContratista,
+                    documentoContratista: documento.documentoContratista,
+                    rutaCarpetaRadicado: documento.rutaCarpetaRadicado
+                },
+                {
+                    detalles: `Acceso a documento en estado: ${estado}`,
+                    duracionMs: Date.now() - inicio,
+                    ip: 'unknown',
+                    userAgent: 'backend-service'
+                }
             );
         }
-
-        let tesoreriaDoc: TesoreriaDocumento | null = null;
-        if (rol === 'tesoreria' || rol === 'admin') {
-            tesoreriaDoc = await this.tesoreriaRepository.findOne({
-                where: {
-                    documento: { id: documentoId },
-                    tesorero: { id: userId }
-                },
-                relations: ['tesorero'],
-            });
-        }
-
-        const contabilidadDoc = await this.contabilidadDocumentoRepository.findOne({
-            where: { documento: { id: documentoId } },
-            relations: ['contador'],
-            order: { fechaActualizacion: 'DESC' }
-        });
-
-        const respuesta = this.construirRespuestaDetalle(documento, tesoreriaDoc, contabilidadDoc, user);
-
-        await this.registrarUltimoAcceso(documento, user);
-
-        this.logger.log(`Detalle entregado exitosamente para documento ${documentoId} a ${user.username}`);
-        return respuesta;
+    } catch (bitError) {
+        this.logger.error(`Error registrando bitácora: ${bitError.message}`);
     }
+
+    // Registrar acceso sin esperar
+    this.registrarUltimoAcceso(documento, user).catch(err => {
+        this.logger.error(`Error registrando acceso: ${err.message}`);
+    });
+
+    this.logger.log(`✅ Detalle entregado exitosamente para documento ${documentoId} a ${user.username}`);
+    return respuesta;
+}
 
     private async registrarUltimoAcceso(documento: Documento, user: User): Promise<void> {
         try {
@@ -1421,123 +1562,123 @@ export class TesoreriaService {
         };
     }
 
-async getHistorial(tesoreroId: string): Promise<any[]> {
-    this.logger.log(`Obteniendo historial COMPLETO para tesorero ${tesoreroId}`);
+    async getHistorial(tesoreroId: string): Promise<any[]> {
+        this.logger.log(`Obteniendo historial COMPLETO para tesorero ${tesoreroId}`);
 
-    const tesoreriaDocs = await this.tesoreriaRepository.find({
-        where: {
-            tesorero: { id: tesoreroId },
-        },
-        relations: ['documento', 'tesorero'],
-        order: { fechaActualizacion: 'DESC' }
-    });
+        const tesoreriaDocs = await this.tesoreriaRepository.find({
+            where: {
+                tesorero: { id: tesoreroId },
+            },
+            relations: ['documento', 'tesorero'],
+            order: { fechaActualizacion: 'DESC' }
+        });
 
-    return tesoreriaDocs.map(td => ({
-        id: td.id, // ID de tesorería (para referencia)
-        tesoreriaId: td.id, // ID de tesorería explícito
-        documentoId: td.documento.id, // ← IMPORTANTE: ID del documento principal
-        documento: {
-            id: td.documento.id,
-            numeroRadicado: td.documento.numeroRadicado,
-            numeroContrato: td.documento.numeroContrato,
-            nombreContratista: td.documento.nombreContratista,
-            documentoContratista: td.documento.documentoContratista,
-            fechaInicio: td.documento.fechaInicio,
-            fechaFin: td.documento.fechaFin,
-            fechaRadicacion: td.documento.fechaRadicacion,
-            fechaActualizacion: td.documento.fechaActualizacion,
-            estado: td.documento.estado
-        },
-        estadoTesoreria: td.estado,
-        estadoPago: td.estado, // Para compatibilidad
-        observaciones: td.observaciones || '',
-        pagoRealizadoPath: td.pagoRealizadoPath,
-        fechaPago: td.fechaPago,
-        fechaActualizacion: td.fechaActualizacion,
-        fechaFinRevision: td.fechaFinRevision,
-        fechaInicioRevision: td.fechaInicioRevision,
-        tesoreroRevisor: td.tesorero?.fullName || td.tesorero?.username || 'Tesorero',
-        responsablePago: td.tesorero?.fullName || td.tesorero?.username
-    }));
+        return tesoreriaDocs.map(td => ({
+            id: td.id, // ID de tesorería (para referencia)
+            tesoreriaId: td.id, // ID de tesorería explícito
+            documentoId: td.documento.id, // ← IMPORTANTE: ID del documento principal
+            documento: {
+                id: td.documento.id,
+                numeroRadicado: td.documento.numeroRadicado,
+                numeroContrato: td.documento.numeroContrato,
+                nombreContratista: td.documento.nombreContratista,
+                documentoContratista: td.documento.documentoContratista,
+                fechaInicio: td.documento.fechaInicio,
+                fechaFin: td.documento.fechaFin,
+                fechaRadicacion: td.documento.fechaRadicacion,
+                fechaActualizacion: td.documento.fechaActualizacion,
+                estado: td.documento.estado
+            },
+            estadoTesoreria: td.estado,
+            estadoPago: td.estado, // Para compatibilidad
+            observaciones: td.observaciones || '',
+            pagoRealizadoPath: td.pagoRealizadoPath,
+            fechaPago: td.fechaPago,
+            fechaActualizacion: td.fechaActualizacion,
+            fechaFinRevision: td.fechaFinRevision,
+            fechaInicioRevision: td.fechaInicioRevision,
+            tesoreroRevisor: td.tesorero?.fullName || td.tesorero?.username || 'Tesorero',
+            responsablePago: td.tesorero?.fullName || td.tesorero?.username
+        }));
 
-}
+    }
 
-async obtenerRechazadosVisibles(user: any): Promise<any> {
-  const rolUsuario = user.role?.toLowerCase() || '';
+    async obtenerRechazadosVisibles(user: any): Promise<any> {
+        const rolUsuario = user.role?.toLowerCase() || '';
 
-  this.logger.log(`[RECHAZADOS-VISIBLES] Rol: ${rolUsuario} | Username: ${user.username}`);
+        this.logger.log(`[RECHAZADOS-VISIBLES] Rol: ${rolUsuario} | Username: ${user.username}`);
 
-  const estadosRechazo = [
-    'RECHAZADO_SUPERVISOR',
-    'RECHAZADO_AUDITOR_CUENTAS',
-    'RECHAZADO_CONTABILIDAD',
-    'RECHAZADO_TESORERIA',
-    'RECHAZADO_ASESOR_GERENCIA',
-    'RECHAZADO_RENDICION_CUENTAS',
-    'OBSERVADO_CONTABILIDAD',
-    'GLOSADO_CONTABILIDAD',
-    'OBSERVADO_TESORERIA'
-  ];
+        const estadosRechazo = [
+            'RECHAZADO_SUPERVISOR',
+            'RECHAZADO_AUDITOR_CUENTAS',
+            'RECHAZADO_CONTABILIDAD',
+            'RECHAZADO_TESORERIA',
+            'RECHAZADO_ASESOR_GERENCIA',
+            'RECHAZADO_RENDICION_CUENTAS',
+            'OBSERVADO_CONTABILIDAD',
+            'GLOSADO_CONTABILIDAD',
+            'OBSERVADO_TESORERIA'
+        ];
 
-  const query = this.documentoRepository
-    .createQueryBuilder('doc')
-    .leftJoinAndSelect('doc.radicador', 'radicador')
-    .where('doc.estado IN (:...estados)', { estados: estadosRechazo })
-    .orderBy('doc.fechaActualizacion', 'DESC');
+        const query = this.documentoRepository
+            .createQueryBuilder('doc')
+            .leftJoinAndSelect('doc.radicador', 'radicador')
+            .where('doc.estado IN (:...estados)', { estados: estadosRechazo })
+            .orderBy('doc.fechaActualizacion', 'DESC');
 
-  let estadosPermitidos: string[] = [];
+        let estadosPermitidos: string[] = [];
 
-  switch (rolUsuario) {
-    case 'admin':
-      estadosPermitidos = estadosRechazo;
-      break;
-    case 'tesoreria':
-      estadosPermitidos = [
-        'RECHAZADO_TESORERIA',
-        'RECHAZADO_ASESOR_GERENCIA',
-        'RECHAZADO_RENDICION_CUENTAS',
-        'OBSERVADO_TESORERIA'
-      ];
-      break;
-    case 'asesor_gerencia':
-      estadosPermitidos = ['RECHAZADO_ASESOR_GERENCIA', 'RECHAZADO_RENDICION_CUENTAS'];
-      break;
-    case 'rendicion_cuentas':
-      estadosPermitidos = ['RECHAZADO_RENDICION_CUENTAS'];
-      break;
-    default:
-      estadosPermitidos = [];
-  }
+        switch (rolUsuario) {
+            case 'admin':
+                estadosPermitidos = estadosRechazo;
+                break;
+            case 'tesoreria':
+                estadosPermitidos = [
+                    'RECHAZADO_TESORERIA',
+                    'RECHAZADO_ASESOR_GERENCIA',
+                    'RECHAZADO_RENDICION_CUENTAS',
+                    'OBSERVADO_TESORERIA'
+                ];
+                break;
+            case 'asesor_gerencia':
+                estadosPermitidos = ['RECHAZADO_ASESOR_GERENCIA', 'RECHAZADO_RENDICION_CUENTAS'];
+                break;
+            case 'rendicion_cuentas':
+                estadosPermitidos = ['RECHAZADO_RENDICION_CUENTAS'];
+                break;
+            default:
+                estadosPermitidos = [];
+        }
 
-  if (estadosPermitidos.length > 0) {
-    query.andWhere('doc.estado IN (:...permitidos)', { permitidos: estadosPermitidos });
-  } else {
-    query.andWhere('1 = 0');
-  }
+        if (estadosPermitidos.length > 0) {
+            query.andWhere('doc.estado IN (:...permitidos)', { permitidos: estadosPermitidos });
+        } else {
+            query.andWhere('1 = 0');
+        }
 
-  const docs = await query.getMany();
+        const docs = await query.getMany();
 
-  this.logger.log(`[RECHAZADOS-VISIBLES] Encontrados ${docs.length} documentos para ${rolUsuario}`);
+        this.logger.log(`[RECHAZADOS-VISIBLES] Encontrados ${docs.length} documentos para ${rolUsuario}`);
 
-  const resultado = docs.map(doc => ({
-    id: doc.id,
-    numeroRadicado: doc.numeroRadicado,
-    numeroContrato: doc.numeroContrato,
-    nombreContratista: doc.nombreContratista,
-    documentoContratista: doc.documentoContratista,
-    fechaInicio: doc.fechaInicio,
-    fechaFin: doc.fechaFin,
-    fechaRadicacion: doc.fechaRadicacion,
-    estado: doc.estado,
-    observacion: doc.observacion || '',
-    motivoRechazo: doc.observacion || 'Sin motivo detallado',
-    ultimoUsuario: doc.ultimoUsuario || 'Sistema',
-    rechazadoPor: this.inferirRechazadoPor(doc.estado)
-  }));
+        const resultado = docs.map(doc => ({
+            id: doc.id,
+            numeroRadicado: doc.numeroRadicado,
+            numeroContrato: doc.numeroContrato,
+            nombreContratista: doc.nombreContratista,
+            documentoContratista: doc.documentoContratista,
+            fechaInicio: doc.fechaInicio,
+            fechaFin: doc.fechaFin,
+            fechaRadicacion: doc.fechaRadicacion,
+            estado: doc.estado,
+            observacion: doc.observacion || '',
+            motivoRechazo: doc.observacion || 'Sin motivo detallado',
+            ultimoUsuario: doc.ultimoUsuario || 'Sistema',
+            rechazadoPor: this.inferirRechazadoPor(doc.estado)
+        }));
 
-  // Devolver SOLO el array, no un objeto con data anidado
-  return resultado;
-}
+        // Devolver SOLO el array, no un objeto con data anidado
+        return resultado;
+    }
 
     private inferirRechazadoPor(estado: string): string {
         const e = (estado || '').toUpperCase();

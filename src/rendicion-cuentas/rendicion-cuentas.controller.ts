@@ -118,22 +118,21 @@ export class RendicionCuentasController {
     }
   }
 
-  @Get('documentos/:documentoId/descargar')
-  @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
-  async descargarCarpeta(
-    @Param('documentoId', ParseUUIDPipe) documentoId: string,
-    @GetUser() user: JwtUser,
-    @Res() res: Response,
-  ) {
-    console.log('📥 ===== SOLICITUD DE DESCARGA RECIBIDA =====');
-    console.log('📥 documentoId:', documentoId);
-    console.log('📥 usuario:', user.id, user.username);
+ @Get('documentos/:documentoId/descargar')
+@Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
+async descargarCarpeta(
+  @Param('documentoId', ParseUUIDPipe) documentoId: string,
+  @GetUser() user: JwtUser,
+  @Res() res: Response,
+) {
+  console.log('📥 ===== SOLICITUD DE DESCARGA RECIBIDA =====');
+  console.log('📥 documentoId PARAM:', documentoId);
+  console.log('📥 usuario:', user.id, user.username);
 
-    try {
-      const { rutaCarpeta, documentoInfo } = await this.service.obtenerRutaCarpeta(documentoId, user.id);
-      console.log('✅ Ruta obtenida:', rutaCarpeta);
-
-      this.logger.log(`📂 Descargando carpeta: ${rutaCarpeta} para documento ${documentoId}`);
+  try {
+    const { rutaCarpeta, documentoInfo } = await this.service.obtenerRutaCarpeta(documentoId, user.id);
+    console.log('✅ Ruta obtenida:', rutaCarpeta);
+    console.log('✅ Documento info:', documentoInfo);
 
       if (!fs.existsSync(rutaCarpeta)) {
         throw new Error(`La carpeta no existe: ${rutaCarpeta}`);
