@@ -384,53 +384,55 @@ export class JuridicaController {
   // ==================== DOCUMENTOS ====================
 
   @Post('contratos/:contratoId/documentos')
-  @UseInterceptors(FileInterceptor('file'))
-  async subirDocumento(
-    @Param('contratoId') contratoId: string,
-    @UploadedFile() file: Express.Multer.File,
-    @Body('tipoDocumento') tipoDocumento: TipoDocumento,
-    @Body('descripcion') descripcion: string,
-    @Body('usuario') usuario: string,
-    @Req() req?: any,
-  ) {
-    try {
-      if (!file) {
-        throw new BadRequestException('Debe adjuntar un archivo');
-      }
-
-      const documento = await this.juridicaService.subirDocumento(
-        contratoId,
-        file,
-        tipoDocumento,
-        descripcion,
-        usuario || 'Sistema',
-      );
-
-      await this.bitacoraService.registrar(
-        AccionBitacora.DESCARGAR_ARCHIVO,
-        ModuloBitacora.JURIDICA,
-        req.user,
-        undefined,
-        {
-          detalles: `Documento subido al contrato ${contratoId}: ${file.originalname}`,
-          metadata: { tipoDocumento, nombreArchivo: file.originalname },
-        },
-        req,
-      );
-
-      return {
-        success: true,
-        message: 'Documento subido exitosamente',
-        data: documento,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error subiendo documento: ${error.message}`);
-      throw new HttpException(
-        { success: false, message: error.message },
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+@UseInterceptors(FileInterceptor('file'))
+async subirDocumento(
+  @Param('contratoId') contratoId: string,
+  @UploadedFile() file: Express.Multer.File,
+  @Body('tipoDocumento') tipoDocumento: TipoDocumento,
+  @Body('descripcion') descripcion: string,
+  @Body('usuario') usuario: string,
+  @Req() req?: any,
+) {
+  try {
+    if (!file) {
+      throw new BadRequestException('Debe adjuntar un archivo');
     }
+
+    // ✅ CORREGIDO: usar subirDocumentoContrato en lugar de subirDocumento
+    const documento = await this.juridicaService.subirDocumentoContrato(
+      contratoId,
+      file,
+      tipoDocumento,
+      descripcion,
+      usuario || 'Sistema',
+    );
+
+    await this.bitacoraService.registrar(
+      AccionBitacora.DESCARGAR_ARCHIVO,
+      ModuloBitacora.JURIDICA,
+      req.user,
+      undefined,
+      {
+        detalles: `Documento subido al contrato ${contratoId}: ${file.originalname}`,
+        metadata: { tipoDocumento, nombreArchivo: file.originalname },
+      },
+      req,
+    );
+
+    return {
+      success: true,
+      message: 'Documento subido exitosamente',
+      data: documento,
+    };
+  } catch (error) {
+    this.logger.error(`❌ Error subiendo documento: ${error.message}`);
+    throw new HttpException(
+      { success: false, message: error.message },
+      error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+    );
   }
+}
+
 
   // ==================== DASHBOARD Y REPORTES ====================
 

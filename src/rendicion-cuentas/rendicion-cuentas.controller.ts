@@ -98,9 +98,9 @@ export class RendicionCuentasController {
       console.log('📥 id:', id);
       console.log('📥 decisionDto:', decisionDto);
       console.log('📥 usuario:', user.id, user.username);
-      
+
       const result = await this.service.tomarDecision(id, decisionDto, user);
-      
+
       const mensajes = {
         APROBADO: 'Documento aprobado correctamente',
         OBSERVADO: 'Observación registrada correctamente',
@@ -118,21 +118,22 @@ export class RendicionCuentasController {
     }
   }
 
- @Get('documentos/:documentoId/descargar')
-@Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
-async descargarCarpeta(
-  @Param('documentoId', ParseUUIDPipe) documentoId: string,
-  @GetUser() user: JwtUser,
-  @Res() res: Response,
-) {
-  console.log('📥 ===== SOLICITUD DE DESCARGA RECIBIDA =====');
-  console.log('📥 documentoId PARAM:', documentoId);
-  console.log('📥 usuario:', user.id, user.username);
+  @Get('documentos/:documentoId/descargar')
+  @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
+  async descargarCarpeta(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @GetUser() user: JwtUser,
+    @Res() res: Response,
+  ) {
+    console.log('📥 ===== SOLICITUD DE DESCARGA RECIBIDA =====');
+    console.log('📥 documentoId PARAM:', documentoId);
+    console.log('📥 usuario:', user.id, user.username);
 
-  try {
-    const { rutaCarpeta, documentoInfo } = await this.service.obtenerRutaCarpeta(documentoId, user.id);
-    console.log('✅ Ruta obtenida:', rutaCarpeta);
-    console.log('✅ Documento info:', documentoInfo);
+
+    try {
+      const { rutaCarpeta, documentoInfo } = await this.service.obtenerRutaCarpeta(documentoId, user.id);
+      console.log('✅ Ruta obtenida:', rutaCarpeta);
+      console.log('✅ Documento info:', documentoInfo);
 
       if (!fs.existsSync(rutaCarpeta)) {
         throw new Error(`La carpeta no existe: ${rutaCarpeta}`);
@@ -194,22 +195,17 @@ async descargarCarpeta(
     @Param('rendicionId', ParseUUIDPipe) rendicionId: string,
     @GetUser() user: JwtUser,
   ) {
-    console.log('📥 ===== SOLICITUD DE DETALLE DE RENDICIÓN RECIBIDA =====');
-    console.log('📥 rendicionId:', rendicionId);
-    console.log('📥 usuario:', user.id, user.username);
-    
-    try {
-      const detalle = await this.service.obtenerDetalleDocumento(rendicionId, user.id);
-      console.log('✅ Detalle obtenido, ID:', detalle.id);
-      
-      return {
-        ok: true,
-        data: detalle,
-      };
-    } catch (error) {
-      console.error('❌ Error obteniendo detalle:', error);
-      throw error;
-    }
+    console.log('📥 rendicionId recibido:', rendicionId);
+
+    const detalle = await this.service.obtenerDetalleDocumento(rendicionId, user.id);
+
+    // ✅ Log para ver qué se está devolviendo
+    console.log('📤 Detalle a devolver:', JSON.stringify(detalle, null, 2));
+
+    return {
+      ok: true,
+      data: detalle,
+    };
   }
 
   @Get('historial')
@@ -218,5 +214,20 @@ async descargarCarpeta(
     const historial = await this.service.obtenerHistorial(user.id);
     return historial;
   }
-  
+
+  @Get('documentos-radicado/:documentoId/detalle')
+  @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
+  async getDetallePorDocumentoRadicado(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @GetUser() user: JwtUser,
+  ) {
+    console.log('📥 documentoRadicadoId recibido:', documentoId);
+
+    const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
+
+    return {
+      ok: true,
+      data: detalle,
+    };
+  }
 }

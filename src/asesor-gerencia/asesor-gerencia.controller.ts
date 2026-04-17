@@ -254,4 +254,24 @@ export class AsesorGerenciaController {
     return { success: true, data: documentos };
   }
 
+  @Get('rendiciones/por-documento/:documentoId')
+  @Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA)
+  async obtenerRendicionPorDocumentoId(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @GetUser() user: JwtUser,
+  ) {
+    this.logger.log(`[RENDICION-POR-DOCUMENTO] Buscando rendición para documentoId: ${documentoId}`);
+
+    const rendicion = await this.service.obtenerRendicionPorDocumentoId(documentoId, user.id);
+
+    if (!rendicion) {
+      throw new NotFoundException('No se encontró rendición asociada a este documento');
+    }
+
+    return {
+      success: true,
+      data: rendicion
+    };
+  }
+
 }

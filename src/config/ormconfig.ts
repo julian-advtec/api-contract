@@ -170,7 +170,7 @@ export const ormconfig: DataSourceOptions = {
         Obligacion,
     ],
     synchronize: false, // 🔴 CAMBIADO A FALSE
-    logging: !isProduction,
+    logging: ['error', 'warn'],
     extra: {
         max: 20,
         idleTimeoutMillis: 30000,

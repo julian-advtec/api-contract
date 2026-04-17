@@ -365,46 +365,16 @@ export class RendicionCuentasService {
   async obtenerRutaCarpeta(documentoId: string, usuarioId: string): Promise<{ rutaCarpeta: string; documentoInfo: any }> {
     this.logger.log(`📂 Buscando carpeta para documento ${documentoId}, usuario ${usuarioId}`);
 
-    // Buscar en la tabla de rendición de cuentas primero
-    const rendicion = await this.documentoRepo.findOne({
-      where: {
-        documento: { id: documentoId }
-      },
-      relations: ['documento'],
+    const documento = await this.documentoRadicacionRepo.findOne({
+      where: { id: documentoId }
     });
 
-    let documento: Documento | null = null;
-    let documentoInfo: any = null;
-
-    if (rendicion && rendicion.documento) {
-      documento = rendicion.documento;
-      documentoInfo = {
-        id: documento.id,
-        numeroRadicado: documento.numeroRadicado,
-        numeroContrato: documento.numeroContrato,
-        nombreContratista: documento.nombreContratista,
-      };
-      this.logger.log(`✅ Documento encontrado vía rendición: ${documento.numeroRadicado}`);
-    } else {
-      // Fallback: buscar directamente en la tabla de documentos
-      documento = await this.documentoRadicacionRepo.findOne({
-        where: { id: documentoId }
-      });
-
-      if (!documento) {
-        this.logger.error(`❌ Documento ${documentoId} no encontrado`);
-        throw new NotFoundException('Documento no encontrado');
-      }
-
-      documentoInfo = {
-        id: documento.id,
-        numeroRadicado: documento.numeroRadicado,
-        numeroContrato: documento.numeroContrato,
-        nombreContratista: documento.nombreContratista,
-      };
-      this.logger.log(`📁 Documento encontrado directamente: ${documento.numeroRadicado}`);
+    if (!documento) {
+      this.logger.error(`❌ Documento ${documentoId} no encontrado en radicacion`);
+      throw new NotFoundException('Documento no encontrado');
     }
 
+    this.logger.log(`📁 Documento encontrado: ${documento.numeroRadicado}`);
     this.logger.log(`📁 Ruta configurada: ${documento.rutaCarpetaRadicado}`);
 
     if (!documento.rutaCarpetaRadicado) {
@@ -417,34 +387,24 @@ export class RendicionCuentasService {
       throw new NotFoundException(`La carpeta no existe: ${documento.rutaCarpetaRadicado}`);
     }
 
-    // Listar archivos para debug
     try {
-      const archivos = this.listarArchivosRecursivo(documento.rutaCarpetaRadicado);
-      this.logger.log(`📄 Archivos encontrados (${archivos.length}):`, archivos.slice(0, 10));
+      const archivos = fs.readdirSync(documento.rutaCarpetaRadicado);
+      this.logger.log(`📄 Archivos encontrados (${archivos.length}):`, archivos);
     } catch (error) {
       this.logger.error(`Error listando archivos: ${error.message}`);
     }
 
     return {
       rutaCarpeta: documento.rutaCarpetaRadicado,
-      documentoInfo,
+      documentoInfo: {
+        id: documento.id,
+        numeroRadicado: documento.numeroRadicado,
+        numeroContrato: documento.numeroContrato,
+        nombreContratista: documento.nombreContratista,
+      }
     };
   }
 
-  private listarArchivosRecursivo(dir: string, archivos: string[] = []): string[] {
-    const items = fs.readdirSync(dir);
-    for (const item of items) {
-      const rutaCompleta = path.join(dir, item);
-      const stat = fs.statSync(rutaCompleta);
-      if (stat.isDirectory()) {
-        this.listarArchivosRecursivo(rutaCompleta, archivos);
-      } else {
-        archivos.push(rutaCompleta);
-      }
-    }
-    return archivos;
-  }
-  
   /**
    * 7. OBTENER HISTORIAL DEL USUARIO
    */
@@ -466,11 +426,13 @@ export class RendicionCuentasService {
 
     const registros = await query.getMany();
 
-    this.logger.log(`Encontrados ${registros.length} registros para usuario ${usuarioId} (esAdmin: ${esAdmin})`);
+    this.logger.log(`Encontrados ${registros.length} registros`);
 
     return registros.map(doc => ({
-      id: doc.documento?.id,
+      // ✅ CORREGIDO: id debe ser el ID de la RENDICIÓN (doc.id)
+      id: doc.id,  // ← CAMBIAR: antes era doc.documento?.id
       rendicionId: doc.id,
+      documentoId: doc.documento?.id || '',
       numeroRadicado: doc.documento?.numeroRadicado || 'N/A',
       numeroContrato: doc.documento?.numeroContrato || 'N/A',
       nombreContratista: doc.documento?.nombreContratista || 'N/A',
@@ -482,9 +444,14 @@ export class RendicionCuentasService {
       responsableId: doc.responsableId,
       responsableNombre: doc.responsable?.fullName || doc.responsable?.username || 'N/A',
       fechaDecision: doc.fechaDecision,
+      fechaCreacion: doc.fechaCreacion,
+      fechaActualizacion: doc.fechaActualizacion,
+      disponible: doc.estado === 'PENDIENTE',
+      enMiRevision: doc.responsableId === usuarioId,
       esMio: doc.responsableId === usuarioId
     }));
   }
+
 
   /**
    * 8. OBTENER DETALLE DE UN DOCUMENTO POR ID DE RENDICIÓN
@@ -595,4 +562,25 @@ export class RendicionCuentasService {
       throw error;
     }
   }
+
+  async obtenerDetallePorDocumentoRadicado(documentoId: string, usuarioId: string): Promise<any> {
+    this.logger.log(`🔍 Buscando rendición para documento radicado: ${documentoId}, usuario: ${usuarioId}`);
+
+    // Buscar la rendición que tiene este documento radicado
+    const rendicion = await this.documentoRepo.findOne({
+      where: {
+        documento: { id: documentoId }  // ← Buscar por documento relacionado
+      },
+      relations: ['documento', 'responsable'],
+    });
+
+    if (!rendicion) {
+      this.logger.error(`❌ No se encontró rendición para documento radicado ${documentoId}`);
+      throw new NotFoundException('No se encontró rendición asociada a este documento');
+    }
+
+    // Reutilizar la lógica de obtenerDetalleDocumento
+    return this.obtenerDetalleDocumento(rendicion.id, usuarioId);
+  }
+  
 }

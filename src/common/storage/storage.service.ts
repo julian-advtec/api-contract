@@ -1,4 +1,5 @@
 // src/common/storage/storage.service.ts
+
 import { Injectable, Logger, OnModuleInit, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
@@ -7,177 +8,92 @@ import * as path from 'path';
 @Injectable()
 export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
-  private networkPath: string;
-  private readonly NETWORK_STORAGE_PATH = '\\\\R2-D2\\api-contract';
+  // ✅ IMPORTANTE: 4 barras invertidas para UNC en string literal de JS
+  private readonly NETWORK_BASE_PATH = '\\\\R2-D2\\api-contract';
+  private basePath: string;
 
   constructor(private configService: ConfigService) {
-    // ✅ FORZAR USO DE LA RUTA DE RED
-    this.networkPath = this.NETWORK_STORAGE_PATH;
+    // Usar la ruta UNC directamente
+    this.basePath = this.NETWORK_BASE_PATH;
     
     this.logger.log(`📦 ======= CONFIGURACIÓN DE ALMACENAMIENTO =======`);
-    this.logger.log(`   Tipo: RED (\\\\R2-D2\\api-contract)`);
-    this.logger.log(`   Ruta base: ${this.networkPath}`);
+    this.logger.log(`   Tipo: RED (UNC)`);
+    this.logger.log(`   Ruta base: ${this.basePath}`);
     this.logger.log(`==================================================`);
   }
 
   async onModuleInit() {
     this.logger.log(`💾 Usando almacenamiento en SERVIDOR DE RED`);
-    this.logger.log(`📁 Ruta base: ${this.networkPath}`);
-    this.ensureNetworkDirectory();
+    this.logger.log(`📁 Ruta base: ${this.basePath}`);
+    await this.ensureNetworkDirectory();
   }
 
-  private ensureNetworkDirectory() {
+  private async ensureNetworkDirectory() {
     try {
-      // Normalizar la ruta UNC para Windows
-      let normalizedPath = this.networkPath;
+      // ✅ Usar la ruta UNC directamente sin modificar
+      const uncPath = this.basePath;
       
-      if (process.platform === 'win32') {
-        // Asegurar formato UNC correcto
-        normalizedPath = this.networkPath.replace(/\\\\/g, '\\');
-        if (!normalizedPath.startsWith('\\\\')) {
-          normalizedPath = '\\\\' + normalizedPath.replace(/\\/g, '\\');
-        }
-      }
+      this.logger.log(`🔍 Verificando directorio de red: ${uncPath}`);
 
-      this.logger.log(`🔍 Verificando directorio de red: ${normalizedPath}`);
-
-      // Verificar si la ruta de red está accesible
+      // ✅ Verificar si la ruta UNC existe usando try-catch
+      let pathExists = false;
       try {
-        // Intentar acceder al servidor
-        const serverRoot = normalizedPath.split('\\').slice(0, 3).join('\\');
-        fs.accessSync(serverRoot, fs.constants.R_OK);
-        this.logger.log(`✅ Servidor de red accesible: ${serverRoot}`);
-      } catch (error) {
-        this.logger.error(`❌ No se puede acceder al servidor de red: ${error.message}`);
-        this.logger.error(`   Verifica que:`);
-        this.logger.error(`   1. El servidor R2-D2 esté encendido`);
-        this.logger.error(`   2. La carpeta compartida 'api-contract' exista`);
-        this.logger.error(`   3. Tengas permisos de lectura/escritura`);
-        throw new Error(`Servidor de red no disponible: ${this.networkPath}`);
+        // fs.existsSync funciona con rutas UNC en Windows
+        pathExists = fs.existsSync(uncPath);
+      } catch (err: any) {
+        this.logger.warn(`Error verificando ruta: ${err.message}`);
+        pathExists = false;
       }
 
-      // Crear directorio base si no existe
-      if (!fs.existsSync(normalizedPath)) {
-        this.logger.log(`📁 Creando directorio base en red: ${normalizedPath}`);
-        fs.mkdirSync(normalizedPath, { recursive: true });
-        this.logger.log(`✅ Directorio base creado: ${normalizedPath}`);
+      if (!pathExists) {
+        this.logger.log(`📁 Creando directorio base en red: ${uncPath}`);
+        try {
+          fs.mkdirSync(uncPath, { recursive: true });
+          this.logger.log(`✅ Directorio base creado: ${uncPath}`);
+        } catch (mkdirErr: any) {
+          this.logger.error(`Error creando directorio: ${mkdirErr.message}`);
+          // No fallamos, intentamos continuar
+        }
       } else {
-        this.logger.log(`✅ Directorio base existe: ${normalizedPath}`);
+        this.logger.log(`✅ Directorio base existe: ${uncPath}`);
       }
 
-      // Verificar permisos de escritura
-      const testFile = path.join(normalizedPath, `.write_test_${Date.now()}.txt`);
-      fs.writeFileSync(testFile, 'test');
-      fs.unlinkSync(testFile);
-      this.logger.log(`✅ Permisos de escritura verificados en la red`);
-
-      // Actualizar networkPath con la ruta normalizada
-      this.networkPath = normalizedPath;
+      // ✅ Verificar permisos de escritura
+      const testFilePath = uncPath + `\\.write_test_${Date.now()}.txt`;
+      try {
+        fs.writeFileSync(testFilePath, 'test');
+        fs.unlinkSync(testFilePath);
+        this.logger.log(`✅ Permisos de escritura verificados en la red`);
+      } catch (permErr: any) {
+        this.logger.warn(`⚠️ No se pudieron verificar permisos de escritura: ${permErr.message}`);
+      }
 
     } catch (error: any) {
-      this.logger.error(`❌ Error CRÍTICO con servidor de red: ${error.message}`);
-      throw new Error(`No se puede acceder al servidor de red: ${error.message}`);
+      this.logger.error(`❌ Error con servidor de red: ${error.message}`);
+      // No lanzamos error para que la app pueda continuar
     }
   }
 
   private getFullPath(relativePath: string): string {
-    // Normalizar la ruta relativa (usar separadores de Windows)
-    const normalizedRelative = relativePath.replace(/\//g, '\\');
+    // Limpiar la ruta relativa - eliminar cualquier prefijo UNC
+    let cleanRelative = relativePath;
     
-    // Construir la ruta completa UNC
-    let fullPath: string;
-    
-    if (process.platform === 'win32') {
-      fullPath = path.join(this.networkPath, normalizedRelative);
-    } else {
-      // Para Linux/WSL, usar formato especial
-      const networkPathUnix = this.networkPath.replace(/\\\\/g, '/');
-      fullPath = path.join(networkPathUnix, normalizedRelative);
+    // Si la ruta relativa comienza con \\, eliminarlo
+    if (cleanRelative.startsWith('\\\\')) {
+      cleanRelative = cleanRelative.substring(2);
     }
+    if (cleanRelative.startsWith('\\')) {
+      cleanRelative = cleanRelative.substring(1);
+    }
+    
+    // Reemplazar / con \ para Windows
+    cleanRelative = cleanRelative.replace(/\//g, '\\');
+    
+    // ✅ Construir ruta UNC correctamente - concatenación directa
+    const fullPath = this.basePath + '\\' + cleanRelative;
     
     this.logger.debug(`   Ruta completa: ${fullPath}`);
     return fullPath;
-  }
-
-  // ============================================================
-  // ✅ MÉTODO PARA GUARDAR SOLO EN RED
-  // ============================================================
-  private async saveToNetwork(file: any, folderPath: string, fileName: string): Promise<any> {
-    try {
-      // Construir la ruta relativa
-      let relativePath: string;
-      if (folderPath && folderPath.trim() !== '') {
-        relativePath = path.join(folderPath, fileName).replace(/\\/g, '/');
-      } else {
-        relativePath = fileName;
-      }
-
-      const fullPath = this.getFullPath(relativePath);
-      const dir = path.dirname(fullPath);
-
-      this.logger.log(`💾 Guardando archivo en SERVIDOR DE RED:`);
-      this.logger.log(`   Ruta relativa: ${relativePath}`);
-      this.logger.log(`   Ruta completa: ${fullPath}`);
-      this.logger.log(`   Directorio: ${dir}`);
-
-      // Crear directorio si no existe
-      if (!fs.existsSync(dir)) {
-        this.logger.log(`📁 Creando directorio en red: ${dir}`);
-        fs.mkdirSync(dir, { recursive: true });
-        this.logger.log(`✅ Directorio creado exitosamente en red`);
-      }
-
-      // Obtener buffer del archivo
-      let buffer: Buffer;
-      if (file.buffer) {
-        buffer = file.buffer;
-        this.logger.log(`📄 Usando buffer del archivo (${buffer.length} bytes)`);
-      } else if (file.path) {
-        buffer = fs.readFileSync(file.path);
-        this.logger.log(`📄 Leyendo archivo desde: ${file.path}`);
-      } else if (file.data) {
-        buffer = Buffer.from(file.data);
-        this.logger.log(`📄 Usando data del archivo`);
-      } else if (typeof file === 'string') {
-        buffer = fs.readFileSync(file);
-        this.logger.log(`📄 Leyendo archivo desde string path`);
-      } else {
-        throw new Error('Formato de archivo no soportado: no se pudo obtener buffer');
-      }
-
-      // Validar buffer
-      if (!buffer || buffer.length === 0) {
-        throw new Error('El buffer del archivo está vacío');
-      }
-
-      // Guardar archivo SOLO en red
-      fs.writeFileSync(fullPath, buffer);
-      this.logger.log(`✅ Archivo guardado exitosamente en RED: ${fullPath}`);
-      this.logger.log(`   Tamaño: ${buffer.length} bytes`);
-
-      // Verificar que el archivo se guardó correctamente
-      if (fs.existsSync(fullPath)) {
-        const stats = fs.statSync(fullPath);
-        this.logger.log(`✅ Verificación: archivo existe en red (${stats.size} bytes)`);
-      } else {
-        this.logger.error(`❌ ERROR: El archivo no existe después de guardarlo en red`);
-        throw new Error('El archivo no se guardó correctamente en la red');
-      }
-
-      return {
-        success: true,
-        path: relativePath,
-        fullPath: fullPath,
-        provider: 'network',
-        size: buffer.length,
-        fileName: fileName,
-        folderPath: folderPath
-      };
-    } catch (error: any) {
-      this.logger.error(`❌ Error guardando archivo en RED: ${error.message}`);
-      this.logger.error(`   Stack: ${error.stack}`);
-      throw error;
-    }
   }
 
   // ============================================================
@@ -231,7 +147,7 @@ export class StorageService implements OnModuleInit {
       folderPath = typeof folderPathOrBuffer === 'string' ? folderPathOrBuffer : '';
       fileName = fileNameOrMimeType || file.originalname || `file_${Date.now()}`;
 
-      this.logger.log(`📤 Subiendo archivo (file object) a: ${path.join(folderPath, fileName)}`);
+      this.logger.log(`📤 Subiendo archivo (file object) a: ${folderPath}/${fileName}`);
       return this.saveToNetwork(file, folderPath, fileName);
     }
 
@@ -250,7 +166,7 @@ export class StorageService implements OnModuleInit {
         mimetype: mimeType
       };
 
-      this.logger.log(`📤 Subiendo archivo (buffer directo) a: ${path.join(folderPath, fileName)}`);
+      this.logger.log(`📤 Subiendo archivo (buffer directo) a: ${folderPath}/${fileName}`);
       return this.saveToNetwork(file, folderPath, fileName);
     }
 
@@ -265,13 +181,142 @@ export class StorageService implements OnModuleInit {
   }
 
   // ============================================================
-  // OBTENER ARCHIVO (SOLO DE RED)
+  // ✅ MÉTODO PARA GUARDAR EN RED
+  // ============================================================
+  private async saveToNetwork(file: any, folderPath: string, fileName: string): Promise<any> {
+    try {
+      // Limpiar folderPath - eliminar prefijos UNC
+      let cleanFolder = folderPath;
+      if (cleanFolder.startsWith('\\\\')) {
+        cleanFolder = cleanFolder.substring(2);
+      }
+      if (cleanFolder.startsWith('\\')) {
+        cleanFolder = cleanFolder.substring(1);
+      }
+      // Eliminar también la ruta base si está presente
+      if (cleanFolder.startsWith('R2-D2\\api-contract\\')) {
+        cleanFolder = cleanFolder.substring('R2-D2\\api-contract\\'.length);
+      }
+      
+      // Construir la ruta relativa
+      let relativePath: string;
+      if (cleanFolder && cleanFolder.trim() !== '') {
+        relativePath = cleanFolder.replace(/\\/g, '/') + '/' + fileName;
+      } else {
+        relativePath = fileName;
+      }
+
+      const fullPath = this.basePath + '\\' + cleanFolder.replace(/\//g, '\\') + '\\' + fileName;
+      const dirPath = this.basePath + '\\' + cleanFolder.replace(/\//g, '\\');
+
+      this.logger.log(`💾 Guardando archivo en SERVIDOR DE RED:`);
+      this.logger.log(`   Ruta relativa: ${relativePath}`);
+      this.logger.log(`   Ruta completa: ${fullPath}`);
+      this.logger.log(`   Directorio: ${dirPath}`);
+
+      // Crear directorio si no existe
+      let dirExists = false;
+      try {
+        dirExists = fs.existsSync(dirPath);
+      } catch (err) {
+        dirExists = false;
+      }
+
+      if (!dirExists) {
+        this.logger.log(`📁 Creando directorio en red: ${dirPath}`);
+        try {
+          fs.mkdirSync(dirPath, { recursive: true });
+          this.logger.log(`✅ Directorio creado exitosamente en red`);
+        } catch (mkdirErr: any) {
+          this.logger.error(`❌ Error creando directorio: ${mkdirErr.message}`);
+          throw new Error(`No se pudo crear el directorio en la red: ${mkdirErr.message}`);
+        }
+      }
+
+      // Obtener buffer del archivo
+      let buffer: Buffer;
+      if (file.buffer) {
+        buffer = file.buffer;
+        this.logger.log(`📄 Usando buffer del archivo (${buffer.length} bytes)`);
+      } else if (file.path) {
+        buffer = fs.readFileSync(file.path);
+        this.logger.log(`📄 Leyendo archivo desde: ${file.path}`);
+      } else if (file.data) {
+        buffer = Buffer.from(file.data);
+        this.logger.log(`📄 Usando data del archivo`);
+      } else if (typeof file === 'string') {
+        buffer = fs.readFileSync(file);
+        this.logger.log(`📄 Leyendo archivo desde string path`);
+      } else {
+        throw new Error('Formato de archivo no soportado: no se pudo obtener buffer');
+      }
+
+      // Validar buffer
+      if (!buffer || buffer.length === 0) {
+        throw new Error('El buffer del archivo está vacío');
+      }
+
+      // Guardar archivo SOLO en red
+      fs.writeFileSync(fullPath, buffer);
+      this.logger.log(`✅ Archivo guardado exitosamente en RED: ${fullPath}`);
+      this.logger.log(`   Tamaño: ${buffer.length} bytes`);
+
+      // Verificar que el archivo se guardó correctamente
+      let fileExists = false;
+      try {
+        fileExists = fs.existsSync(fullPath);
+      } catch (err) {
+        fileExists = false;
+      }
+
+      if (fileExists) {
+        const stats = fs.statSync(fullPath);
+        this.logger.log(`✅ Verificación: archivo existe en red (${stats.size} bytes)`);
+      } else {
+        this.logger.error(`❌ ERROR: El archivo no existe después de guardarlo en red`);
+        throw new Error('El archivo no se guardó correctamente en la red');
+      }
+
+      return {
+        success: true,
+        path: relativePath,
+        fullPath: fullPath,
+        provider: 'network',
+        size: buffer.length,
+        fileName: fileName,
+        folderPath: folderPath
+      };
+    } catch (error: any) {
+      this.logger.error(`❌ Error guardando archivo en RED: ${error.message}`);
+      this.logger.error(`   Stack: ${error.stack}`);
+      throw error;
+    }
+  }
+
+  // ============================================================
+  // OBTENER ARCHIVO
   // ============================================================
   async getFile(filePath: string): Promise<Buffer> {
-    const fullPath = this.getFullPath(filePath);
+    // Limpiar la ruta
+    let cleanPath = filePath;
+    if (cleanPath.startsWith('\\\\')) {
+      cleanPath = cleanPath.substring(2);
+    }
+    if (cleanPath.startsWith('R2-D2\\api-contract\\')) {
+      cleanPath = cleanPath.substring('R2-D2\\api-contract\\'.length);
+    }
+    
+    const fullPath = this.basePath + '\\' + cleanPath.replace(/\//g, '\\');
     this.logger.debug(`📥 Buscando archivo en red: ${fullPath}`);
 
-    if (!fs.existsSync(fullPath)) {
+    let fileExists = false;
+    try {
+      fileExists = fs.existsSync(fullPath);
+    } catch (err) {
+      fileExists = false;
+    }
+
+    if (!fileExists) {
       throw new NotFoundException(`Archivo no encontrado en red: ${filePath}`);
     }
 
@@ -279,24 +324,47 @@ export class StorageService implements OnModuleInit {
   }
 
   // ============================================================
-  // VERIFICAR SI ARCHIVO EXISTE (SOLO EN RED)
+  // VERIFICAR SI ARCHIVO EXISTE
   // ============================================================
   async fileExists(filePath: string): Promise<boolean> {
-    const fullPath = this.getFullPath(filePath);
-    return fs.existsSync(fullPath);
+    let cleanPath = filePath;
+    if (cleanPath.startsWith('\\\\')) {
+      cleanPath = cleanPath.substring(2);
+    }
+    if (cleanPath.startsWith('R2-D2\\api-contract\\')) {
+      cleanPath = cleanPath.substring('R2-D2\\api-contract\\'.length);
+    }
+    
+    const fullPath = this.basePath + '\\' + cleanPath.replace(/\//g, '\\');
+    try {
+      return fs.existsSync(fullPath);
+    } catch (err) {
+      return false;
+    }
   }
 
   // ============================================================
-  // ELIMINAR ARCHIVO (SOLO DE RED)
+  // ELIMINAR ARCHIVO
   // ============================================================
   async deleteFile(filePath: string): Promise<boolean> {
-    const fullPath = this.getFullPath(filePath);
-    if (fs.existsSync(fullPath)) {
-      fs.unlinkSync(fullPath);
-      this.logger.log(`🗑️ Archivo eliminado de la red: ${fullPath}`);
-      return true;
+    let cleanPath = filePath;
+    if (cleanPath.startsWith('\\\\')) {
+      cleanPath = cleanPath.substring(2);
     }
-    this.logger.warn(`⚠️ Archivo no encontrado en red para eliminar: ${fullPath}`);
+    if (cleanPath.startsWith('R2-D2\\api-contract\\')) {
+      cleanPath = cleanPath.substring('R2-D2\\api-contract\\'.length);
+    }
+    
+    const fullPath = this.basePath + '\\' + cleanPath.replace(/\//g, '\\');
+    try {
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+        this.logger.log(`🗑️ Archivo eliminado de la red: ${fullPath}`);
+        return true;
+      }
+    } catch (err) {
+      this.logger.warn(`⚠️ Error eliminando archivo: ${err.message}`);
+    }
     return false;
   }
 
@@ -304,29 +372,50 @@ export class StorageService implements OnModuleInit {
   // OBTENER URL PÚBLICA
   // ============================================================
   getFileUrl(filePath: string): string {
-    return this.getFullPath(filePath);
+    let cleanPath = filePath;
+    if (cleanPath.startsWith('\\\\')) {
+      cleanPath = cleanPath.substring(2);
+    }
+    return this.basePath + '\\' + cleanPath.replace(/\//g, '\\');
   }
 
   // ============================================================
   // LISTAR ARCHIVOS EN DIRECTORIO
   // ============================================================
   async listFiles(folderPath: string): Promise<string[]> {
-    const fullPath = this.getFullPath(folderPath);
-    if (!fs.existsSync(fullPath)) {
+    let cleanFolder = folderPath;
+    if (cleanFolder.startsWith('\\\\')) {
+      cleanFolder = cleanFolder.substring(2);
+    }
+    
+    const fullPath = this.basePath + '\\' + cleanFolder.replace(/\//g, '\\');
+    try {
+      if (!fs.existsSync(fullPath)) {
+        return [];
+      }
+    } catch (err) {
       return [];
     }
 
     const result: string[] = [];
     const readDir = (dir: string, basePath: string) => {
-      const items = fs.readdirSync(dir);
-      for (const item of items) {
-        const fullItemPath = path.join(dir, item);
-        const relativePath = path.join(basePath, item).replace(/\\/g, '/');
-        if (fs.statSync(fullItemPath).isDirectory()) {
-          readDir(fullItemPath, relativePath);
-        } else {
-          result.push(relativePath);
+      try {
+        const items = fs.readdirSync(dir);
+        for (const item of items) {
+          const fullItemPath = dir + '\\' + item;
+          const relativePath = (basePath ? basePath + '/' : '') + item;
+          try {
+            if (fs.statSync(fullItemPath).isDirectory()) {
+              readDir(fullItemPath, relativePath);
+            } else {
+              result.push(relativePath);
+            }
+          } catch (err) {
+            this.logger.warn(`Error leyendo ${fullItemPath}: ${err.message}`);
+          }
         }
+      } catch (err) {
+        this.logger.warn(`Error leyendo directorio ${dir}: ${err.message}`);
       }
     };
 
@@ -338,14 +427,14 @@ export class StorageService implements OnModuleInit {
   // MÉTODOS DE COMPATIBILIDAD
   // ============================================================
   isUsingSupabase(): boolean {
-    return false; // Siempre false, usamos red
+    return false;
   }
 
   getStorageInfo(): { type: string; path?: string; bucket?: string } {
     return {
       type: 'network',
-      path: this.networkPath,
-      bucket: undefined // Para compatibilidad con código que espera bucket
+      path: this.basePath,
+      bucket: undefined
     };
   }
 

@@ -1,4 +1,5 @@
 // src/bitacora-sistema/services/bitacora-sistema.service.ts
+
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
@@ -10,37 +11,38 @@ import { Request } from 'express';
 @Injectable()
 export class BitacoraSistemaService {
   private readonly logger = new Logger(BitacoraSistemaService.name);
-  private readonly logsBasePath: string;
+  // ✅ SOLO RUTA UNC - NADA DE Z:\
+  private readonly LOGS_BASE_PATH = '\\\\R2-D2\\api-contract\\logs\\bitacora';
 
   constructor(
     @InjectRepository(BitacoraSistema)
     private bitacoraRepository: Repository<BitacoraSistema>,
   ) {
-    // CAMBIAR A LA RUTA DEL SERVIDOR COMPARTIDO
-  this.logsBasePath = path.join('\\\\r2-d2', 'api-contract', 'logs', 'bitacora');
+    this.logger.log(`📁 Ruta de logs configurada: ${this.LOGS_BASE_PATH}`);
     this.crearEstructuraDirectorios();
-    this.logger.log(`📁 Ruta de logs configurada: ${this.logsBasePath}`);
   }
 
   private crearEstructuraDirectorios(): void {
     const directorios = [
-      this.logsBasePath,
-      path.join(this.logsBasePath, 'documentos'),
-      path.join(this.logsBasePath, 'usuarios'),
-      path.join(this.logsBasePath, 'modulos'),
-      path.join(this.logsBasePath, 'errores'),
-      path.join(this.logsBasePath, 'general'),
-      path.join(this.logsBasePath, 'roles'),
+      this.LOGS_BASE_PATH,
+      `${this.LOGS_BASE_PATH}\\documentos`,
+      `${this.LOGS_BASE_PATH}\\usuarios`,
+      `${this.LOGS_BASE_PATH}\\modulos`,
+      `${this.LOGS_BASE_PATH}\\errores`,
+      `${this.LOGS_BASE_PATH}\\general`,
+      `${this.LOGS_BASE_PATH}\\roles`,
     ];
 
     directorios.forEach(dir => {
-      if (!fs.existsSync(dir)) {
-        try {
+      try {
+        if (!fs.existsSync(dir)) {
           fs.mkdirSync(dir, { recursive: true });
           this.logger.log(`📁 Directorio creado: ${dir}`);
-        } catch (error) {
-          this.logger.error(`❌ Error creando directorio ${dir}: ${error.message}`);
         }
+      } catch (error: any) {
+        this.logger.error(`❌ ERROR: No se pudo crear directorio en ${dir}`);
+        this.logger.error(`   ${error.message}`);
+        throw new Error(`No se puede acceder al servidor R2-D2: ${error.message}`);
       }
     });
   }
@@ -94,8 +96,7 @@ export class BitacoraSistemaService {
       const saved = await this.bitacoraRepository.save(bitacora);
       this.logger.log(`✅ Bitácora guardada en BD: ${modulo} - ${accion} - Usuario: ${nombreUsuario}`);
 
-      // GUARDAR EN ARCHIVOS TXT EN EL SERVIDOR COMPARTIDO
-      // Archivo por documento (en carpeta del radicado)
+      // GUARDAR EN ARCHIVOS TXT EN EL SERVIDOR (SOLO RED)
       if (documento?.rutaCarpetaRadicado) {
         await this.guardarEnArchivoDocumento(
           documento.rutaCarpetaRadicado,
@@ -106,7 +107,6 @@ export class BitacoraSistemaService {
         );
       }
 
-      // Archivo global por rol
       await this.guardarEnArchivoGlobal(
         { ...usuario, nombre_usuario: nombreUsuario, rol_usuario: rolUsuario },
         accion,
@@ -115,7 +115,6 @@ export class BitacoraSistemaService {
         metadataCompleta
       );
 
-      // Archivo por módulo
       await this.guardarEnArchivoModulo(
         modulo,
         { ...usuario, nombre_usuario: nombreUsuario, rol_usuario: rolUsuario },
@@ -124,7 +123,6 @@ export class BitacoraSistemaService {
         metadataCompleta
       );
 
-      // Archivo general de todos los logs
       await this.guardarEnArchivoGeneral(
         { ...usuario, nombre_usuario: nombreUsuario, rol_usuario: rolUsuario },
         accion,
@@ -136,7 +134,7 @@ export class BitacoraSistemaService {
       this.logger.debug(`✅ Bitácora completada: ${modulo} - ${accion} (${Date.now() - inicio}ms)`);
       return saved;
 
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`❌ Error registrando bitácora: ${error.message}`);
       await this.guardarErrorEnArchivo(error, accion, modulo, usuario, documento, metadata);
       return null;
@@ -162,19 +160,39 @@ export class BitacoraSistemaService {
     metadata: any
   ): Promise<void> {
     try {
-      if (!rutaCarpeta) return;
-      if (!fs.existsSync(rutaCarpeta)) fs.mkdirSync(rutaCarpeta, { recursive: true });
+      let carpeta = rutaCarpeta;
+      
+      // ✅ SOLO UNC - Sin ninguna referencia a Z:\
+      // Si la ruta no empieza con \\, asumimos que es relativa a la base
+      if (!carpeta.startsWith('\\\\')) {
+        // Eliminar cualquier prefijo incorrecto
+        let cleanPath = carpeta;
+        if (cleanPath.startsWith('Z:')) {
+          cleanPath = cleanPath.substring(2);
+        }
+        if (cleanPath.startsWith('\\')) {
+          cleanPath = cleanPath.substring(1);
+        }
+        carpeta = `\\\\R2-D2\\api-contract\\${cleanPath}`;
+      }
+      
+      if (!fs.existsSync(carpeta)) {
+        fs.mkdirSync(carpeta, { recursive: true });
+      }
 
       const nombreArchivo = `bitacora_${String(modulo)}.txt`;
-      const rutaArchivo = path.join(rutaCarpeta, nombreArchivo);
+      const rutaArchivo = `${carpeta}\\${nombreArchivo}`;
       const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'full', timeStyle: 'long' });
       const registro = this.formatearRegistroTXT(fecha, usuario, accion, modulo, metadata);
 
-      const lineas = fs.existsSync(rutaArchivo) ? fs.readFileSync(rutaArchivo, 'utf8').split('\n').filter(l => l.trim()) : [];
+      let lineas: string[] = [];
+      if (fs.existsSync(rutaArchivo)) {
+        lineas = fs.readFileSync(rutaArchivo, 'utf8').split('\n').filter(l => l.trim());
+      }
       const lineasActualizadas = [...lineas.slice(-199), registro];
       fs.writeFileSync(rutaArchivo, lineasActualizadas.join('\n'), 'utf8');
       this.logger.debug(`📝 Archivo documento actualizado: ${rutaArchivo}`);
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Error guardando archivo documento: ${error.message}`);
     }
   }
@@ -190,14 +208,16 @@ export class BitacoraSistemaService {
       const rol = usuario.rol_usuario || usuario.role;
       if (!rol) return;
 
-      const logsDir = path.join(this.logsBasePath, 'roles', rol);
-      if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+      const logsDir = `${this.LOGS_BASE_PATH}\\roles\\${rol}`;
+      if (!fs.existsSync(logsDir)) {
+        fs.mkdirSync(logsDir, { recursive: true });
+      }
 
       const fechaActual = new Date();
       const año = fechaActual.getFullYear();
       const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
       const nombreArchivo = `${rol}_${año}-${mes}.log`;
-      const rutaArchivo = path.join(logsDir, nombreArchivo);
+      const rutaArchivo = `${logsDir}\\${nombreArchivo}`;
 
       const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'full', timeStyle: 'long' });
       const radicado = documento?.numeroRadicado ? `[${documento.numeroRadicado}] ` : '';
@@ -208,7 +228,7 @@ export class BitacoraSistemaService {
       const registro = `[${fecha}] ${usuario.nombre_usuario || usuario.fullName || usuario.username} (${usuario.username})${ip} - ${moduloStr}${radicado}${accion}${detalles}\n`;
       fs.writeFileSync(rutaArchivo, registro, { flag: 'a', encoding: 'utf8' });
       this.logger.debug(`📝 Archivo rol actualizado: ${rutaArchivo}`);
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Error en archivo global: ${error.message}`);
     }
   }
@@ -222,14 +242,16 @@ export class BitacoraSistemaService {
   ): Promise<void> {
     try {
       const moduloStr = String(modulo);
-      const logsDir = path.join(this.logsBasePath, 'modulos', moduloStr);
-      if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+      const logsDir = `${this.LOGS_BASE_PATH}\\modulos\\${moduloStr}`;
+      if (!fs.existsSync(logsDir)) {
+        fs.mkdirSync(logsDir, { recursive: true });
+      }
 
       const fechaActual = new Date();
       const año = fechaActual.getFullYear();
       const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
       const nombreArchivo = `${moduloStr}_${año}-${mes}.log`;
-      const rutaArchivo = path.join(logsDir, nombreArchivo);
+      const rutaArchivo = `${logsDir}\\${nombreArchivo}`;
 
       const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'full', timeStyle: 'long' });
       const radicado = documento?.numeroRadicado ? `[${documento.numeroRadicado}] ` : '';
@@ -240,7 +262,7 @@ export class BitacoraSistemaService {
       const registro = `[${fecha}] ${usuarioStr}${ip} - ${radicado}${accion}${detalles}\n`;
       fs.writeFileSync(rutaArchivo, registro, { flag: 'a', encoding: 'utf8' });
       this.logger.debug(`📝 Archivo módulo actualizado: ${rutaArchivo}`);
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Error en archivo módulo: ${error.message}`);
     }
   }
@@ -253,14 +275,16 @@ export class BitacoraSistemaService {
     metadata?: any
   ): Promise<void> {
     try {
-      const logsDir = path.join(this.logsBasePath, 'general');
-      if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+      const logsDir = `${this.LOGS_BASE_PATH}\\general`;
+      if (!fs.existsSync(logsDir)) {
+        fs.mkdirSync(logsDir, { recursive: true });
+      }
 
       const fechaActual = new Date();
       const año = fechaActual.getFullYear();
       const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
       const nombreArchivo = `bitacora_general_${año}-${mes}.log`;
-      const rutaArchivo = path.join(logsDir, nombreArchivo);
+      const rutaArchivo = `${logsDir}\\${nombreArchivo}`;
 
       const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'full', timeStyle: 'long' });
       const radicado = documento?.numeroRadicado ? `[${documento.numeroRadicado}] ` : '';
@@ -271,7 +295,7 @@ export class BitacoraSistemaService {
       const registro = `[${fecha}] ${usuario.nombre_usuario || usuario.fullName || usuario.username} (${usuario.username})${ip} - ${moduloStr}${radicado}${accion}${detalles}\n`;
       fs.writeFileSync(rutaArchivo, registro, { flag: 'a', encoding: 'utf8' });
       this.logger.debug(`📝 Archivo general actualizado: ${rutaArchivo}`);
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Error en archivo general: ${error.message}`);
     }
   }
@@ -285,14 +309,16 @@ export class BitacoraSistemaService {
     metadata?: any
   ): Promise<void> {
     try {
-      const logsDir = path.join(this.logsBasePath, 'errores');
-      if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+      const logsDir = `${this.LOGS_BASE_PATH}\\errores`;
+      if (!fs.existsSync(logsDir)) {
+        fs.mkdirSync(logsDir, { recursive: true });
+      }
 
       const fechaActual = new Date();
       const año = fechaActual.getFullYear();
       const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
       const nombreArchivo = `errores_${año}-${mes}.log`;
-      const rutaArchivo = path.join(logsDir, nombreArchivo);
+      const rutaArchivo = `${logsDir}\\${nombreArchivo}`;
 
       const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'full', timeStyle: 'long' });
       const radicado = documento?.numeroRadicado ? `[${documento.numeroRadicado}] ` : '';
@@ -433,7 +459,6 @@ export class BitacoraSistemaService {
     return result.affected || 0;
   }
 
-  // Método para obtener logs de archivos TXT (para el frontend)
   async obtenerLogsTXT(tipo: 'general' | 'roles' | 'modulos' | 'errores', nombre?: string): Promise<string> {
     try {
       let rutaArchivo = '';
@@ -442,29 +467,29 @@ export class BitacoraSistemaService {
         const fechaActual = new Date();
         const año = fechaActual.getFullYear();
         const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
-        rutaArchivo = path.join(this.logsBasePath, 'general', `bitacora_general_${año}-${mes}.log`);
+        rutaArchivo = `${this.LOGS_BASE_PATH}\\general\\bitacora_general_${año}-${mes}.log`;
       } else if (tipo === 'roles' && nombre) {
         const fechaActual = new Date();
         const año = fechaActual.getFullYear();
         const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
-        rutaArchivo = path.join(this.logsBasePath, 'roles', nombre, `${nombre}_${año}-${mes}.log`);
+        rutaArchivo = `${this.LOGS_BASE_PATH}\\roles\\${nombre}\\${nombre}_${año}-${mes}.log`;
       } else if (tipo === 'modulos' && nombre) {
         const fechaActual = new Date();
         const año = fechaActual.getFullYear();
         const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
-        rutaArchivo = path.join(this.logsBasePath, 'modulos', nombre, `${nombre}_${año}-${mes}.log`);
+        rutaArchivo = `${this.LOGS_BASE_PATH}\\modulos\\${nombre}\\${nombre}_${año}-${mes}.log`;
       } else if (tipo === 'errores') {
         const fechaActual = new Date();
         const año = fechaActual.getFullYear();
         const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
-        rutaArchivo = path.join(this.logsBasePath, 'errores', `errores_${año}-${mes}.log`);
+        rutaArchivo = `${this.LOGS_BASE_PATH}\\errores\\errores_${año}-${mes}.log`;
       }
 
       if (fs.existsSync(rutaArchivo)) {
         return fs.readFileSync(rutaArchivo, 'utf8');
       }
       return 'No hay logs disponibles';
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Error leyendo archivo TXT: ${error.message}`);
       return `Error al leer logs: ${error.message}`;
     }

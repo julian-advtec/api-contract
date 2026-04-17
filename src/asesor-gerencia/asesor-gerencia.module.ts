@@ -1,3 +1,4 @@
+import { RendicionCuentasDocumento } from './../rendicion-cuentas/entities/rendicion-cuentas-documento.entity';
 // asesor-gerencia.module.ts
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -20,6 +21,7 @@ import { TesoreriaModule } from '../tesoreria/tesoreria.module';
       Documento,
       User,
       Signature,
+      RendicionCuentasDocumento,
     ]),
     TesoreriaModule,
   ],
