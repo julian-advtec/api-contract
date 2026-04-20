@@ -1,4 +1,0 @@
-
-[lunes, 13 de abril de 2026, 2:41:24 p. m. COT] Administrador del Sistema (sistemas2) - TESORERÍA - TOMÓ documento para tesorería | Estado: EN_REVISION_TESORERIA
-
-[lunes, 13 de abril de 2026, 3:38:52 p. m. COT] Administrador del Sistema (sistemas2) - TESORERÍA - SUBIÓ documento tesorería | Archivo: pagoRealizado | Estado: PAGADO

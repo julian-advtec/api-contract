@@ -1,4 +1,0 @@
-
-[lunes, 13 de abril de 2026, 12:31:23 p. m. COT] Administrador del Sistema (sistemas2) - AUDITOR - TOMÓ documento para auditoría | Estado: RADICADO → EN_REVISION_AUDITOR
-
-[lunes, 13 de abril de 2026, 2:02:52 p. m. COT] Administrador del Sistema (sistemas2) - AUDITOR - REALIZÓ REVISIÓN | EN_REVISION → APROBADO - 34232423

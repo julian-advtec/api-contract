@@ -11,6 +11,8 @@ import { RendicionCuentasEstado } from './entities/rendicion-cuentas-estado.enum
 import { Documento } from '../radicacion/entities/documento.entity';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
+import { AsesorGerenciaDocumento } from '../asesor-gerencia/entities/asesor-gerencia-documento.entity';
+import { TesoreriaDocumento } from '../tesoreria/entities/tesoreria-documento.entity';
 
 import {
   TomarDecisionDto,
@@ -37,82 +39,75 @@ export class RendicionCuentasService {
     private documentoRadicacionRepo: Repository<Documento>,
     @InjectRepository(User)
     private userRepo: Repository<User>,
+      @InjectRepository(AsesorGerenciaDocumento)
+  private asesorGerenciaRepository: Repository<AsesorGerenciaDocumento>,
+  @InjectRepository(TesoreriaDocumento)
+  private tesoreriaRepository: Repository<TesoreriaDocumento>,
   ) { }
 
-  /**
-   * 1. OBTENER DOCUMENTOS DISPONIBLES (los que vienen de asesor gerencia)
-   */
-  async obtenerDocumentosDisponibles(usuarioId: string): Promise<any[]> {
-    this.logger.log(`Obteniendo documentos disponibles para usuario: ${usuarioId}`);
+ async obtenerDocumentosDisponibles(usuarioId: string): Promise<any[]> {
+  this.logger.log(`Obteniendo documentos disponibles para usuario: ${usuarioId}`);
 
-    const documentos = await this.documentoRadicacionRepo
-      .createQueryBuilder('doc')
-      .leftJoinAndSelect('doc.radicador', 'radicador')
-      .leftJoinAndSelect('doc.usuarioAsignado', 'asignado')
-      .where('doc.estado = :estado', { estado: 'COMPLETADO_ASESOR_GERENCIA' })
-      .orderBy('doc.fechaActualizacion', 'ASC')
-      .getMany();
+  // Consulta directa sin joins complejos
+  const documentos = await this.documentoRadicacionRepo
+    .createQueryBuilder('doc')
+    .where('doc.estado = :estado', { estado: 'COMPLETADO_ASESOR_GERENCIA' })
+    .getMany();
 
-    this.logger.log(`📄 Documentos encontrados: ${documentos.length}`);
+  this.logger.log(`📄 Documentos encontrados: ${documentos.length}`);
+  
+  if (documentos.length > 0) {
     documentos.forEach(doc => {
-      this.logger.log(`   ID: ${doc.id}, Radicado: ${doc.numeroRadicado}`);
+      this.logger.log(`   - ${doc.numeroRadicado}: ${doc.estado}`);
     });
-
-    const revisionesActivas = await this.documentoRepo.find({
-      where: { estado: RendicionCuentasEstado.EN_REVISION },
-      relations: ['documento', 'responsable'],
-    });
-
-    const idsEnRevision = revisionesActivas.map(r => r.documento.id);
-    this.logger.log(`📋 IDs en revisión: ${idsEnRevision.join(', ')}`);
-
-    const responsablePorDocumento = new Map();
-    revisionesActivas.forEach(r => {
-      if (r.documento && r.responsableId) {
-        responsablePorDocumento.set(r.documento.id, r.responsableId);
-      }
-    });
-
-    const resultado = documentos.map(doc => ({
-      id: doc.id,
-      numeroRadicado: doc.numeroRadicado,
-      numeroContrato: doc.numeroContrato,
-      nombreContratista: doc.nombreContratista,
-      documentoContratista: doc.documentoContratista,
-      fechaInicio: doc.fechaInicio,
-      fechaFin: doc.fechaFin,
-      fechaRadicacion: doc.fechaRadicacion,
-      fechaCreacion: doc.fechaRadicacion,
-      fechaActualizacion: doc.fechaActualizacion,
-      radicador: doc.nombreRadicador,
-      estado: doc.estado,
-      responsableId: responsablePorDocumento.get(doc.id) || null,
-      disponible: !idsEnRevision.includes(doc.id),
-      enMiRevision: responsablePorDocumento.get(doc.id) === usuarioId,
-    }));
-
-    this.logger.log(`📤 Resultado: ${resultado.length} documentos`);
-    resultado.forEach(r => {
-      this.logger.log(`   ID: ${r.id}, Disponible: ${r.disponible}`);
-    });
-
-    return resultado;
   }
 
-  /**
-   * 2. TOMAR DOCUMENTO PARA REVISIÓN
-   */
-  // src/rendicion-cuentas/rendicion-cuentas.service.ts
+  // Verificar si hay rendiciones activas para estos documentos
+  const revisionesActivas = await this.documentoRepo.find({
+    where: { estado: RendicionCuentasEstado.EN_REVISION },
+    relations: ['documento'],
+  });
+
+  const idsEnRevision = revisionesActivas.map(r => r.documento?.id).filter(id => id);
+  this.logger.log(`📋 Documentos en revisión: ${idsEnRevision.length}`);
+
+  const responsablePorDocumento = new Map();
+  revisionesActivas.forEach(r => {
+    if (r.documento && r.responsableId) {
+      responsablePorDocumento.set(r.documento.id, r.responsableId);
+    }
+  });
+
+  const resultado = documentos.map(doc => ({
+    id: doc.id,
+    numeroRadicado: doc.numeroRadicado,
+    numeroContrato: doc.numeroContrato,
+    nombreContratista: doc.nombreContratista,
+    documentoContratista: doc.documentoContratista,
+    fechaInicio: doc.fechaInicio,
+    fechaFin: doc.fechaFin,
+    fechaRadicacion: doc.fechaRadicacion,
+    fechaCreacion: doc.fechaRadicacion,
+    fechaActualizacion: doc.fechaActualizacion,
+    radicador: doc.nombreRadicador,
+    estado: doc.estado,
+    responsableId: responsablePorDocumento.get(doc.id) || null,
+    disponible: !idsEnRevision.includes(doc.id),
+    enMiRevision: responsablePorDocumento.get(doc.id) === usuarioId,
+  }));
+
+  this.logger.log(`📤 Resultado final: ${resultado.length} documentos disponibles`);
+  return resultado;
+}
+
   async tomarDocumento(documentoId: string, usuarioId: string) {
     this.logger.log(`📥 Recibida solicitud para tomar documento: ${documentoId}`);
-    this.logger.log(`👤 Usuario: ${usuarioId}`);
 
     const queryRunner = this.documentoRepo.manager.connection.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      // Paso 1: Buscar documento
       const documento = await queryRunner.manager
         .createQueryBuilder(Documento, 'doc')
         .where('doc.id = :id', { id: documentoId })
@@ -124,7 +119,6 @@ export class RendicionCuentasService {
         throw new NotFoundException('Documento no encontrado o no disponible');
       }
 
-      // Paso 2: Verificar si ya está en revisión
       const existeEnRevision = await queryRunner.manager.findOne(RendicionCuentasDocumento, {
         where: {
           documento: { id: documentoId },
@@ -136,10 +130,8 @@ export class RendicionCuentasService {
         throw new BadRequestException('El documento ya está siendo revisado por otro usuario');
       }
 
-      // Paso 3: Buscar usuario responsable
       const responsable = await queryRunner.manager.findOneOrFail(User, { where: { id: usuarioId } });
 
-      // Paso 4: Crear registro en rendición
       const rendicionDoc = queryRunner.manager.create(RendicionCuentasDocumento, {
         documento,
         documentoId: documento.id,
@@ -149,13 +141,11 @@ export class RendicionCuentasService {
         fechaInicioRevision: new Date(),
       });
 
-      // Paso 5: Actualizar estado del documento original
       documento.estado = 'EN_REVISION_RENDICION_CUENTAS';
       documento.usuarioAsignado = responsable;
       documento.usuarioAsignadoNombre = responsable.fullName || responsable.username;
       documento.ultimoUsuario = `Rendición Cuentas: ${responsable.fullName || responsable.username}`;
 
-      // Paso 6: Agregar al historial del documento original
       const historial = documento.historialEstados || [];
       historial.push({
         fecha: new Date(),
@@ -167,16 +157,10 @@ export class RendicionCuentasService {
       });
       documento.historialEstados = historial;
 
-      // Paso 7: Guardar documento original
       await queryRunner.manager.save(documento);
-
-      // Paso 8: Guardar registro de rendición
       const savedRendicion = await queryRunner.manager.save(rendicionDoc);
-
-      // Paso 9: Confirmar transacción PRIMERO
       await queryRunner.commitTransaction();
 
-      // Paso 10: AHORA registrar en historial de rendición (fuera de la transacción)
       try {
         await this.registrarHistorial({
           documentoId: savedRendicion.id,
@@ -186,10 +170,8 @@ export class RendicionCuentasService {
           accion: 'TOMAR_REVISION',
           observacion: `Documento tomado para revisión`,
         });
-        this.logger.log(`✅ Historial de rendición registrado`);
       } catch (historialError) {
-        // Solo loguear el error, no fallar la operación principal
-        this.logger.error(`❌ Error registrando historial (no crítico): ${historialError.message}`);
+        this.logger.error(`❌ Error registrando historial: ${historialError.message}`);
       }
 
       return {
@@ -198,48 +180,86 @@ export class RendicionCuentasService {
         rendicionId: savedRendicion.id,
       };
     } catch (error) {
-      this.logger.error(`❌ Error en tomarDocumento: ${error.message}`, error.stack);
       await queryRunner.rollbackTransaction();
       throw error;
     } finally {
       await queryRunner.release();
     }
   }
-  /**
-   * 3. OBTENER TODOS LOS DOCUMENTOS (lista completa)
-   */
-  async obtenerTodosDocumentos(usuarioId: string): Promise<any[]> {
-    this.logger.log(`Obteniendo lista completa de documentos para usuarioId: ${usuarioId}`);
+// src/rendicion-cuentas/rendicion-cuentas.service.ts
 
-    const documentos = await this.documentoRepo.find({
-      relations: ['documento', 'responsable'],
-      order: { fechaCreacion: 'DESC' },
-    });
-
-
-
-    return documentos.map(doc => ({
-      id: doc.documento.id,
-      rendicionId: doc.id,
-      numeroRadicado: doc.documento.numeroRadicado,
-      numeroContrato: doc.documento.numeroContrato,
-      nombreContratista: doc.documento.nombreContratista,
-      documentoContratista: doc.documento.documentoContratista,
-      fechaRadicacion: doc.documento.fechaRadicacion,
-      fechaInicioRevision: doc.fechaInicioRevision,
-      estado: doc.estado,
-      observaciones: doc.observaciones,
-      responsableId: doc.responsableId,
-      responsableNombre: doc.responsable?.fullName || doc.responsable?.username,
-      fechaDecision: doc.fechaDecision,
-      esMio: doc.responsableId === usuarioId
-    }));
+async obtenerTodosDocumentos(usuarioId: string): Promise<any[]> {
+  this.logger.log(`Obteniendo TODOS los documentos de rendición para usuario: ${usuarioId}`);
+  
+  // Obtener todas las rendiciones sin filtros primero para debug
+  const todasLasRendiciones = await this.documentoRepo.find({
+    relations: ['documento', 'responsable'],
+  });
+  
+  this.logger.log(`📊 Total rendiciones en BD: ${todasLasRendiciones.length}`);
+  
+  if (todasLasRendiciones.length === 0) {
+    this.logger.warn('⚠️ No hay rendiciones en la base de datos');
+    return [];
   }
-
-
-  /**
-   * 4. OBTENER MIS DOCUMENTOS EN REVISIÓN
-   */
+  
+  // Obtener el usuario actual
+  const usuario = await this.userRepo.findOne({ where: { id: usuarioId } });
+  const esAdmin = usuario?.role === UserRole.ADMIN || usuario?.role === UserRole.SUPERVISOR;
+  
+  this.logger.log(`👤 Usuario: ${usuarioId}, esAdmin: ${esAdmin}`);
+  
+  // Mapear todas las rendiciones
+  const resultado = todasLasRendiciones.map(rendicion => {
+    // Asegurar que documento existe
+    if (!rendicion.documento) {
+      this.logger.warn(`Rendición ${rendicion.id} no tiene documento asociado`);
+      return null;
+    }
+    
+    const esMio = rendicion.responsableId === usuarioId;
+    const yaProcesado = rendicion.estado === 'APROBADO' || rendicion.estado === 'RECHAZADO' || rendicion.estado === 'COMPLETADO';
+    const puedeVer = esAdmin || esMio || yaProcesado;
+    
+    this.logger.log(`📄 Rendición: ${rendicion.id}, documento: ${rendicion.documento.numeroRadicado}, estado: ${rendicion.estado}, esMio: ${esMio}, puedeVer: ${puedeVer}`);
+    
+    if (!puedeVer) {
+      return null;
+    }
+    
+    return {
+      id: rendicion.id,
+      rendicionId: rendicion.id,
+      documentoId: rendicion.documento.id,
+      numeroRadicado: rendicion.documento.numeroRadicado || 'N/A',
+      numeroContrato: rendicion.documento.numeroContrato || 'N/A',
+      nombreContratista: rendicion.documento.nombreContratista || 'N/A',
+      documentoContratista: rendicion.documento.documentoContratista || 'N/A',
+      fechaRadicacion: rendicion.documento.fechaRadicacion,
+      fechaInicioRevision: rendicion.fechaInicioRevision,
+      estado: rendicion.estado,
+      estadoDocumento: rendicion.documento.estado,
+      observaciones: rendicion.observaciones,
+      responsableId: rendicion.responsableId,
+      responsableNombre: rendicion.responsable?.fullName || rendicion.responsable?.username || 'N/A',
+      fechaDecision: rendicion.fechaDecision,
+      fechaCreacion: rendicion.fechaCreacion,
+      fechaActualizacion: rendicion.fechaActualizacion,
+      esMio: esMio,
+      puedeEditar: esMio && rendicion.estado === 'EN_REVISION',
+      puedeVer: true
+    };
+  }).filter(item => item !== null);
+  
+  this.logger.log(`📤 Resultado final: ${resultado.length} documentos visibles`);
+  
+  // Log del primer resultado para debug
+  if (resultado.length > 0) {
+    this.logger.log(`📄 Primer resultado:`, JSON.stringify(resultado[0], null, 2));
+  }
+  
+  return resultado;
+}
   async obtenerMisDocumentosEnRevision(usuarioId: string): Promise<any[]> {
     const documentos = await this.documentoRepo.find({
       where: {
@@ -263,9 +283,6 @@ export class RendicionCuentasService {
     }));
   }
 
-  /**
-   * 5. TOMAR DECISIÓN (APROBAR, OBSERVAR, RECHAZAR)
-   */
   async tomarDecision(
     id: string,
     decisionDto: TomarDecisionDto,
@@ -283,7 +300,6 @@ export class RendicionCuentasService {
     });
 
     if (!documento) {
-      this.logger.error(`❌ No se encontró el documento ${id} en revisión para el usuario ${usuario.id}`);
       throw new ForbiddenException('No tienes este documento en revisión o ya fue procesado');
     }
 
@@ -294,10 +310,6 @@ export class RendicionCuentasService {
     try {
       const documentoOriginal = documento.documento;
       const estadoAnterior = documento.estado;
-
-      if (![RendicionCuentasEstado.APROBADO, RendicionCuentasEstado.OBSERVADO, RendicionCuentasEstado.RECHAZADO].includes(decisionDto.decision)) {
-        throw new BadRequestException(`Decisión no válida: ${decisionDto.decision}`);
-      }
 
       documento.estado = decisionDto.decision;
       documento.fechaDecision = new Date();
@@ -347,11 +359,9 @@ export class RendicionCuentasService {
       });
 
       await queryRunner.commitTransaction();
-      this.logger.log(`✅ Decisión ${decisionDto.decision} aplicada correctamente al documento ${id}`);
 
       return documento;
     } catch (error) {
-      this.logger.error(`❌ Error al tomar decisión: ${error.message}`, error.stack);
       await queryRunner.rollbackTransaction();
       throw error;
     } finally {
@@ -359,58 +369,44 @@ export class RendicionCuentasService {
     }
   }
 
-  /**
-   * 6. OBTENER RUTA DE CARPETA PARA DESCARGA
-   */
-  async obtenerRutaCarpeta(documentoId: string, usuarioId: string): Promise<{ rutaCarpeta: string; documentoInfo: any }> {
-    this.logger.log(`📂 Buscando carpeta para documento ${documentoId}, usuario ${usuarioId}`);
+async obtenerRutaCarpeta(documentoId: string, usuarioId: string): Promise<{ rutaCarpeta: string; documentoInfo: any }> {
+  this.logger.log(`🔍 Buscando documento para descargar: ${documentoId}`);
+  
+  // Buscar el documento radicado
+  const documento = await this.documentoRadicacionRepo.findOne({
+    where: { id: documentoId }
+  });
 
-    const documento = await this.documentoRadicacionRepo.findOne({
-      where: { id: documentoId }
-    });
-
-    if (!documento) {
-      this.logger.error(`❌ Documento ${documentoId} no encontrado en radicacion`);
-      throw new NotFoundException('Documento no encontrado');
-    }
-
-    this.logger.log(`📁 Documento encontrado: ${documento.numeroRadicado}`);
-    this.logger.log(`📁 Ruta configurada: ${documento.rutaCarpetaRadicado}`);
-
-    if (!documento.rutaCarpetaRadicado) {
-      this.logger.error(`❌ La ruta de carpeta está vacía para documento ${documentoId}`);
-      throw new NotFoundException('La ruta de la carpeta no está configurada');
-    }
-
-    if (!fs.existsSync(documento.rutaCarpetaRadicado)) {
-      this.logger.error(`❌ La carpeta no existe: ${documento.rutaCarpetaRadicado}`);
-      throw new NotFoundException(`La carpeta no existe: ${documento.rutaCarpetaRadicado}`);
-    }
-
-    try {
-      const archivos = fs.readdirSync(documento.rutaCarpetaRadicado);
-      this.logger.log(`📄 Archivos encontrados (${archivos.length}):`, archivos);
-    } catch (error) {
-      this.logger.error(`Error listando archivos: ${error.message}`);
-    }
-
-    return {
-      rutaCarpeta: documento.rutaCarpetaRadicado,
-      documentoInfo: {
-        id: documento.id,
-        numeroRadicado: documento.numeroRadicado,
-        numeroContrato: documento.numeroContrato,
-        nombreContratista: documento.nombreContratista,
-      }
-    };
+  if (!documento) {
+    this.logger.error(`❌ Documento no encontrado: ${documentoId}`);
+    throw new NotFoundException(`Documento ${documentoId} no encontrado`);
   }
 
-  /**
-   * 7. OBTENER HISTORIAL DEL USUARIO
-   */
-  async obtenerHistorial(usuarioId: string): Promise<any[]> {
-    this.logger.log(`Obteniendo historial para usuarioId: ${usuarioId}`);
+  this.logger.log(`✅ Documento encontrado: ${documento.numeroRadicado}`);
+  this.logger.log(`📁 Ruta de carpeta: ${documento.rutaCarpetaRadicado}`);
 
+  if (!documento.rutaCarpetaRadicado) {
+    this.logger.error(`❌ La ruta de carpeta es null o undefined`);
+    throw new NotFoundException(`La ruta de carpeta no está configurada para el documento ${documento.numeroRadicado}`);
+  }
+
+  if (!fs.existsSync(documento.rutaCarpetaRadicado)) {
+    this.logger.error(`❌ La carpeta no existe: ${documento.rutaCarpetaRadicado}`);
+    throw new NotFoundException(`La carpeta no existe: ${documento.rutaCarpetaRadicado}`);
+  }
+
+  return {
+    rutaCarpeta: documento.rutaCarpetaRadicado,
+    documentoInfo: {
+      id: documento.id,
+      numeroRadicado: documento.numeroRadicado,
+      numeroContrato: documento.numeroContrato,
+      nombreContratista: documento.nombreContratista,
+    }
+  };
+}
+
+  async obtenerHistorial(usuarioId: string): Promise<any[]> {
     const usuario = await this.userRepo.findOne({ where: { id: usuarioId } });
     const esAdmin = usuario?.role === UserRole.ADMIN;
 
@@ -426,11 +422,8 @@ export class RendicionCuentasService {
 
     const registros = await query.getMany();
 
-    this.logger.log(`Encontrados ${registros.length} registros`);
-
     return registros.map(doc => ({
-      // ✅ CORREGIDO: id debe ser el ID de la RENDICIÓN (doc.id)
-      id: doc.id,  // ← CAMBIAR: antes era doc.documento?.id
+      id: doc.id,
       rendicionId: doc.id,
       documentoId: doc.documento?.id || '',
       numeroRadicado: doc.documento?.numeroRadicado || 'N/A',
@@ -452,90 +445,147 @@ export class RendicionCuentasService {
     }));
   }
 
-
   /**
-   * 8. OBTENER DETALLE DE UN DOCUMENTO POR ID DE RENDICIÓN
+   * 🆕 NUEVO MÉTODO: Obtener detalle por documento radicado (como Asesor Gerencia)
+   * Este es el método principal que usa Rendición de Cuentas
    */
-  async obtenerDetalleDocumento(rendicionId: string, usuarioId: string): Promise<any> {
-    this.logger.log(`🔍 Obteniendo detalle para rendición ${rendicionId}, usuario ${usuarioId}`);
+// src/rendicion-cuentas/rendicion-cuentas.service.ts
 
-    const rendicion = await this.documentoRepo.findOne({
-      where: {
-        id: rendicionId
-      },
+async obtenerDetallePorDocumentoRadicado(documentoId: string, usuarioId: string): Promise<any> {
+  this.logger.log(`🔍 Buscando rendición para ID: ${documentoId}`);
+  
+  let rendicion: RendicionCuentasDocumento | null = null;
+  let documento: Documento | null = null;
+  
+  // ✅ PASO 1: Buscar como rendicionId (ID de la tabla rendicion_cuentas_documentos)
+  rendicion = await this.documentoRepo.findOne({
+    where: { id: documentoId },
+    relations: ['documento', 'responsable'],
+  });
+  
+  if (rendicion) {
+    this.logger.log(`✅ Encontrado como rendicionId: ${rendicion.id}`);
+    documento = rendicion.documento;
+  }
+  
+  // ✅ PASO 2: Si no se encontró, buscar como documentoId (ID de la tabla documentos dentro de rendicion)
+  if (!rendicion) {
+    rendicion = await this.documentoRepo.findOne({
+      where: { documento: { id: documentoId } },
       relations: ['documento', 'responsable'],
     });
-
-    if (!rendicion) {
-      this.logger.error(`❌ No se encontró rendición para ID ${rendicionId}`);
-      throw new NotFoundException('Documento no encontrado en rendición de cuentas');
+    
+    if (rendicion) {
+      this.logger.log(`✅ Encontrado como documentoId dentro de rendición: ${documentoId}`);
+      documento = rendicion.documento;
     }
-
-    this.logger.log(`📊 Rendición encontrada - ID: ${rendicion.id}, Estado: ${rendicion.estado}, Responsable: ${rendicion.responsableId}`);
-
-    const usuario = await this.userRepo.findOne({ where: { id: usuarioId } });
-    if (!usuario) {
-      throw new ForbiddenException('Usuario no encontrado');
-    }
-
-    if (usuario.role === UserRole.ADMIN || usuario.role === UserRole.SUPERVISOR) {
-      this.logger.log(`✅ Acceso permitido: usuario es ${usuario.role}`);
-    }
-    else if (rendicion.responsableId === usuarioId) {
-      this.logger.log(`✅ Acceso permitido: es el responsable del documento`);
-    }
-    else if (rendicion.fechaDecision) {
-      this.logger.log(`✅ Acceso permitido: documento ya procesado (modo lectura para todos)`);
-    }
-    else {
-      this.logger.error(`❌ Acceso denegado para usuario ${usuarioId} al documento ${rendicionId}`);
-      throw new ForbiddenException(`No tienes acceso a este documento en estado: ${rendicion.estado}`);
-    }
-
-    const response = {
-      id: rendicion.id,
-      documentoId: rendicion.documento.id,
-      numeroRadicado: rendicion.documento.numeroRadicado,
-      numeroContrato: rendicion.documento.numeroContrato,
-      nombreContratista: rendicion.documento.nombreContratista,
-      documentoContratista: rendicion.documento.documentoContratista,
-      fechaRadicacion: rendicion.documento.fechaRadicacion,
-      fechaInicio: rendicion.documento.fechaInicio,
-      fechaFin: rendicion.documento.fechaFin,
-      estado: rendicion.estado,
-      estadoDocumento: rendicion.documento.estado,
-      responsableId: rendicion.responsableId,
-      responsable: rendicion.responsable ? {
-        id: rendicion.responsable.id,
-        nombreCompleto: rendicion.responsable.fullName || rendicion.responsable.username,
-        email: rendicion.responsable.email
-      } : null,
-      fechaAsignacion: rendicion.fechaAsignacion,
-      fechaInicioRevision: rendicion.fechaInicioRevision,
-      fechaDecision: rendicion.fechaDecision,
-      observaciones: rendicion.observaciones,
-      observacionesRendicion: rendicion.observaciones,
-      historialEstados: rendicion.documento.historialEstados || [],
-      fechaCreacion: rendicion.fechaCreacion,
-      fechaActualizacion: rendicion.fechaActualizacion,
-      documento: {
-        id: rendicion.documento.id,
-        numeroRadicado: rendicion.documento.numeroRadicado,
-        numeroContrato: rendicion.documento.numeroContrato,
-        nombreContratista: rendicion.documento.nombreContratista,
-        documentoContratista: rendicion.documento.documentoContratista,
-        fechaRadicacion: rendicion.documento.fechaRadicacion,
-        rutaCarpetaRadicado: rendicion.documento.rutaCarpetaRadicado
-      }
-    };
-
-    this.logger.log(`📤 Respuesta preparada - ID: ${response.id}, DocumentoId: ${response.documentoId}`);
-    return response;
   }
+  
+  // ✅ PASO 3: Si aún no hay rendición, buscar el documento radicado directamente
+  if (!documento) {
+    documento = await this.documentoRadicacionRepo.findOne({
+      where: { id: documentoId },
+      relations: ['radicador', 'usuarioAsignado'],
+    });
+    
+    if (documento) {
+      this.logger.log(`✅ Encontrado como documento radicado directo: ${documento.id}`);
+    }
+  }
+  
+  // ✅ Si no se encontró nada, error
+  if (!documento) {
+    this.logger.error(`❌ No se encontró rendición ni documento con ID: ${documentoId}`);
+    throw new NotFoundException(`No se encontró rendición ni documento con ID: ${documentoId}`);
+  }
+  
+  // Verificar permisos
+  const usuario = await this.userRepo.findOne({ where: { id: usuarioId } });
+  const esAdmin = usuario?.role === UserRole.ADMIN || usuario?.role === UserRole.SUPERVISOR;
+  const esResponsable = rendicion?.responsableId === usuarioId;
+  const yaProcesado = !!rendicion?.fechaDecision;
+  
+  if (!esAdmin && !esResponsable && !yaProcesado && rendicion) {
+    throw new ForbiddenException(`No tienes acceso a este documento`);
+  }
+  
+  // Devolver todos los datos
+  return {
+    id: documento.id,
+    numeroRadicado: documento.numeroRadicado,
+    numeroContrato: documento.numeroContrato,
+    nombreContratista: documento.nombreContratista,
+    documentoContratista: documento.documentoContratista,
+    fechaRadicacion: documento.fechaRadicacion,
+    fechaInicio: documento.fechaInicio,
+    fechaFin: documento.fechaFin,
+    estado: documento.estado,
+    observacion: documento.observacion || '',
+    historialEstados: documento.historialEstados || [],
+    radicador: documento.radicador,
+    usuarioAsignado: documento.usuarioAsignado,
+    usuarioAsignadoNombre: documento.usuarioAsignadoNombre,
+    rutaCarpetaRadicado: documento.rutaCarpetaRadicado,
+    
+    rendicionId: rendicion?.id || null,
+    rendicionEstado: rendicion?.estado || null,
+    responsableId: rendicion?.responsableId || null,
+    responsable: rendicion?.responsable ? {
+      id: rendicion.responsable.id,
+      nombreCompleto: rendicion.responsable.fullName || rendicion.responsable.username,
+      email: rendicion.responsable.email
+    } : null,
+    fechaAsignacion: rendicion?.fechaAsignacion || null,
+    fechaInicioRevisionRendicion: rendicion?.fechaInicioRevision || null,
+    fechaDecisionRendicion: rendicion?.fechaDecision || null,
+    observacionesRendicion: rendicion?.observaciones || null,
+    
+    tesoreria: await this.obtenerDatosTesoreria(documento.id),
+    asesorGerencia: await this.obtenerDatosAsesorGerencia(documento.id)
+  };
+}
 
-  /**
-   * 9. REGISTRAR HISTORIAL
-   */
+// src/rendicion-cuentas/rendicion-cuentas.service.ts
+
+private async obtenerDatosTesoreria(documentoId: string): Promise<any> {
+  const tesoreria = await this.tesoreriaRepository.findOne({
+    where: { documento: { id: documentoId } }
+  });
+  
+  if (!tesoreria) return null;
+  
+  // ✅ Usando propiedades que SÍ existen en tu entidad
+  return {
+    pagoRealizadoPath: tesoreria.pagoRealizadoPath,
+    observaciones: tesoreria.observaciones,
+    fechaPago: tesoreria.fechaPago,
+    fechaCreacion: tesoreria.fechaCreacion,
+    fechaActualizacion: tesoreria.fechaActualizacion,
+    fechaInicioRevision: tesoreria.fechaInicioRevision,
+    fechaFinRevision: tesoreria.fechaFinRevision,
+    firmaAplicada: tesoreria.firmaAplicada
+  };
+}
+
+private async obtenerDatosAsesorGerencia(documentoId: string): Promise<any> {
+  const asesorGerencia = await this.asesorGerenciaRepository.findOne({
+    where: { documento: { id: documentoId } },
+    relations: ['asesor']
+  });
+  
+  if (!asesorGerencia) return null;
+  
+  return {
+    estado: asesorGerencia.estado,
+    observaciones: asesorGerencia.observaciones,
+    aprobacionPath: asesorGerencia.aprobacionPath,
+    comprobanteFirmadoPath: asesorGerencia.comprobanteFirmadoPath,
+    firmaAplicada: asesorGerencia.firmaAplicada,
+    asesor: asesorGerencia.asesor?.fullName || asesorGerencia.asesor?.username,
+    fechaInicioRevision: asesorGerencia.fechaInicioRevision,
+    fechaFinRevision: asesorGerencia.fechaFinRevision
+  };
+}
   private async registrarHistorial(data: {
     documentoId: string;
     usuarioId: string;
@@ -544,7 +594,6 @@ export class RendicionCuentasService {
     accion: string;
     observacion?: string | null;
   }): Promise<RendicionCuentasHistorial> {
-    this.logger.log(`📝 Registrando historial:`, data);
     const historial = new RendicionCuentasHistorial();
     historial.documentoId = data.documentoId;
     historial.usuarioId = data.usuarioId;
@@ -553,34 +602,70 @@ export class RendicionCuentasService {
     historial.accion = data.accion;
     historial.observacion = data.observacion || null;
 
-    try {
-      const saved = await this.historialRepo.save(historial);
-      this.logger.log(`✅ Historial guardado con ID: ${saved.id}`);
-      return saved;
-    } catch (error) {
-      this.logger.error(`❌ Error guardando historial: ${error.message}`, error.stack);
-      throw error;
-    }
+    return this.historialRepo.save(historial);
   }
 
-  async obtenerDetallePorDocumentoRadicado(documentoId: string, usuarioId: string): Promise<any> {
-    this.logger.log(`🔍 Buscando rendición para documento radicado: ${documentoId}, usuario: ${usuarioId}`);
-
-    // Buscar la rendición que tiene este documento radicado
-    const rendicion = await this.documentoRepo.findOne({
-      where: {
-        documento: { id: documentoId }  // ← Buscar por documento relacionado
-      },
-      relations: ['documento', 'responsable'],
-    });
-
-    if (!rendicion) {
-      this.logger.error(`❌ No se encontró rendición para documento radicado ${documentoId}`);
-      throw new NotFoundException('No se encontró rendición asociada a este documento');
-    }
-
-    // Reutilizar la lógica de obtenerDetalleDocumento
-    return this.obtenerDetalleDocumento(rendicion.id, usuarioId);
+  async obtenerRendicionPorId(rendicionId: string): Promise<RendicionCuentasDocumento> {
+  const rendicion = await this.documentoRepo.findOne({
+    where: { id: rendicionId },
+    relations: ['documento'],
+  });
+  
+  if (!rendicion) {
+    throw new NotFoundException(`Rendición ${rendicionId} no encontrada`);
   }
   
+  return rendicion;
+}
+
+async liberarDocumento(rendicionId: string, usuarioId: string): Promise<any> {
+  this.logger.log(`📤 Liberando documento rendición ${rendicionId} por usuario ${usuarioId}`);
+  
+  const rendicion = await this.documentoRepo.findOne({
+    where: {
+      id: rendicionId,
+      responsableId: usuarioId,
+      estado: RendicionCuentasEstado.EN_REVISION
+    },
+    relations: ['documento', 'responsable'],
+  });
+  
+  if (!rendicion) {
+    throw new ForbiddenException('No tienes este documento en revisión o ya fue procesado');
+  }
+  
+  const documentoOriginal = rendicion.documento;
+  
+  // Cambiar estado del documento original a COMPLETADO_ASESOR_GERENCIA
+  documentoOriginal.estado = 'COMPLETADO_ASESOR_GERENCIA';
+  documentoOriginal.usuarioAsignado = null;
+  documentoOriginal.usuarioAsignadoNombre = '';
+  documentoOriginal.fechaActualizacion = new Date();
+  documentoOriginal.ultimoUsuario = `Liberado desde rendición por: ${rendicion.responsable?.fullName || rendicion.responsable?.username}`;
+  
+  // Registrar en historial
+  const historial = documentoOriginal.historialEstados || [];
+  historial.push({
+    fecha: new Date(),
+    estado: 'COMPLETADO_ASESOR_GERENCIA',
+    usuarioId: usuarioId,
+    usuarioNombre: rendicion.responsable?.fullName || rendicion.responsable?.username,
+    rolUsuario: rendicion.responsable?.role,
+    observacion: `Documento liberado desde rendición de cuentas`,
+  });
+  documentoOriginal.historialEstados = historial;
+  
+  // ✅ CORREGIDO: Asignar un estado válido, no null
+  // Usar 'PENDIENTE' o crear un estado 'LIBERADO' en tu enum
+  rendicion.estado = RendicionCuentasEstado.PENDIENTE; // o 'DISPONIBLE'
+  rendicion.fechaActualizacion = new Date();
+  
+  await this.documentoRadicacionRepo.save(documentoOriginal);
+  await this.documentoRepo.save(rendicion);
+  
+  return {
+    success: true,
+    message: 'Documento liberado correctamente'
+  };
+}
 }

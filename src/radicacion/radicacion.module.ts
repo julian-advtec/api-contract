@@ -1,5 +1,3 @@
-// src/radicacion/radicacion.module.ts
-
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { RadicacionController } from './radicacion.controller';
@@ -13,14 +11,21 @@ import { ContratistasModule } from '../contratista/contratista.module';
 import { EstadisticasRadicadorController } from './estadisticas/estadisticas-radicador.controller';
 import { EstadisticasRadicadorService } from './estadisticas/estadisticas-radicador.service';
 import { StorageService } from '../common/storage/storage.service';
-import { AuditorModule } from '../auditor/auditor.module'; // ✅ AGREGAR
+import { AuditorModule } from '../auditor/auditor.module';
+import { RendicionCuentasDocumento } from '../rendicion-cuentas/entities/rendicion-cuentas-documento.entity'; // ✅ AGREGAR
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Documento, Contratista, User, RegistroAcceso]),
+    TypeOrmModule.forFeature([
+      Documento, 
+      Contratista, 
+      User, 
+      RegistroAcceso,
+      RendicionCuentasDocumento, // ✅ AGREGAR
+    ]),
     ContratistasModule,
     EstadosModule,
-    AuditorModule, // ✅ AGREGAR (en lugar de SupervisionModule)
+    AuditorModule,
   ],
   controllers: [
     RadicacionController,

@@ -1,4 +1,3 @@
-// src/rendicion-cuentas/rendicion-cuentas.module.ts
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { RendicionCuentasController } from './rendicion-cuentas.controller';
@@ -9,6 +8,9 @@ import { RendicionCuentasDocumento } from './entities/rendicion-cuentas-document
 import { RendicionCuentasHistorial } from './entities/rendicion-cuentas-historial.entity';
 import { Documento } from '../radicacion/entities/documento.entity';
 import { User } from '../users/entities/user.entity';
+import { AsesorGerenciaDocumento } from '../asesor-gerencia/entities/asesor-gerencia-documento.entity'; // ✅ AGREGAR
+import { TesoreriaDocumento } from '../tesoreria/entities/tesoreria-documento.entity'; // ✅ AGREGAR
+import { RadicacionModule } from '../radicacion/radicacion.module';
 
 @Module({
   imports: [
@@ -17,7 +19,10 @@ import { User } from '../users/entities/user.entity';
       RendicionCuentasHistorial,
       Documento,
       User,
+      AsesorGerenciaDocumento, // ✅ AGREGAR
+      TesoreriaDocumento,      // ✅ AGREGAR
     ]),
+    RadicacionModule,
   ],
   controllers: [
     RendicionCuentasController,

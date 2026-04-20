@@ -1,2 +1,0 @@
-[lunes, 13 de abril de 2026, 2:02:28 p. m. COT] Administrador del Sistema (sistemas2) - ADMIN - [AUDITORIA] - AUDITOR_TOMAR | Auditor sistemas2 tomó documento para revisión | RADICADO → EN_REVISION_AUDITOR
-[lunes, 13 de abril de 2026, 2:02:37 p. m. COT] Administrador del Sistema (sistemas2) - ADMIN - [AUDITORIA] - AUDITOR_APROBAR | Auditor sistemas2 revisó documento | EN_REVISION → APROBADO

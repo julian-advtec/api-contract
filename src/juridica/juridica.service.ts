@@ -63,6 +63,7 @@ export class JuridicaService {
         }
     }
 
+    
     // ==================== CONTRATOS ====================
 
     async create(

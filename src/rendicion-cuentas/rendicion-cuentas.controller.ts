@@ -10,6 +10,7 @@ import {
   Res,
   Logger,
   ParseUUIDPipe,
+  NotFoundException,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import archiver from 'archiver';
@@ -50,6 +51,7 @@ export class RendicionCuentasController {
     };
   }
 
+
   @Post('documentos/:documentoId/tomar')
   @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS)
   async tomarDocumento(
@@ -64,16 +66,21 @@ export class RendicionCuentasController {
     };
   }
 
-  @Get('todos-documentos')
-  @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
-  async getTodosDocumentos(@GetUser() user: JwtUser) {
-    const documentos = await this.service.obtenerTodosDocumentos(user.id);
-    return {
-      ok: true,
-      data: documentos,
-      total: documentos.length,
-    };
-  }
+@Get('todos-documentos')
+@Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
+async getTodosDocumentos(@GetUser() user: JwtUser) {
+  this.logger.log(`[TODOS-DOCUMENTOS] Solicitado por ${user.username}`);
+  
+  const documentos = await this.service.obtenerTodosDocumentos(user.id);
+  
+  this.logger.log(`[TODOS-DOCUMENTOS] Devolviendo ${documentos.length} documentos`);
+  
+  return {
+    ok: true,
+    data: documentos,
+    total: documentos.length,
+  };
+}
 
   @Get('mis-documentos-en-revision')
   @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS)
@@ -85,6 +92,7 @@ export class RendicionCuentasController {
       total: documentos.length,
     };
   }
+  
 
   @Patch('documentos/:id/decision')
   @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS)
@@ -128,7 +136,6 @@ export class RendicionCuentasController {
     console.log('📥 ===== SOLICITUD DE DESCARGA RECIBIDA =====');
     console.log('📥 documentoId PARAM:', documentoId);
     console.log('📥 usuario:', user.id, user.username);
-
 
     try {
       const { rutaCarpeta, documentoInfo } = await this.service.obtenerRutaCarpeta(documentoId, user.id);
@@ -189,19 +196,16 @@ export class RendicionCuentasController {
     }
   }
 
-  @Get('rendiciones/:rendicionId/detalle')
+  @Get('documento/:documentoId')
   @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
-  async getDetalleRendicion(
-    @Param('rendicionId', ParseUUIDPipe) rendicionId: string,
+  async getDocumentoPorId(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
     @GetUser() user: JwtUser,
   ) {
-    console.log('📥 rendicionId recibido:', rendicionId);
-
-    const detalle = await this.service.obtenerDetalleDocumento(rendicionId, user.id);
-
-    // ✅ Log para ver qué se está devolviendo
-    console.log('📤 Detalle a devolver:', JSON.stringify(detalle, null, 2));
-
+    console.log('📥 documentoId recibido (directo):', documentoId);
+    
+    const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
+    
     return {
       ok: true,
       data: detalle,
@@ -215,19 +219,79 @@ export class RendicionCuentasController {
     return historial;
   }
 
-  @Get('documentos-radicado/:documentoId/detalle')
-  @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
-  async getDetallePorDocumentoRadicado(
-    @Param('documentoId', ParseUUIDPipe) documentoId: string,
-    @GetUser() user: JwtUser,
-  ) {
-    console.log('📥 documentoRadicadoId recibido:', documentoId);
+  @Get('documentos/:documentoId/detalle')
+@Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
+async getDetalleDocumento(
+  @Param('documentoId', ParseUUIDPipe) documentoId: string,
+  @GetUser() user: JwtUser,
+) {
+  this.logger.log(`[DETALLE-RENDICION] Solicitado por ${user.username} para documento ${documentoId}`);
+  
+  const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
+  
+  return {
+    success: true,
+    data: detalle
+  };
+}
 
-    const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
+@Get('documentos/:documentoId/detalle-completo')
+@Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
+async getDetalleCompletoDocumento(
+  @Param('documentoId', ParseUUIDPipe) documentoId: string,
+  @GetUser() user: JwtUser,
+) {
+  this.logger.log(`[DETALLE-COMPLETO] Solicitado por ${user.username} para documento ${documentoId}`);
+  
+  const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
+  
+  return {
+    success: true,
+    data: detalle
+  };
+}
 
-    return {
-      ok: true,
-      data: detalle,
-    };
+// src/rendicion-cuentas/rendicion-cuentas.controller.ts
+
+@Get('rendiciones/:rendicionId/detalle-completo')
+@Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
+async getDetalleCompletoPorRendicionId(
+  @Param('rendicionId', ParseUUIDPipe) rendicionId: string,
+  @GetUser() user: JwtUser,
+) {
+  this.logger.log(`[DETALLE-COMPLETO-POR-RENDICION] Solicitado por ${user.username} para rendicionId ${rendicionId}`);
+  
+  // Primero obtener el documentoId de la rendición
+  const rendicion = await this.service.obtenerRendicionPorId(rendicionId);
+  
+  if (!rendicion) {
+    throw new NotFoundException(`Rendición ${rendicionId} no encontrada`);
   }
+  
+  const documentoId = rendicion.documento.id;
+  
+  const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
+  
+  return {
+    success: true,
+    data: detalle
+  };
+}
+
+@Post('documentos/:rendicionId/liberar')
+@Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS)
+async liberarDocumento(
+  @Param('rendicionId', ParseUUIDPipe) rendicionId: string,
+  @GetUser() user: JwtUser,
+) {
+  this.logger.log(`[LIBERAR] Usuario ${user.username} liberando rendición ${rendicionId}`);
+  
+  const result = await this.service.liberarDocumento(rendicionId, user.id);
+  
+  return {
+    ok: true,
+    message: result.message,
+    data: result
+  };
+}
 }

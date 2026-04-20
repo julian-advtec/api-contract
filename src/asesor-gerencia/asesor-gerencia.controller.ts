@@ -35,7 +35,6 @@ interface JwtUser {
   fullName?: string;
 }
 
-
 @Controller('asesor-gerencia')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AsesorGerenciaController {
