@@ -1,3 +1,4 @@
+// auth.service.ts
 import {
   Injectable,
   UnauthorizedException,
@@ -16,7 +17,6 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { CreateUserDto } from '../users/dto/create-user.dto';
 
-// ✅ INTERFAZ DEFINIDA EN EL MISMO ARCHIVO
 interface LoginResponse {
   success: boolean;
   message: string;
@@ -38,7 +38,43 @@ export class AuthService {
     private readonly emailService: EmailService,
   ) { }
 
-  // 🔍 MÉTODOS DE DEBUG NUEVOS
+  // ==================== REFRESH TOKEN ====================
+  async refreshToken(userId: string): Promise<{ token: string }> {
+    this.logger.debug(`🔄 Refresh token solicitado para userId: ${userId}`);
+    
+    const user = await this.usersService.findById(userId);
+    if (!user) {
+      this.logger.error(`❌ Usuario no encontrado: ${userId}`);
+      throw new UnauthorizedException('Usuario no encontrado');
+    }
+    
+    if (!user.isActive) {
+      this.logger.error(`❌ Usuario inactivo: ${user.username}`);
+      throw new UnauthorizedException('Usuario inactivo');
+    }
+    
+    
+    const payload = {
+      username: user.username,
+      userId: user.id,
+      role: user.role,
+      email: user.email
+    };
+    
+    const newToken = this.jwtService.sign(payload, {
+      expiresIn: '30m'
+    });
+    
+    const decoded = this.jwtService.decode(newToken) as any;
+    const expiresIn = decoded?.exp ? Math.floor((decoded.exp * 1000 - Date.now()) / 1000) : 1800;
+    
+    this.logger.log(`✅ Token refrescado para usuario: ${user.username}`);
+    this.logger.log(`📅 Nueva expiración en: ${Math.floor(expiresIn / 60)} minutos`);
+    
+    return { token: newToken };
+  }
+
+  // ==================== MÉTODOS DE DEBUG ====================
   async debugGetAllUsers() {
     return await this.usersService.findAll();
   }
@@ -51,12 +87,12 @@ export class AuthService {
     return await this.usersService.findByUsername(username);
   }
 
-  // ---------------- LOGIN DIRECTO ----------------
+  // ==================== LOGIN DIRECTO ====================
   async loginDirect(loginDto: LoginDto) {
     try {
       const user = await this.validateUser(loginDto.username, loginDto.password);
       const payload = { username: user.username, userId: user.id, role: user.role, email: user.email };
-      const token = this.jwtService.sign(payload);
+      const token = this.jwtService.sign(payload, { expiresIn: '30m' });
 
       return {
         success: true,
@@ -70,7 +106,7 @@ export class AuthService {
     }
   }
 
-  // ---------------- VALIDAR USUARIO ----------------
+  // ==================== VALIDAR USUARIO ====================
   async validateUser(username: string, password: string) {
     this.logger.debug(`🔍 Buscando usuario: ${username}`);
 
@@ -99,7 +135,7 @@ export class AuthService {
     return result;
   }
 
-  // ---------------- LOGIN CON 2FA - CORREGIDO ----------------
+  // ==================== LOGIN CON 2FA ====================
   async login(loginDto: LoginDto): Promise<LoginResponse> {
     try {
       this.logger.debug(`🔐 Intento de login para usuario: ${loginDto.username}`);
@@ -112,7 +148,6 @@ export class AuthService {
 
       this.logger.debug(`✅ Usuario validado: ${user.username} (${user.role})`);
 
-      // Bypass 2FA para admin
       if (user.role === UserRole.ADMIN) {
         this.logger.debug(`👑 Admin login - bypassing 2FA`);
         const tokenResult = this.generateToken(user, false, 'Login admin exitoso (2FA bypass)');
@@ -125,7 +160,6 @@ export class AuthService {
         };
       }
 
-      // Verificar configuración de email
       const emailConfigured = this.emailService.isEmailConfigured();
       this.logger.debug(`📧 Email service configurado: ${emailConfigured}`);
 
@@ -141,7 +175,6 @@ export class AuthService {
         };
       }
 
-      // Verificar que el usuario tenga email válido
       if (!user.email || !user.email.includes('@')) {
         this.logger.error(`❌ Usuario ${user.username} no tiene email válido: ${user.email}`);
         throw new BadRequestException('Configuración de email inválida para 2FA');
@@ -149,18 +182,15 @@ export class AuthService {
 
       this.logger.debug(`📧 Email válido encontrado: ${user.email}`);
 
-      // Flujo normal 2FA
       const twoFactorCode = Math.floor(100000 + Math.random() * 900000).toString();
       const twoFactorExpires = new Date(Date.now() + 10 * 60 * 1000);
 
       this.logger.debug(`🔢 Código 2FA generado: ${twoFactorCode}`);
 
       try {
-        // Guardar código en base de datos
         await this.usersService.updateTwoFactorCode(user.id, twoFactorCode, twoFactorExpires);
         this.logger.debug(`💾 Código 2FA guardado en BD para usuario: ${user.id}`);
 
-        // Intentar enviar email
         await this.emailService.sendTwoFactorCode(user.email, twoFactorCode);
 
         this.logger.log(`✅ Flujo 2FA iniciado para usuario: ${user.username}`);
@@ -175,11 +205,8 @@ export class AuthService {
 
       } catch (emailError) {
         this.logger.error(`❌ Error en flujo 2FA para ${user.username}:`, emailError.message);
-
-        // 🔥 OPCIÓN DE FALLBACK: Mostrar código en logs para desarrollo
         this.logger.warn(`🔐 CÓDIGO 2FA (FALLBACK) para ${user.email}: ${twoFactorCode}`);
 
-        // Continuar con flujo 2FA aunque falle el email (el código está en BD)
         return {
           success: true,
           message: 'Código de verificación generado. Revisa los logs del servidor si no recibes el email.',
@@ -196,37 +223,30 @@ export class AuthService {
     }
   }
 
-  // ---------------- VERIFICAR 2FA CON CONTROL DE INTENTOS ----------------
+  // ==================== VERIFICAR 2FA ====================
   async verifyTwoFactorCode(userId: string, code: string) {
     this.logger.debug(`🔐 Verificando 2FA para usuario: ${userId}, código: ${code}`);
 
-    // 1. Buscar usuario
     const user = await this.usersService.findById(userId);
     if (!user) {
       throw new Error('Usuario no encontrado');
     }
 
-    // 2. Verificar si el código expiró (BACKEND)
     if (!user.twoFactorExpires || new Date() > user.twoFactorExpires) {
-      // Limpiar código expirado
       await this.usersService.clearTwoFactorCode(user.id);
       throw new Error('Código expirado');
     }
 
-    // 3. Verificar intentos máximos (BACKEND)
     if (user.twoFactorAttempts >= 3) {
       await this.usersService.clearTwoFactorCode(user.id);
       throw new Error('Máximo de intentos alcanzado');
     }
 
-    // 4. Verificar código
     if (user.twoFactorCode !== code) {
-      // Incrementar intentos fallidos - necesitamos actualizar el usuario
       await this.usersService.updateTwoFactorAttempts(user.id, user.twoFactorAttempts + 1);
       throw new Error('Código inválido');
     }
 
-    // 5. Código correcto - limpiar y generar token
     await this.usersService.clearTwoFactorCode(user.id);
 
     const token = this.jwtService.sign({
@@ -234,19 +254,14 @@ export class AuthService {
       userId: user.id,
       role: user.role,
       email: user.email
-    });
+    }, { expiresIn: '30m' });
 
     this.logger.log(`✅ 2FA verificado exitosamente para usuario: ${user.username}`);
 
     return { token, user };
   }
 
-  // ---------------- ACTUALIZAR INTENTOS 2FA ----------------
-  private async updateTwoFactorAttempts(userId: string, attempts: number): Promise<void> {
-    await this.usersService.updateTwoFactorAttempts(userId, attempts);
-  }
-
-  // ---------------- REENVIAR 2FA ----------------
+  // ==================== REENVIAR 2FA ====================
   async resendTwoFactorCode(userId: string) {
     this.logger.debug(`🔄 Reenviando código 2FA para usuario: ${userId}`);
 
@@ -256,9 +271,8 @@ export class AuthService {
     }
 
     const twoFactorCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const twoFactorExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
+    const twoFactorExpires = new Date(Date.now() + 10 * 60 * 1000);
 
-    // Resetear intentos al reenviar
     await this.usersService.updateTwoFactorCode(user.id, twoFactorCode, twoFactorExpires);
 
     try {
@@ -275,7 +289,7 @@ export class AuthService {
     };
   }
 
-  // ---------------- GENERAR TOKEN ----------------
+  // ==================== GENERAR TOKEN ====================
   private generateToken(user: any, requiresTwoFactor: boolean, message?: string) {
     const payload = {
       username: user.username,
@@ -283,7 +297,7 @@ export class AuthService {
       role: user.role,
       email: user.email
     };
-    const token = this.jwtService.sign(payload);
+    const token = this.jwtService.sign(payload, { expiresIn: '30m' });
 
     return {
       success: true,
@@ -294,7 +308,7 @@ export class AuthService {
     };
   }
 
-  // ---------------- REGISTRO ----------------
+  // ==================== REGISTRO ====================
   async register(registerDto: RegisterDto) {
     const { username, email, password, role } = registerDto;
 
@@ -306,13 +320,12 @@ export class AuthService {
       throw new ConflictException('El email ya está registrado');
     }
 
-    // Crear DTO completo con fullName
     const createUserDto: CreateUserDto = {
       username,
       email,
       password,
       role,
-      fullName: username // Usar username como fullName por defecto
+      fullName: username
     };
 
     const user = await this.usersService.create(createUserDto);
@@ -328,7 +341,7 @@ export class AuthService {
     return user;
   }
 
-  // ---------------- PERFIL ----------------
+  // ==================== PERFIL ====================
   async getProfile(userId: string) {
     const user = await this.usersService.findById(userId);
     if (!user) {
@@ -338,31 +351,27 @@ export class AuthService {
     return user;
   }
 
-  // ---------------- DEBUG LOGIN ----------------
+  // ==================== DEBUG LOGIN ====================
   async debugLogin(loginDto: LoginDto) {
     const result = await this.login(loginDto);
     return result;
   }
 
-  // ---------------- FORGOT PASSWORD ----------------
+  // ==================== FORGOT PASSWORD ====================
   async forgotPassword(email: string): Promise<void> {
     this.logger.debug(`🔐 Forgot password request for email: ${email}`);
     
     const user = await this.usersService.findByEmail(email);
     if (!user) {
-      // Por seguridad, no revelar si el email existe
       this.logger.debug(`🔐 Email not found: ${email}`);
       return;
     }
 
-    // Generar token de reset
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const resetTokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+    const resetTokenExpires = new Date(Date.now() + 60 * 60 * 1000);
 
-    // Guardar token en la base de datos
     await this.usersService.updateResetToken(user.id, resetToken, resetTokenExpires);
 
-    // Enviar email
     if (this.emailService.isEmailConfigured()) {
       try {
         await this.emailService.sendPasswordResetEmail(user.email, resetToken, user.username);
@@ -376,7 +385,7 @@ export class AuthService {
     }
   }
 
-  // ---------------- RESET PASSWORD ----------------
+  // ==================== RESET PASSWORD ====================
   async resetPassword(token: string, newPassword: string): Promise<void> {
     this.logger.debug(`🔐 Resetting password with token: ${token}`);
     
@@ -389,16 +398,13 @@ export class AuthService {
       throw new Error('El token de recuperación ha expirado');
     }
 
-    // Actualizar contraseña
     await this.usersService.updatePassword(user.id, newPassword);
-
-    // Limpiar token de reset
     await this.usersService.clearResetToken(user.id);
 
     this.logger.log(`✅ Password reset successfully for user: ${user.username}`);
   }
 
-  // ---------------- VALIDATE RESET TOKEN ----------------
+  // ==================== VALIDATE RESET TOKEN ====================
   async validateResetToken(token: string): Promise<boolean> {
     const user = await this.usersService.findByResetToken(token);
     

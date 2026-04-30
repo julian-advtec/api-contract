@@ -1,3 +1,4 @@
+// auth.module.ts - VERSIÓN SIMPLIFICADA
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -17,7 +18,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: Number(config.get<number>('JWT_EXPIRES_IN')) || 3600 },
+        signOptions: { 
+          expiresIn: '30m' // Fijo en 30 minutos
+        },
       }),
     }),
   ],

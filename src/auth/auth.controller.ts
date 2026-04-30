@@ -1,4 +1,4 @@
-// auth.controller.ts - CORREGIDO (sin llave extra)
+// auth.controller.ts
 import {
   Controller,
   Post,
@@ -19,7 +19,6 @@ import { UserRole } from '../users/enums/user-role.enum';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 
-// ✅ INTERFAZ PARA LA RESPUESTA DEL LOGIN
 interface LoginResponse {
   success: boolean;
   message: string;
@@ -35,7 +34,40 @@ interface LoginResponse {
 export class AuthController {
   constructor(private authService: AuthService) { }
 
-  // 🔍 ENDPOINT DE DIAGNÓSTICO
+  // ==================== REFRESH TOKEN ====================
+  // IMPORTANTE: Este endpoint NO usa @Public(), por lo tanto requiere token
+  // Pero como el token puede estar expirado, el cliente debe enviar el userId en el body
+ @Post('refresh-token')
+@HttpCode(HttpStatus.OK)
+async refreshToken(@Body() body: { userId: string }) {
+  try {
+    console.log(`🔄 Refresh token solicitado para userId: ${body.userId}`);
+    
+    if (!body.userId) {
+      throw new BadRequestException('userId es requerido');
+    }
+    
+    const result = await this.authService.refreshToken(body.userId);
+    
+    // ✅ IMPORTANTE: Devolver el token directamente, no anidado en data
+    return {
+      ok: true,
+      success: true,
+      token: result.token,  // 👈 TOKEN EN NIVEL SUPERIOR
+      message: 'Token refrescado exitosamente',
+      expiresIn: '30m',
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('❌ Error en refresh token:', error);
+    throw new UnauthorizedException({
+      ok: false,
+      message: error.message || 'Error al refrescar token'
+    });
+  }
+}
+
+  // ==================== ENDPOINTS DE DIAGNÓSTICO ====================
   @Get('debug-all-users')
   async debugAllUsers() {
     try {
@@ -48,7 +80,7 @@ export class AuthController {
           username: user.username,
           email: user.email,
           role: user.role,
-          password: '***', // Por seguridad no mostrar
+          password: '***',
           hashed: true
         }))
       };
@@ -60,7 +92,6 @@ export class AuthController {
     }
   }
 
-  // 🔍 CREAR USUARIO DE PRUEBA
   @Post('create-test-user')
   async createTestUser() {
     try {
@@ -91,7 +122,6 @@ export class AuthController {
     }
   }
 
-  // 🔍 LOGIN SIMPLE PARA DEBUG
   @Post('debug-login-simple')
   async debugLoginSimple(@Body() body: { username: string }) {
     const user = await this.authService.debugFindUser(body.username);
@@ -112,13 +142,12 @@ export class AuthController {
     };
   }
 
-  // ENDPOINTS ORIGINALES - CORREGIDOS
+  // ==================== ENDPOINTS DE AUTENTICACIÓN ====================
   @Post('login-direct')
   @HttpCode(HttpStatus.OK)
   async loginDirect(@Body() loginDto: LoginDto) {
     const result = await this.authService.loginDirect(loginDto);
 
-    // ✅ CORRECCIÓN: Retornar directamente el resultado, no envolverlo en data
     return {
       ok: true,
       ...result,
@@ -133,7 +162,6 @@ export class AuthController {
     try {
       const result = await this.authService.login(loginDto);
 
-      // ✅ ESTRUCTURA UNIFICADA para el frontend
       const response: any = {
         ok: true,
         success: result.success,
@@ -143,7 +171,6 @@ export class AuthController {
         timestamp: new Date().toISOString()
       };
 
-      // ✅ Agregar propiedades condicionalmente - SIN ERRORES DE TIPO
       if (result.userId) {
         response.userId = result.userId;
         response.data = {
@@ -160,7 +187,6 @@ export class AuthController {
 
       return response;
     } catch (error) {
-      // ✅ Estructura de error consistente
       return {
         ok: false,
         success: false,
@@ -180,8 +206,8 @@ export class AuthController {
       return {
         ok: true,
         success: true,
-        token: result.token,  // ✅ En nivel superior
-        user: result.user,    // ✅ En nivel superior
+        token: result.token,
+        user: result.user,
         message: 'Verificación 2FA exitosa',
         path: '/api/auth/verify-2fa',
         timestamp: new Date().toISOString()
@@ -229,7 +255,7 @@ export class AuthController {
   @Get('profile')
   @UseGuards(JwtAuthGuard)
   async getProfile(@Request() req: any) {
-    const user = await this.authService.getProfile(req.user.userId);
+    const user = await this.authService.getProfile(req.user.id);
     return {
       ok: true,
       user
@@ -258,9 +284,6 @@ export class AuthController {
     };
   }
 
-
-
-  // En auth.controller.ts - AGREGAR ESTOS MÉTODOS
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   async forgotPassword(@Body() body: { email: string }) {
@@ -271,7 +294,6 @@ export class AuthController {
         message: 'Si el email existe, se ha enviado un enlace de recuperación'
       };
     } catch (error) {
-      // Por seguridad, no revelar si el email existe o no
       return {
         ok: true,
         message: 'Si el email existe, se ha enviado un enlace de recuperación'
@@ -312,6 +334,4 @@ export class AuthController {
       };
     }
   }
-
 }
-// ✅ NO HAY LLAVE EXTRA AQUÍ - ESTE ES EL FINAL DEL ARCHIVO
