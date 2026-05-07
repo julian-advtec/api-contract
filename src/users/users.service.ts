@@ -1,3 +1,4 @@
+// src/users/services/users.service.ts
 import {
   Injectable,
   ConflictException,
@@ -12,12 +13,15 @@ import { UserRole } from './enums/user-role.enum';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
+import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.service';
+import { ModuloBitacora, AccionBitacora } from '../bitacora-sistema/entities/bitacora-sistema.entity';
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User)
     private usersRepository: Repository<User>,
+    private bitacoraService: BitacoraSistemaService,
   ) { }
 
   // 🔍 FIND METHODS
@@ -36,8 +40,6 @@ export class UsersService {
       throw new InternalServerErrorException('Error buscando usuario por email');
     }
   }
-
-
 
   async findAll(): Promise<UserResponseDto[]> {
     try {
@@ -93,7 +95,7 @@ export class UsersService {
     }
   }
 
-  // ✨ CREATE & UPDATE METHODS - CORREGIDO
+  // ✨ CREATE & UPDATE METHODS
   async create(createUserDto: CreateUserDto, createdBy?: string): Promise<UserResponseDto> {
     try {
       console.log('Recibiendo datos para crear usuario:', createUserDto);
@@ -136,23 +138,39 @@ export class UsersService {
 
       console.log('Usuario guardado:', savedUser);
 
-      // Asegurarnos de que savedUser sea un objeto User, no un array
+      // 👇 CORREGIDO: Extraer el usuario correctamente (podría ser array o objeto)
+      let usuarioGuardado: User;
       if (Array.isArray(savedUser)) {
-        console.error('ERROR: savedUser es un array:', savedUser);
-        if (savedUser.length > 0) {
-          return new UserResponseDto(savedUser[0]);
-        } else {
+        console.warn('savedUser es un array, tomando el primero');
+        usuarioGuardado = savedUser[0];
+        if (!usuarioGuardado) {
           throw new InternalServerErrorException('Error: No se pudo crear el usuario');
         }
+      } else {
+        usuarioGuardado = savedUser;
       }
 
-      return new UserResponseDto(savedUser);
+      // 👇 REGISTRAR EN BITÁCORA (usando usuarioGuardado)
+      const usuarioCreador = createdBy ? await this.findById(createdBy) : null;
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_CREAR_USUARIO,
+        ModuloBitacora.ADMINISTRACION,
+        usuarioCreador,
+        null,
+        {
+          detalles: `Usuario creado: ${usuarioGuardado.username} (${usuarioGuardado.fullName}) - Rol: ${usuarioGuardado.role}`,
+          usuarioCreado: usuarioGuardado.username,
+          rolAsignado: usuarioGuardado.role
+        }
+      );
+
+      return new UserResponseDto(usuarioGuardado);
     } catch (error) {
       console.error('Error en create:', error);
       if (error instanceof ConflictException) {
         throw error;
       }
-      if (error.code === '23505') { // PostgreSQL duplicate key error
+      if (error.code === '23505') {
         throw new ConflictException('El nombre de usuario o email ya existe');
       }
       throw new InternalServerErrorException(`Error creando usuario: ${error.message}`);
@@ -166,6 +184,21 @@ export class UsersService {
       const user = await this.findById(id);
       if (!user) {
         throw new NotFoundException('Usuario no encontrado');
+      }
+
+      // Guardar cambios para la bitácora
+      const cambios = [];
+      if (updateUserDto.role && updateUserDto.role !== user.role) {
+        cambios.push(`Rol: ${user.role} → ${updateUserDto.role}`);
+      }
+      if (updateUserDto.fullName && updateUserDto.fullName !== user.fullName) {
+        cambios.push(`Nombre: ${user.fullName} → ${updateUserDto.fullName}`);
+      }
+      if (updateUserDto.username && updateUserDto.username !== user.username) {
+        cambios.push(`Username: ${user.username} → ${updateUserDto.username}`);
+      }
+      if (updateUserDto.email && updateUserDto.email !== user.email) {
+        cambios.push(`Email: ${user.email} → ${updateUserDto.email}`);
       }
 
       // Verificar username único (excluyendo el usuario actual)
@@ -192,7 +225,6 @@ export class UsersService {
       if (updateUserDto.password && updateUserDto.password.trim() !== '') {
         updateUserDto.password = await bcrypt.hash(updateUserDto.password, 12);
       } else {
-        // Si no se proporciona contraseña, eliminar del DTO
         delete updateUserDto.password;
       }
 
@@ -202,7 +234,6 @@ export class UsersService {
         updatedAt: new Date()
       };
 
-      // Solo agregar updatedBy si se proporciona
       if (updatedBy) {
         updateData.updatedBy = updatedBy;
       }
@@ -219,16 +250,34 @@ export class UsersService {
 
       console.log('Usuario actualizado:', savedUser);
 
-      // Asegurarnos de que savedUser sea un objeto User
+      // 👇 CORREGIDO: Extraer el usuario correctamente
+      let usuarioActualizado: User;
       if (Array.isArray(savedUser)) {
-        if (savedUser.length > 0) {
-          return new UserResponseDto(savedUser[0]);
-        } else {
+        usuarioActualizado = savedUser[0];
+        if (!usuarioActualizado) {
           throw new InternalServerErrorException('Error: No se pudo actualizar el usuario');
         }
+      } else {
+        usuarioActualizado = savedUser;
       }
 
-      return new UserResponseDto(savedUser);
+      // 👇 REGISTRAR EN BITÁCORA SI HUBO CAMBIOS
+      if (cambios.length > 0) {
+        const usuarioModificador = updatedBy ? await this.findById(updatedBy) : null;
+        await this.bitacoraService.registrar(
+          AccionBitacora.ADMIN_EDITAR_USUARIO,
+          ModuloBitacora.ADMINISTRACION,
+          usuarioModificador,
+          null,
+          {
+            detalles: `Usuario editado: ${user.username} - Cambios: ${cambios.join(', ')}`,
+            usuarioEditado: user.username,
+            cambiosRealizados: cambios
+          }
+        );
+      }
+
+      return new UserResponseDto(usuarioActualizado);
     } catch (error) {
       console.error('Error en update:', error);
       if (error instanceof ConflictException || error instanceof NotFoundException) {
@@ -241,7 +290,7 @@ export class UsersService {
     }
   }
 
-  // 🚀 STATUS MANAGEMENT - CORREGIDO
+  // 🚀 STATUS MANAGEMENT
   async toggleUserStatus(id: string, updatedBy?: string): Promise<UserResponseDto> {
     try {
       const user = await this.findById(id);
@@ -249,25 +298,43 @@ export class UsersService {
         throw new NotFoundException('Usuario no encontrado');
       }
 
+      const estadoAnterior = user.isActive;
       user.isActive = !user.isActive;
       user.updatedAt = new Date();
 
-      // Solo asignar si existe
       if (updatedBy) {
         user.updatedBy = updatedBy;
       }
 
       const savedUser = await this.usersRepository.save(user);
 
+      // 👇 CORREGIDO: Extraer el usuario correctamente
+      let usuarioActualizado: User;
       if (Array.isArray(savedUser)) {
-        if (savedUser.length > 0) {
-          return new UserResponseDto(savedUser[0]);
-        } else {
+        usuarioActualizado = savedUser[0];
+        if (!usuarioActualizado) {
           throw new InternalServerErrorException('Error: No se pudo cambiar el estado del usuario');
         }
+      } else {
+        usuarioActualizado = savedUser;
       }
 
-      return new UserResponseDto(savedUser);
+      // 👇 REGISTRAR EN BITÁCORA
+      const usuarioModificador = updatedBy ? await this.findById(updatedBy) : null;
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_EDITAR_USUARIO,
+        ModuloBitacora.ADMINISTRACION,
+        usuarioModificador,
+        null,
+        {
+          detalles: `Estado de usuario ${user.username} cambiado: ${estadoAnterior ? 'Activo' : 'Inactivo'} → ${!estadoAnterior ? 'Activo' : 'Inactivo'}`,
+          usuarioEditado: user.username,
+          estadoAnterior: estadoAnterior ? 'Activo' : 'Inactivo',
+          estadoNuevo: !estadoAnterior ? 'Activo' : 'Inactivo'
+        }
+      );
+
+      return new UserResponseDto(usuarioActualizado);
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
@@ -283,6 +350,7 @@ export class UsersService {
         throw new NotFoundException('Usuario no encontrado');
       }
 
+      const estabaInactivo = !user.isActive;
       user.isActive = true;
       user.updatedAt = new Date();
 
@@ -292,15 +360,34 @@ export class UsersService {
 
       const savedUser = await this.usersRepository.save(user);
 
+      // 👇 CORREGIDO: Extraer el usuario correctamente
+      let usuarioActualizado: User;
       if (Array.isArray(savedUser)) {
-        if (savedUser.length > 0) {
-          return new UserResponseDto(savedUser[0]);
-        } else {
+        usuarioActualizado = savedUser[0];
+        if (!usuarioActualizado) {
           throw new InternalServerErrorException('Error: No se pudo activar el usuario');
         }
+      } else {
+        usuarioActualizado = savedUser;
       }
 
-      return new UserResponseDto(savedUser);
+      // 👇 REGISTRAR EN BITÁCORA SI ESTABA INACTIVO
+      if (estabaInactivo) {
+        const usuarioModificador = updatedBy ? await this.findById(updatedBy) : null;
+        await this.bitacoraService.registrar(
+          AccionBitacora.ADMIN_EDITAR_USUARIO,
+          ModuloBitacora.ADMINISTRACION,
+          usuarioModificador,
+          null,
+          {
+            detalles: `Usuario activado: ${user.username}`,
+            usuarioEditado: user.username,
+            accion: 'ACTIVACION'
+          }
+        );
+      }
+
+      return new UserResponseDto(usuarioActualizado);
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
@@ -316,6 +403,7 @@ export class UsersService {
         throw new NotFoundException('Usuario no encontrado');
       }
 
+      const estabaActivo = user.isActive;
       user.isActive = false;
       user.updatedAt = new Date();
 
@@ -325,15 +413,34 @@ export class UsersService {
 
       const savedUser = await this.usersRepository.save(user);
 
+      // 👇 CORREGIDO: Extraer el usuario correctamente
+      let usuarioActualizado: User;
       if (Array.isArray(savedUser)) {
-        if (savedUser.length > 0) {
-          return new UserResponseDto(savedUser[0]);
-        } else {
+        usuarioActualizado = savedUser[0];
+        if (!usuarioActualizado) {
           throw new InternalServerErrorException('Error: No se pudo desactivar el usuario');
         }
+      } else {
+        usuarioActualizado = savedUser;
       }
 
-      return new UserResponseDto(savedUser);
+      // 👇 REGISTRAR EN BITÁCORA SI ESTABA ACTIVO
+      if (estabaActivo) {
+        const usuarioModificador = updatedBy ? await this.findById(updatedBy) : null;
+        await this.bitacoraService.registrar(
+          AccionBitacora.ADMIN_EDITAR_USUARIO,
+          ModuloBitacora.ADMINISTRACION,
+          usuarioModificador,
+          null,
+          {
+            detalles: `Usuario desactivado: ${user.username}`,
+            usuarioEditado: user.username,
+            accion: 'DESACTIVACION'
+          }
+        );
+      }
+
+      return new UserResponseDto(usuarioActualizado);
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
@@ -343,8 +450,27 @@ export class UsersService {
   }
 
   // 🗑️ DELETE METHODS
-  async remove(id: string): Promise<void> {
+  async remove(id: string, deletedBy?: string): Promise<void> {
     try {
+      const user = await this.findById(id);
+      if (!user) {
+        throw new NotFoundException('Usuario no encontrado');
+      }
+
+      // 👇 REGISTRAR EN BITÁCORA ANTES DE ELIMINAR
+      const usuarioEliminador = deletedBy ? await this.findById(deletedBy) : null;
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_ELIMINAR_USUARIO,
+        ModuloBitacora.ADMINISTRACION,
+        usuarioEliminador,
+        null,
+        {
+          detalles: `Usuario eliminado permanentemente: ${user.username} (${user.fullName}) - Rol: ${user.role}`,
+          usuarioEliminado: user.username,
+          rolEliminado: user.role
+        }
+      );
+
       const result = await this.usersRepository.delete(id);
       if (result.affected === 0) {
         throw new NotFoundException('Usuario no encontrado');
@@ -373,15 +499,32 @@ export class UsersService {
 
       const savedUser = await this.usersRepository.save(user);
 
+      // 👇 CORREGIDO: Extraer el usuario correctamente
+      let usuarioActualizado: User;
       if (Array.isArray(savedUser)) {
-        if (savedUser.length > 0) {
-          return new UserResponseDto(savedUser[0]);
-        } else {
+        usuarioActualizado = savedUser[0];
+        if (!usuarioActualizado) {
           throw new InternalServerErrorException('Error: No se pudo eliminar el usuario');
         }
+      } else {
+        usuarioActualizado = savedUser;
       }
 
-      return new UserResponseDto(savedUser);
+      // 👇 REGISTRAR EN BITÁCORA
+      const usuarioModificador = updatedBy ? await this.findById(updatedBy) : null;
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_EDITAR_USUARIO,
+        ModuloBitacora.ADMINISTRACION,
+        usuarioModificador,
+        null,
+        {
+          detalles: `Usuario desactivado (soft delete): ${user.username}`,
+          usuarioEditado: user.username,
+          accion: 'SOFT_DELETE'
+        }
+      );
+
+      return new UserResponseDto(usuarioActualizado);
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
@@ -424,6 +567,44 @@ export class UsersService {
       return users.map(user => new UserResponseDto(user));
     } catch (error) {
       throw new InternalServerErrorException('Error obteniendo usuarios por rol');
+    }
+  }
+
+  // 👇 MÉTODOS PARA SUPERVISORES
+  async getSupervisores(): Promise<User[]> {
+    try {
+      const supervisores = await this.usersRepository.find({
+        where: { 
+          role: UserRole.SUPERVISOR,
+          isActive: true 
+        },
+        order: { fullName: 'ASC' },
+        select: ['id', 'fullName', 'username', 'email', 'role']
+      });
+      return supervisores;
+    } catch (error) {
+      throw new InternalServerErrorException('Error obteniendo supervisores');
+    }
+  }
+
+  async getSupervisoresSimple(): Promise<{ id: string; nombre: string; username: string }[]> {
+    try {
+      const supervisores = await this.usersRepository.find({
+        where: { 
+          role: UserRole.SUPERVISOR,
+          isActive: true 
+        },
+        order: { fullName: 'ASC' },
+        select: ['id', 'fullName', 'username']
+      });
+      
+      return supervisores.map(supervisor => ({
+        id: supervisor.id,
+        nombre: supervisor.fullName,
+        username: supervisor.username
+      }));
+    } catch (error) {
+      throw new InternalServerErrorException('Error obteniendo supervisores');
     }
   }
 
@@ -512,11 +693,10 @@ export class UsersService {
     try {
       return await this.usersRepository.findOne({
         where: { id },
-        relations: relations // 👈 AGREGAR RELACIONES
+        relations: relations
       });
     } catch (error) {
       throw new InternalServerErrorException('Error buscando usuario por ID');
     }
   }
-
 }

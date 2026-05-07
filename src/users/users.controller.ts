@@ -1,3 +1,4 @@
+// src/users/controllers/users.controller.ts
 import {
   Controller,
   Get,
@@ -12,32 +13,32 @@ import {
   HttpStatus,
   HttpCode,
   ParseUUIDPipe,
-  NotFoundException // 👈 IMPORTAR
+  NotFoundException
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
+import { JwtAuthGuard } from './../common/guards/jwt-auth.guard';
+import { RolesGuard } from './../auth/guards/roles.guard';
+import { Roles } from './../auth/decorators/roles.decorator';
 import { UserRole } from './enums/user-role.enum';
 import { UserResponseDto } from './dto/user-response.dto';
 
 @Controller('users')
-// @UseGuards(JwtAuthGuard, RolesGuard) // COMENTADO
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
   ) { }
 
   @Get()
-  // @Roles(UserRole.ADMIN) // COMENTADO
+  @Roles(UserRole.ADMIN)
   findAll() {
     return this.usersService.findAll();
   }
 
   @Get('filtered')
-  // @Roles(UserRole.ADMIN) // COMENTADO
+  @Roles(UserRole.ADMIN)
   findWithFilters(
     @Query('search') search?: string,
     @Query('role') role?: UserRole,
@@ -64,6 +65,29 @@ export class UsersController {
   @Roles(UserRole.ADMIN)
   findByRole(@Param('role') role: UserRole) {
     return this.usersService.getUsersByRole(role);
+  }
+
+  // 👇 NUEVO ENDPOINT PARA SUPERVISORES
+  @Get('supervisores')
+  @Roles(UserRole.ADMIN, UserRole.SUPERVISOR)
+  async getSupervisores() {
+    const supervisores = await this.usersService.getSupervisores();
+    return {
+      success: true,
+      data: supervisores.map(supervisor => ({
+        id: supervisor.id,
+        nombre: supervisor.fullName,
+        username: supervisor.username,
+        email: supervisor.email
+      }))
+    };
+  }
+
+  // 👇 ENDPOINT SIMPLE PARA SUPERVISORES (solo nombre y username)
+  @Get('supervisores/simple')
+  @Roles(UserRole.ADMIN, UserRole.SUPERVISOR)
+  async getSupervisoresSimple() {
+    return this.usersService.getSupervisoresSimple();
   }
 
   @Post()
@@ -104,8 +128,9 @@ export class UsersController {
   @Delete(':id')
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.remove(id);
+  async remove(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+    await this.usersService.remove(id, req.user?.userId);
+    return;
   }
 
   @Delete(':id/soft')
@@ -114,13 +139,11 @@ export class UsersController {
     return this.usersService.softRemove(id, req.user?.userId);
   }
 
-  // 👇 MÉTODO CORREGIDO - MANEJA EL CASO NULL
   @Get(':id')
   @Roles(UserRole.ADMIN)
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     const user = await this.usersService.findById(id, ['signature']);
 
-    // 👇 VERIFICAR SI EL USUARIO EXISTE
     if (!user) {
       throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
     }
@@ -139,5 +162,4 @@ export class UsersController {
       isActive: true
     });
   }
-
 }

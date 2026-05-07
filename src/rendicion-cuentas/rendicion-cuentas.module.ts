@@ -11,6 +11,7 @@ import { User } from '../users/entities/user.entity';
 import { AsesorGerenciaDocumento } from '../asesor-gerencia/entities/asesor-gerencia-documento.entity'; // ✅ AGREGAR
 import { TesoreriaDocumento } from '../tesoreria/entities/tesoreria-documento.entity'; // ✅ AGREGAR
 import { RadicacionModule } from '../radicacion/radicacion.module';
+import { BitacoraSistemaModule } from '../bitacora-sistema/bitacora-sistema.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { RadicacionModule } from '../radicacion/radicacion.module';
       User,
       AsesorGerenciaDocumento, // ✅ AGREGAR
       TesoreriaDocumento,      // ✅ AGREGAR
+      BitacoraSistemaModule,
     ]),
     RadicacionModule,
   ],

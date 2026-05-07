@@ -24,6 +24,8 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
 import { TomarDecisionDto } from './dto/rendicion-cuentas.dto';
+import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.service';
+import { ModuloBitacora } from '../bitacora-sistema/entities/bitacora-sistema.entity';
 
 interface JwtUser {
   id: string;
@@ -38,7 +40,10 @@ interface JwtUser {
 export class RendicionCuentasController {
   private readonly logger = new Logger(RendicionCuentasController.name);
 
-  constructor(private readonly service: RendicionCuentasService) { }
+  constructor(
+    private readonly service: RendicionCuentasService,
+    private readonly bitacoraService: BitacoraSistemaService, // ✅ Inyectado para bitácora
+  ) { }
 
   @Get('documentos/disponibles')
   @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS)
@@ -50,7 +55,6 @@ export class RendicionCuentasController {
       total: documentos.length,
     };
   }
-
 
   @Post('documentos/:documentoId/tomar')
   @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS)
@@ -66,21 +70,21 @@ export class RendicionCuentasController {
     };
   }
 
-@Get('todos-documentos')
-@Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
-async getTodosDocumentos(@GetUser() user: JwtUser) {
-  this.logger.log(`[TODOS-DOCUMENTOS] Solicitado por ${user.username}`);
-  
-  const documentos = await this.service.obtenerTodosDocumentos(user.id);
-  
-  this.logger.log(`[TODOS-DOCUMENTOS] Devolviendo ${documentos.length} documentos`);
-  
-  return {
-    ok: true,
-    data: documentos,
-    total: documentos.length,
-  };
-}
+  @Get('todos-documentos')
+  @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
+  async getTodosDocumentos(@GetUser() user: JwtUser) {
+    this.logger.log(`[TODOS-DOCUMENTOS] Solicitado por ${user.username}`);
+
+    const documentos = await this.service.obtenerTodosDocumentos(user.id);
+
+    this.logger.log(`[TODOS-DOCUMENTOS] Devolviendo ${documentos.length} documentos`);
+
+    return {
+      ok: true,
+      data: documentos,
+      total: documentos.length,
+    };
+  }
 
   @Get('mis-documentos-en-revision')
   @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS)
@@ -92,7 +96,6 @@ async getTodosDocumentos(@GetUser() user: JwtUser) {
       total: documentos.length,
     };
   }
-  
 
   @Patch('documentos/:id/decision')
   @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS)
@@ -203,9 +206,9 @@ async getTodosDocumentos(@GetUser() user: JwtUser) {
     @GetUser() user: JwtUser,
   ) {
     console.log('📥 documentoId recibido (directo):', documentoId);
-    
+
     const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
-    
+
     return {
       ok: true,
       data: detalle,
@@ -220,78 +223,95 @@ async getTodosDocumentos(@GetUser() user: JwtUser) {
   }
 
   @Get('documentos/:documentoId/detalle')
-@Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
-async getDetalleDocumento(
-  @Param('documentoId', ParseUUIDPipe) documentoId: string,
-  @GetUser() user: JwtUser,
-) {
-  this.logger.log(`[DETALLE-RENDICION] Solicitado por ${user.username} para documento ${documentoId}`);
-  
-  const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
-  
-  return {
-    success: true,
-    data: detalle
-  };
-}
+  @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
+  async getDetalleDocumento(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @GetUser() user: JwtUser,
+  ) {
+    this.logger.log(`[DETALLE-RENDICION] Solicitado por ${user.username} para documento ${documentoId}`);
 
-@Get('documentos/:documentoId/detalle-completo')
-@Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
-async getDetalleCompletoDocumento(
-  @Param('documentoId', ParseUUIDPipe) documentoId: string,
-  @GetUser() user: JwtUser,
-) {
-  this.logger.log(`[DETALLE-COMPLETO] Solicitado por ${user.username} para documento ${documentoId}`);
-  
-  const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
-  
-  return {
-    success: true,
-    data: detalle
-  };
-}
+    const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
 
-// src/rendicion-cuentas/rendicion-cuentas.controller.ts
-
-@Get('rendiciones/:rendicionId/detalle-completo')
-@Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
-async getDetalleCompletoPorRendicionId(
-  @Param('rendicionId', ParseUUIDPipe) rendicionId: string,
-  @GetUser() user: JwtUser,
-) {
-  this.logger.log(`[DETALLE-COMPLETO-POR-RENDICION] Solicitado por ${user.username} para rendicionId ${rendicionId}`);
-  
-  // Primero obtener el documentoId de la rendición
-  const rendicion = await this.service.obtenerRendicionPorId(rendicionId);
-  
-  if (!rendicion) {
-    throw new NotFoundException(`Rendición ${rendicionId} no encontrada`);
+    return {
+      success: true,
+      data: detalle
+    };
   }
-  
-  const documentoId = rendicion.documento.id;
-  
-  const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
-  
-  return {
-    success: true,
-    data: detalle
-  };
-}
 
-@Post('documentos/:rendicionId/liberar')
-@Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS)
-async liberarDocumento(
-  @Param('rendicionId', ParseUUIDPipe) rendicionId: string,
-  @GetUser() user: JwtUser,
-) {
-  this.logger.log(`[LIBERAR] Usuario ${user.username} liberando rendición ${rendicionId}`);
-  
-  const result = await this.service.liberarDocumento(rendicionId, user.id);
-  
-  return {
-    ok: true,
-    message: result.message,
-    data: result
-  };
-}
+  @Get('documentos/:documentoId/detalle-completo')
+  @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
+  async getDetalleCompletoDocumento(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @GetUser() user: JwtUser,
+  ) {
+    this.logger.log(`[DETALLE-COMPLETO] Solicitado por ${user.username} para documento ${documentoId}`);
+
+    const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
+
+    return {
+      success: true,
+      data: detalle
+    };
+  }
+
+  @Get('rendiciones/:rendicionId/detalle-completo')
+  @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
+  async getDetalleCompletoPorRendicionId(
+    @Param('rendicionId', ParseUUIDPipe) rendicionId: string,
+    @GetUser() user: JwtUser,
+  ) {
+    this.logger.log(`[DETALLE-COMPLETO-POR-RENDICION] Solicitado por ${user.username} para rendicionId ${rendicionId}`);
+
+    const rendicion = await this.service.obtenerRendicionPorId(rendicionId);
+
+    if (!rendicion) {
+      throw new NotFoundException(`Rendición ${rendicionId} no encontrada`);
+    }
+
+    const documentoId = rendicion.documento.id;
+    const detalle = await this.service.obtenerDetallePorDocumentoRadicado(documentoId, user.id);
+
+    return {
+      success: true,
+      data: detalle
+    };
+  }
+
+  @Post('documentos/:rendicionId/liberar')
+  @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS)
+  async liberarDocumento(
+    @Param('rendicionId', ParseUUIDPipe) rendicionId: string,
+    @GetUser() user: JwtUser,
+  ) {
+    this.logger.log(`[LIBERAR] Usuario ${user.username} liberando rendición ${rendicionId}`);
+
+    const result = await this.service.liberarDocumento(rendicionId, user.id);
+
+    return {
+      ok: true,
+      message: result.message,
+      data: result
+    };
+  }
+
+  // ✅ ENDPOINT CORREGIDO PARA BITÁCORA
+  @Get('bitacora/:documentoId')
+  @Roles(UserRole.ADMIN, UserRole.RENDICION_CUENTAS, UserRole.SUPERVISOR)
+  async getBitacoraRendicion(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @GetUser() user: JwtUser,
+  ) {
+    this.logger.log(`[BITACORA] Consultando bitácora para documento ${documentoId} por ${user.username}`);
+
+    const registros = await this.bitacoraService.consultarPorDocumento(documentoId, {
+      modulo: ModuloBitacora.RENDICION_CUENTAS,
+      limite: 200
+    });
+
+    return {
+      success: true,
+      count: registros.length,
+      data: registros
+    };
+  }
 }
