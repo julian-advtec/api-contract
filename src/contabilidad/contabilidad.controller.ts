@@ -1,3 +1,4 @@
+// src/contabilidad/contabilidad.controller.ts
 import {
     Controller,
     Get,
@@ -16,11 +17,9 @@ import {
     HttpStatus,
     Query,
     HttpException,
-    Req,
     NotFoundException,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
-import type { Request } from 'express';
 import type { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -38,12 +37,14 @@ import { ContabilidadEstado, TipoCausacion } from './entities/contabilidad-docum
 import { multerContabilidadConfig } from './../config/multer-contabilidad.config';
 import { Public } from './../common/decorators/public.decorator';
 
-type JwtUser = {
+// ✅ Interfaz JwtUser consistente
+interface JwtUser {
     id: string;
     username: string;
     role: string;
     email: string;
-};
+    fullName?: string;
+}
 
 @Controller('contabilidad')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -112,8 +113,6 @@ export class ContabilidadController {
     // SUBIR DOCUMENTOS DE CONTABILIDAD
     // ───────────────────────────────────────────────────────────────
     @Post('documentos/:documentoId/subir-documentos')
-    @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(UserRole.CONTABILIDAD, UserRole.ADMIN)
     @UseInterceptors(
         FileFieldsInterceptor(
             [
@@ -212,7 +211,7 @@ export class ContabilidadController {
     }
 
     // ───────────────────────────────────────────────────────────────
-    // DESCARGAR ARCHIVO CONTABLE (extracto, glosa, causacion, comprobanteEgreso)
+    // DESCARGAR ARCHIVO CONTABLE
     // ───────────────────────────────────────────────────────────────
     @Get('documentos/:documentoId/descargar-contable/:tipo')
     async descargarArchivoContable(
@@ -248,73 +247,73 @@ export class ContabilidadController {
     }
 
     // ───────────────────────────────────────────────────────────────
-    // PREVISUALIZAR ARCHIVO CONTABLE (CORREGIDO)
+    // PREVISUALIZAR ARCHIVO CONTABLE
     // ───────────────────────────────────────────────────────────────
- @Get('documentos/:documentoId/preview-contable/:tipo')
-@Public()
-async previsualizarArchivoContable(
-    @Param('documentoId', ParseUUIDPipe) documentoId: string,
-    @Param('tipo') tipo: string,
-    @Query('download') download: string = 'false',
-    @Res() res: Response,
-) {
-    this.logger.log(`[PREVIEW-CONTABLE] Acceso a ${tipo} de ${documentoId} (download=${download})`);
+    @Get('documentos/:documentoId/preview-contable/:tipo')
+    @Public()
+    async previsualizarArchivoContable(
+        @Param('documentoId', ParseUUIDPipe) documentoId: string,
+        @Param('tipo') tipo: string,
+        @Query('download') download: string = 'false',
+        @Res() res: Response,
+    ) {
+        this.logger.log(`[PREVIEW-CONTABLE] Acceso a ${tipo} de ${documentoId} (download=${download})`);
 
-    try {
-        const { rutaAbsoluta, nombreArchivo } = await this.contabilidadService.obtenerRutaArchivoContabilidadFull(
-            documentoId,
-            tipo
-        );
+        try {
+            const { rutaAbsoluta, nombreArchivo } = await this.contabilidadService.obtenerRutaArchivoContabilidadFull(
+                documentoId,
+                tipo
+            );
 
-        this.logger.log(`✅ Archivo encontrado: ${rutaAbsoluta}`);
-        
-        if (!fs.existsSync(rutaAbsoluta)) {
-            throw new NotFoundException(`Archivo ${tipo} no existe en disco`);
-        }
+            this.logger.log(`✅ Archivo encontrado: ${rutaAbsoluta}`);
+            
+            if (!fs.existsSync(rutaAbsoluta)) {
+                throw new NotFoundException(`Archivo ${tipo} no existe en disco`);
+            }
 
-        const stats = fs.statSync(rutaAbsoluta);
-        this.logger.log(`   Tamaño: ${stats.size} bytes`);
+            const stats = fs.statSync(rutaAbsoluta);
+            this.logger.log(`   Tamaño: ${stats.size} bytes`);
 
-        const ext = path.extname(nombreArchivo).toLowerCase();
+            const ext = path.extname(nombreArchivo).toLowerCase();
 
-        // Si es Word y NO es descarga forzada → convertir a PDF temporalmente
-        if (['.doc', '.docx'].includes(ext) && download !== 'true') {
-            const tmpPdf = path.join(os.tmpdir(), `preview-${crypto.randomUUID()}.pdf`);
-            try {
-                await this.contabilidadService.convertirWordAPdf(rutaAbsoluta, tmpPdf);
-                const pdfStream = fs.createReadStream(tmpPdf);
-                res.setHeader('Content-Type', 'application/pdf');
-                res.setHeader('Content-Disposition', 'inline; filename="vista.pdf"');
-                pdfStream.on('end', () => fs.unlink(tmpPdf, () => {}));
-                return pdfStream.pipe(res);
-            } catch (conversionError) {
-                this.logger.warn(`[CONVERSIÓN FALLIDA] Sirviendo Word directamente: ${conversionError.message}`);
+            // Si es Word y NO es descarga forzada → convertir a PDF temporalmente
+            if (['.doc', '.docx'].includes(ext) && download !== 'true') {
+                const tmpPdf = path.join(os.tmpdir(), `preview-${crypto.randomUUID()}.pdf`);
+                try {
+                    await this.contabilidadService.convertirWordAPdf(rutaAbsoluta, tmpPdf);
+                    const pdfStream = fs.createReadStream(tmpPdf);
+                    res.setHeader('Content-Type', 'application/pdf');
+                    res.setHeader('Content-Disposition', 'inline; filename="vista.pdf"');
+                    pdfStream.on('end', () => fs.unlink(tmpPdf, () => {}));
+                    return pdfStream.pipe(res);
+                } catch (conversionError) {
+                    this.logger.warn(`[CONVERSIÓN FALLIDA] Sirviendo Word directamente: ${conversionError.message}`);
+                }
+            }
+
+            const mimeType = mime.lookup(ext) || 'application/octet-stream';
+            res.setHeader('Content-Type', mimeType);
+            res.setHeader('Content-Disposition', download === 'true' ? 
+                `attachment; filename="${encodeURIComponent(nombreArchivo)}"` : 
+                `inline; filename="${encodeURIComponent(nombreArchivo)}"`
+            );
+
+            const stream = fs.createReadStream(rutaAbsoluta);
+            stream.pipe(res);
+
+        } catch (error: any) {
+            this.logger.error(`[ERROR PREVIEW] ${tipo}: ${error.message}`);
+            const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
+            if (!res.headersSent) {
+                res.status(status).json({ 
+                    success: false, 
+                    message: error.message || 'Error al previsualizar',
+                    tipo,
+                    documentoId
+                });
             }
         }
-
-        const mimeType = mime.lookup(ext) || 'application/octet-stream';
-        res.setHeader('Content-Type', mimeType);
-        res.setHeader('Content-Disposition', download === 'true' ? 
-            `attachment; filename="${encodeURIComponent(nombreArchivo)}"` : 
-            `inline; filename="${encodeURIComponent(nombreArchivo)}"`
-        );
-
-        const stream = fs.createReadStream(rutaAbsoluta);
-        stream.pipe(res);
-
-    } catch (error: any) {
-        this.logger.error(`[ERROR PREVIEW] ${tipo}: ${error.message}`);
-        const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
-        if (!res.headersSent) {
-            res.status(status).json({ 
-                success: false, 
-                message: error.message || 'Error al previsualizar',
-                tipo,
-                documentoId
-            });
-        }
     }
-}
 
     // ───────────────────────────────────────────────────────────────
     // MIS AUDITORÍAS
@@ -406,15 +405,13 @@ async previsualizarArchivoContable(
     }
 
     // ───────────────────────────────────────────────────────────────
-    // OBTENER SOLO CONTABILIDAD
+    // ✅ OBTENER SOLO CONTABILIDAD - CORREGIDO
     // ───────────────────────────────────────────────────────────────
     @Get('documentos/:id/contabilidad')
     async obtenerSoloContabilidad(
         @Param('id') id: string,
-        @Req() req: Request,
+        @GetUser() user: JwtUser,  // ✅ CORREGIDO: usando @GetUser en lugar de @Req
     ) {
-        const user = req.user as { id: string; username: string; role: string; email: string };
-
         if (!user?.id) {
             throw new NotFoundException('Usuario no identificado en el token');
         }
