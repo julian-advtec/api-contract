@@ -161,7 +161,7 @@ export const ormconfig: DataSourceOptions = {
         RendicionCuentasHistorial,
         DocumentoContratista,
         BitacoraSistema,
-
+        // Jurídica
         Contrato,
         Proveedor,
         Poliza,
@@ -169,7 +169,7 @@ export const ormconfig: DataSourceOptions = {
         DocumentoContrato,
         Obligacion,
     ],
-    synchronize: false, // 🔴 CAMBIADO A FALSE
+    synchronize: false, // 🔴 CAMBIADO A FALSE - No sincronizar automáticamente en producción
     logging: ['error', 'warn'],
     extra: {
         max: 20,
@@ -177,6 +177,5 @@ export const ormconfig: DataSourceOptions = {
         connectionTimeoutMillis: 2000,
     },
 };
-
 
 export const AppDataSource = new DataSource(ormconfig);

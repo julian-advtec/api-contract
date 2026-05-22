@@ -97,6 +97,40 @@ export class StorageService implements OnModuleInit {
   }
 
   // ============================================================
+  // ✅ NUEVO MÉTODO PARA SUBIR ARCHIVO DESDE BUFFER
+  // ============================================================
+  async uploadFileFromBuffer(
+    buffer: Buffer,
+    fileName: string,
+    mimeType: string,
+    folderPath: string
+  ): Promise<any> {
+    try {
+      this.logger.log(`📤 Subiendo archivo desde buffer a red:`);
+      this.logger.log(`   Carpeta: ${folderPath}`);
+      this.logger.log(`   Archivo: ${fileName}`);
+      this.logger.log(`   Tamaño: ${buffer.length} bytes`);
+      this.logger.log(`   Tipo MIME: ${mimeType}`);
+
+      // Construir el objeto file simulado
+      const file = {
+        buffer: buffer,
+        originalname: fileName,
+        mimetype: mimeType
+      };
+
+      // Usar el método saveToNetwork existente
+      const result = await this.saveToNetwork(file, folderPath, fileName);
+      
+      this.logger.log(`✅ Archivo subido desde buffer exitosamente`);
+      return result;
+    } catch (error: any) {
+      this.logger.error(`❌ Error subiendo archivo desde buffer: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // ============================================================
   // ✅ MÉTODO PRINCIPAL PARA SUBIR ARCHIVOS
   // ============================================================
   async uploadFile(fileOrBuffer: any, folderPathOrBuffer?: any, fileNameOrMimeType?: any): Promise<any> {

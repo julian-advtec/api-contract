@@ -12,6 +12,7 @@ import { EstadosModule } from './estados/estados.module';
 import { AppDataSource } from './config/ormconfig';
 import { ContratistasModule } from './contratista/contratista.module';
 import { AuditorModule } from './auditor/auditor.module';
+import { AuxiliarAuditorModule } from './auxiliar-auditor/auxiliar-auditor.module'; // ← AGREGAR
 import { ContabilidadModule } from './contabilidad/contabilidad.module';
 import { TesoreriaModule } from './tesoreria/tesoreria.module';
 import { SignaturesModule } from './signatures/signatures.module';
@@ -35,6 +36,7 @@ import { JuridicaModule } from './juridica/juridica.module';
     EstadosModule,
     ContratistasModule,
     AuditorModule,
+    AuxiliarAuditorModule, // ← AGREGAR
     ContabilidadModule,
     TesoreriaModule,
     SignaturesModule,

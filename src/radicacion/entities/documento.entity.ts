@@ -11,8 +11,6 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { SupervisorDocumento } from '../../supervision/entities/supervisor.entity';
-// import { AuditorDocumento } from '../../auditor/entities/auditor-documento.entity'; // COMENTA TEMPORAL
-// import { ContabilidadDocumento } from '../../contabilidad/entities/contabilidad-documento.entity'; // COMENTA TEMPORAL
 import { AsesorGerenciaDocumento } from '../../asesor-gerencia/entities/asesor-gerencia-documento.entity';
 
 @Entity('documentos')
@@ -47,6 +45,12 @@ export class Documento {
   @Column({ name: 'documento_contratista', length: 50 })
   documentoContratista: string;
 
+  @Column({ name: 'email_contratista', length: 100, nullable: true })
+  emailContratista: string;
+
+  @Column({ name: 'telefono_contratista', length: 50, nullable: true })
+  telefonoContratista: string;
+
   @Column({ name: 'fecha_inicio' })
   fechaInicio: Date;
 
@@ -79,6 +83,19 @@ export class Documento {
   @Column({ name: 'descripcion_informe_actividades', length: 200, default: 'Informe de Actividades', nullable: true })
   descripcionInformeActividades: string;
 
+  // ✅ NUEVOS CAMPOS PARA ACTA DE SUPERVISIÓN
+  @Column({ name: 'acta_supervision_path', type: 'text', nullable: true })
+  actaSupervisionPath: string;
+
+  @Column({ name: 'acta_supervision_nombre', length: 255, nullable: true })
+  actaSupervisionNombre: string;
+
+  @Column({ name: 'acta_supervision_subida_por', length: 100, nullable: true })
+  actaSupervisionSubidaPor: string;
+
+  @Column({ name: 'acta_supervision_fecha', type: 'timestamp', nullable: true })
+  actaSupervisionFecha: Date;
+
   @Column({ name: 'observacion', type: 'text', nullable: true })
   observacion: string;
 
@@ -99,12 +116,9 @@ export class Documento {
   @Column({ name: 'usuario_asignado_nombre', length: 100, nullable: true })
   usuarioAsignadoNombre: string;
 
-  // ✅ Solo deja las relaciones que SÍ funcionan
   @OneToMany(() => SupervisorDocumento, supervisorDocumento => supervisorDocumento.documento)
   supervisorDocumentos: SupervisorDocumento[];
 
-  
-  // RELACIÓN AGREGADA: Asesor Gerencia (solo esto se añadió)
   @OneToMany(() => AsesorGerenciaDocumento, asesorGerenciaDocumento => asesorGerenciaDocumento.documento)
   asesorGerenciaDocumentos: AsesorGerenciaDocumento[];
 

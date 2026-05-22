@@ -1,10 +1,10 @@
 // src/radicacion/dto/create-documento.dto.ts
-import { IsBoolean, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, Matches, MaxLength, IsEmail } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 export class CreateDocumentoDto {
     @IsString()
-    @Matches(/^R\d{4}-\d{4,8}$/, {  // ✅ ACTUALIZADO: permite 4-8 dígitos
+    @Matches(/^R\d{4}-\d{4,8}$/, {
         message: 'El número de radicado debe tener formato RAAAA-NNNN (ej: R2025-0001) donde NNNN puede ser de 4 a 8 dígitos'
     })
     numeroRadicado: string;
@@ -20,6 +20,17 @@ export class CreateDocumentoDto {
     @IsString()
     @MaxLength(50)
     documentoContratista: string;
+
+    // ✅ NUEVOS CAMPOS
+    @IsOptional()
+    @IsEmail()
+    @MaxLength(100)
+    emailContratista?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(50)
+    telefonoContratista?: string;
 
     @IsString()
     fechaInicio: string;
@@ -47,28 +58,19 @@ export class CreateDocumentoDto {
     @MaxLength(500)
     observacion?: string;
 
-    // ✅ CORREGIDO: Transformar string a booleano
     @IsOptional()
     @Transform(({ value }) => {
-        // Si ya es booleano, devolverlo directamente
         if (typeof value === 'boolean') return value;
-        
-        // Si es string, convertirlo
         if (typeof value === 'string') {
             return value.toLowerCase() === 'true' || value === '1';
         }
-        
-        // Si es número (1/0)
         if (typeof value === 'number') {
             return value === 1;
         }
-        
-        // Cualquier otro caso, convertir a booleano
         return Boolean(value);
     })
     @IsBoolean({ 
         message: 'primerRadicadoDelAno debe ser un valor booleano (true o false)' 
     })
     primerRadicadoDelAno?: boolean;
-    
 }

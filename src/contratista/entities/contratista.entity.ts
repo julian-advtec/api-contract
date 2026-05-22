@@ -1,8 +1,9 @@
 // src/contratista/entities/contratista.entity.ts
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, OneToMany, Unique } from 'typeorm';
 import { DocumentoContratista } from './documento-contratista.entity';
 
 @Entity('contratistas')
+@Unique('UQ_documento_contrato', ['documentoIdentidad', 'numeroContrato']) // ← NUEVO
 export class Contratista {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -10,9 +11,10 @@ export class Contratista {
   @Column({ name: 'tipo_documento', type: 'varchar', length: 10, default: 'CC' })
   tipoDocumento: string;
 
-  @Column({ name: 'documento_identidad', type: 'varchar', length: 20, unique: true })
+  @Column({ name: 'documento_identidad', type: 'varchar', length: 20 }) // ← SIN unique: true
   documentoIdentidad: string;
 
+  // ... resto de columnas igual que tienes
   @Column({ name: 'razon_social', type: 'varchar', length: 200 })
   razonSocial: string;
 
@@ -49,7 +51,7 @@ export class Contratista {
   @Column({ name: 'cargo', type: 'varchar', length: 100, nullable: true })
   cargo: string | null;
 
-  @Column({ name: 'objetivo_contrato', type: 'text', nullable: true })  // ✅ CAMBIADO DE observaciones A objetivo_contrato
+  @Column({ name: 'objetivo_contrato', type: 'text', nullable: true })
   objetivoContrato: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamp' })

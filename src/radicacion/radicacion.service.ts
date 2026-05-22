@@ -160,212 +160,247 @@ export class RadicacionService {
 
 
 
-    async create(
-        createDocumentoDto: CreateDocumentoDto,
-        files: Array<Express.Multer.File>,
-        user: any,
-    ): Promise<Documento> {
+ async create(
+    createDocumentoDto: CreateDocumentoDto,
+    files: Array<Express.Multer.File>,
+    user: any,
+): Promise<Documento> {
+    try {
+        this.logger.log(`📝 ======= INICIANDO CREACIÓN DE DOCUMENTO =======`);
+        this.logger.log(`👤 Usuario: ${user.username} (${user.role})`);
+
+        // 1. OBTENER USUARIO COMPLETO
+        const usuarioCompleto = await this.userRepository.findOne({
+            where: { username: user.username.toLowerCase().trim() }
+        });
+
+        if (!usuarioCompleto) {
+            throw new BadRequestException(`Usuario "${user.username}" no encontrado`);
+        }
+
+        // 2. VERIFICAR PERMISOS
+        const rolUsuario = usuarioCompleto.role?.toString().toLowerCase().trim();
+        const puedeRadicar = rolUsuario === 'admin' || rolUsuario === 'radicador';
+
+        if (!puedeRadicar) {
+            throw new ForbiddenException(
+                `No tienes permisos para radicar documentos. Tu rol es: ${rolUsuario}.`
+            );
+        }
+
+        this.logger.log(`✅ PERMISOS OK: ${usuarioCompleto.username} (${rolUsuario})`);
+
+        // 3. GESTIONAR CONTRATISTA
+        let contratista: Contratista;
         try {
-            this.logger.log(`📝 ======= INICIANDO CREACIÓN DE DOCUMENTO =======`);
-            this.logger.log(`👤 Usuario: ${user.username} (${user.role})`);
-
-            const usuarioCompleto = await this.userRepository.findOne({
-                where: { username: user.username.toLowerCase().trim() }
-            });
-
-            if (!usuarioCompleto) {
-                throw new BadRequestException(`Usuario "${user.username}" no encontrado`);
-            }
-
-            const rolUsuario = usuarioCompleto.role?.toString().toLowerCase().trim();
-            const puedeRadicar = rolUsuario === 'admin' || rolUsuario === 'radicador';
-
-            if (!puedeRadicar) {
-                throw new ForbiddenException(
-                    `No tienes permisos para radicar documentos. Tu rol es: ${rolUsuario}.`
-                );
-            }
-
-            this.logger.log(`✅ PERMISOS OK: ${usuarioCompleto.username} (${rolUsuario})`);
-            let contratista: Contratista;
-            try {
-                const contratistas = await this.contratistaService.buscarPorDocumento(
-                    createDocumentoDto.documentoContratista
-                );
-
-                if (contratistas.length > 0) {
-                    contratista = contratistas[0];
-                    this.logger.log(`✅ Contratista existente: ${contratista.id}`);
-                } else {
-                    contratista = await this.contratistaService.crear({
-                        documentoIdentidad: createDocumentoDto.documentoContratista,
-                        razonSocial: createDocumentoDto.nombreContratista,
-                    });
-                    this.logger.log(`📝 Nuevo contratista creado: ${contratista.id}`);
-                }
-            } catch (error) {
-                this.logger.error(`❌ Error con contratista: ${error.message}`);
-                throw error;
-            }
-
-            if (!files || files.length !== 3) {
-                throw new BadRequestException('Debe adjuntar exactamente 3 documentos');
-            }
-
-            const radicadoRegex = /^R\d{4}-\d{4,8}$/;
-            if (!radicadoRegex.test(createDocumentoDto.numeroRadicado)) {
-                throw new BadRequestException(
-                    'Formato de radicado inválido. Debe ser RAAAA-NNNN (ej: R2025-0001) donde NNNN puede ser de 4 a 8 dígitos'
-                );
-            }
-
-            const radicadoExistente = await this.documentoRepository.findOne({
-                where: { numeroRadicado: createDocumentoDto.numeroRadicado }
-            });
-
-            if (radicadoExistente) {
-                throw new BadRequestException(
-                    `El número de radicado ${createDocumentoDto.numeroRadicado} ya existe`
-                );
-            }
-
-            const esPrimerRadicado = createDocumentoDto.primerRadicadoDelAno === true;
-
-            if (esPrimerRadicado) {
-                this.logger.log(`🏆 Marcado como primer radicado del contrato`);
-            }
-
-            const anoRadicado = createDocumentoDto.numeroRadicado.substring(1, 5);
-
-            const relativePath = path.join(
-                createDocumentoDto.documentoContratista,
-                anoRadicado,
-                createDocumentoDto.numeroContrato,
-                createDocumentoDto.numeroRadicado,
+            const contratistas = await this.contratistaService.buscarPorDocumento(
+                createDocumentoDto.documentoContratista
             );
 
-            this.logger.log(`📂 Path relativo: ${relativePath}`);
-
-            const nombresArchivos: string[] = [];
-            const tiposArchivo = ['cuenta_cobro', 'seguridad_social', 'informe_actividades'];
-
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                const extension = path.extname(file.originalname).toLowerCase();
-
-                if (!['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png'].includes(extension)) {
-                    throw new BadRequestException(`Extensión no permitida en archivo ${i + 1}`);
-                }
-
-                const nombreArchivo = this.crearNombreArchivoSeguro(
-                    tiposArchivo[i],
-                    createDocumentoDto.numeroRadicado,
-                    extension
-                );
-
-                const fileRelativePath = path.join(relativePath, nombreArchivo);
-
-                this.logger.log(`📤 Subiendo archivo: ${fileRelativePath}`);
-
-                const result = await this.storageService.uploadFile(
-                    fileRelativePath,
-                    file.buffer,
-                    file.mimetype
-                );
-
-                this.logger.log(`✅ Archivo subido a: ${result.provider} - ${result.path}`);
-                nombresArchivos.push(result.path);
+            if (contratistas.length > 0) {
+                contratista = contratistas[0];
+                this.logger.log(`✅ Contratista existente: ${contratista.id}`);
+            } else {
+                contratista = await this.contratistaService.crear({
+                    documentoIdentidad: createDocumentoDto.documentoContratista,
+                    razonSocial: createDocumentoDto.nombreContratista,
+                });
+                this.logger.log(`📝 Nuevo contratista creado: ${contratista.id}`);
             }
-
-            const rutaCarpetaRadicado = this.storageService.isUsingSupabase()
-                ? relativePath
-                : path.join(this.basePath, relativePath);
-
-            this.crearArchivoRegistroEnServidor(rutaCarpetaRadicado, usuarioCompleto, 'CREACION');
-
-            const documentoData: Partial<Documento> = {
-                numeroRadicado: createDocumentoDto.numeroRadicado.trim().toUpperCase(),
-                numeroContrato: createDocumentoDto.numeroContrato.trim(),
-                nombreContratista: createDocumentoDto.nombreContratista.trim(),
-                documentoContratista: createDocumentoDto.documentoContratista.trim(),
-                fechaInicio: new Date(createDocumentoDto.fechaInicio),
-                fechaFin: new Date(createDocumentoDto.fechaFin),
-                fechaRadicacion: new Date(),
-                primerRadicadoDelAno: esPrimerRadicado,
-                descripcionCuentaCobro: createDocumentoDto.descripcionCuentaCobro?.trim() || 'Cuenta de Cobro',
-                descripcionSeguridadSocial: createDocumentoDto.descripcionSeguridadSocial?.trim() || 'Seguridad Social',
-                descripcionInformeActividades: createDocumentoDto.descripcionInformeActividades?.trim() || 'Informe de Actividades',
-                cuentaCobro: nombresArchivos[0],
-                seguridadSocial: nombresArchivos[1],
-                informeActividades: nombresArchivos[2],
-                observacion: createDocumentoDto.observacion?.trim(),
-                radicador: usuarioCompleto,
-                nombreRadicador: usuarioCompleto.fullName || usuarioCompleto.username,
-                usuarioRadicador: usuarioCompleto.username,
-                rutaCarpetaRadicado: rutaCarpetaRadicado,
-                ultimoAcceso: new Date(),
-                ultimoUsuario: usuarioCompleto.fullName || usuarioCompleto.username,
-                fechaActualizacion: new Date(),
-                estado: 'RADICADO',
-                contratistaId: contratista.id,
-                tokenPublico: randomUUID(),
-                tokenActivo: true,
-                tokenExpiraEn: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
-                usuarioAsignado: null,
-                usuarioAsignadoNombre: '',
-                historialEstados: [{
-                    fecha: new Date(),
-                    estado: 'RADICADO',
-                    usuarioId: usuarioCompleto.id,
-                    usuarioNombre: usuarioCompleto.fullName || usuarioCompleto.username,
-                    rolUsuario: usuarioCompleto.role,
-                    observacion: 'Documento radicado inicialmente',
-                }],
-            };
-
-            const documento = this.documentoRepository.create(documentoData);
-            const savedDocumento = await this.documentoRepository.save(documento);
-
-            this.logger.log(`✅ Creado OK - ID: ${savedDocumento.id}`);
-            this.logger.log(`   Primer radicado: ${savedDocumento.primerRadicadoDelAno ? 'SÍ' : 'NO'}`);
-            this.logger.log(`   Tipo almacenamiento: ${this.storageService.getStorageInfo().type}`);
-
-            // ✅ REGISTRAR EN BITÁCORA - RADICACIÓN EXITOSA
-            try {
-                await this.bitacoraService.registrar(
-                    AccionBitacora.RADICAR_DOCUMENTO,
-                    ModuloBitacora.RADICACION,
-                    usuarioCompleto,
-                    savedDocumento,
-                    {
-                        detalles: `Documento radicado exitosamente - Contratista: ${savedDocumento.nombreContratista}`,
-                        numeroRadicado: savedDocumento.numeroRadicado,
-                        numeroContrato: savedDocumento.numeroContrato,
-                        documentosSubidos: nombresArchivos.length,
-                        primerRadicado: esPrimerRadicado
-                    },
-                );
-                this.logger.log(`✅ Bitácora registrada: RADICAR_DOCUMENTO - ${savedDocumento.numeroRadicado}`);
-            } catch (bitacoraError) {
-                this.logger.warn(`⚠️ Error registrando bitácora (no crítico): ${bitacoraError.message}`);
-            }
-
-            // ✅ CAMBIAR: Asignar a AUDITORES en lugar de SUPERVISORES
-            try {
-                await this.asignarDocumentoAAuditores(savedDocumento);
-            } catch (e) {
-                this.logger.warn(`No se pudo asignar a auditores: ${e.message}`);
-            }
-
-            return savedDocumento;
-
         } catch (error) {
-            this.logger.error(`❌ Error creando documento: ${error.message}`);
-            throw error instanceof HttpException
-                ? error
-                : new InternalServerErrorException('Error interno al crear documento');
+            this.logger.error(`❌ Error con contratista: ${error.message}`);
+            throw error;
         }
+
+        // 4. VALIDAR ARCHIVOS
+        if (!files || files.length !== 3) {
+            throw new BadRequestException('Debe adjuntar exactamente 3 documentos');
+        }
+
+        // 5. VALIDAR FORMATO DE RADICADO
+        const radicadoRegex = /^R\d{4}-\d{4,8}$/;
+        if (!radicadoRegex.test(createDocumentoDto.numeroRadicado)) {
+            throw new BadRequestException(
+                'Formato de radicado inválido. Debe ser RAAAA-NNNN (ej: R2025-0001) donde NNNN puede ser de 4 a 8 dígitos'
+            );
+        }
+
+        // 6. VERIFICAR RADICADO ÚNICO
+        const radicadoExistente = await this.documentoRepository.findOne({
+            where: { numeroRadicado: createDocumentoDto.numeroRadicado }
+        });
+
+        if (radicadoExistente) {
+            throw new BadRequestException(
+                `El número de radicado ${createDocumentoDto.numeroRadicado} ya existe`
+            );
+        }
+
+        // 7. VERIFICAR PRIMER RADICADO DEL AÑO
+        const esPrimerRadicado = createDocumentoDto.primerRadicadoDelAno === true;
+
+        if (esPrimerRadicado) {
+            const anoRadicado = createDocumentoDto.numeroRadicado.substring(1, 5);
+            const primerRadicadoExistente = await this.documentoRepository.findOne({
+                where: {
+                    primerRadicadoDelAno: true,
+                    numeroRadicado: Like(`R${anoRadicado}-%`)
+                }
+            });
+
+            if (primerRadicadoExistente) {
+                throw new BadRequestException(
+                    `Ya existe un primer radicado para el año ${anoRadicado}: ${primerRadicadoExistente.numeroRadicado}`
+                );
+            }
+            this.logger.log(`🏆 Marcado como primer radicado del año ${anoRadicado}`);
+        }
+
+        // 8. PREPARAR RUTAS DE ARCHIVOS
+        const anoRadicado = createDocumentoDto.numeroRadicado.substring(1, 5);
+        const relativePath = path.join(
+            createDocumentoDto.documentoContratista,
+            anoRadicado,
+            createDocumentoDto.numeroContrato,
+            createDocumentoDto.numeroRadicado,
+        );
+
+        this.logger.log(`📂 Path relativo: ${relativePath}`);
+
+        // 9. SUBIR ARCHIVOS
+        const nombresArchivos: string[] = [];
+        const tiposArchivo = ['cuenta_cobro', 'seguridad_social', 'informe_actividades'];
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const extension = path.extname(file.originalname).toLowerCase();
+
+            if (!['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png'].includes(extension)) {
+                throw new BadRequestException(`Extensión no permitida en archivo ${i + 1}`);
+            }
+
+            const nombreArchivo = this.crearNombreArchivoSeguro(
+                tiposArchivo[i],
+                createDocumentoDto.numeroRadicado,
+                extension
+            );
+
+            const fileRelativePath = path.join(relativePath, nombreArchivo);
+
+            this.logger.log(`📤 Subiendo archivo: ${fileRelativePath}`);
+
+            const result = await this.storageService.uploadFile(
+                fileRelativePath,
+                file.buffer,
+                file.mimetype
+            );
+
+            this.logger.log(`✅ Archivo subido a: ${result.provider} - ${result.path}`);
+            nombresArchivos.push(result.path);
+        }
+
+        // 10. CREAR CARPETA Y REGISTRO
+        const rutaCarpetaRadicado = this.storageService.isUsingSupabase()
+            ? relativePath
+            : path.join(this.basePath, relativePath);
+
+        this.crearArchivoRegistroEnServidor(rutaCarpetaRadicado, usuarioCompleto, 'CREACION');
+
+        // 11. CREAR ENTIDAD DOCUMENTO
+        const documentoData: Partial<Documento> = {
+            numeroRadicado: createDocumentoDto.numeroRadicado.trim().toUpperCase(),
+            numeroContrato: createDocumentoDto.numeroContrato.trim(),
+            nombreContratista: createDocumentoDto.nombreContratista.trim(),
+            documentoContratista: createDocumentoDto.documentoContratista.trim(),
+            emailContratista: createDocumentoDto.emailContratista?.trim() || '',
+            telefonoContratista: createDocumentoDto.telefonoContratista?.trim() || '',
+            fechaInicio: new Date(createDocumentoDto.fechaInicio),
+            fechaFin: new Date(createDocumentoDto.fechaFin),
+            fechaRadicacion: new Date(),
+            primerRadicadoDelAno: esPrimerRadicado,
+            descripcionCuentaCobro: createDocumentoDto.descripcionCuentaCobro?.trim() || 'Cuenta de Cobro',
+            descripcionSeguridadSocial: createDocumentoDto.descripcionSeguridadSocial?.trim() || 'Seguridad Social',
+            descripcionInformeActividades: createDocumentoDto.descripcionInformeActividades?.trim() || 'Informe de Actividades',
+            cuentaCobro: nombresArchivos[0],
+            seguridadSocial: nombresArchivos[1],
+            informeActividades: nombresArchivos[2],
+            observacion: createDocumentoDto.observacion?.trim(),
+            radicador: usuarioCompleto,
+            nombreRadicador: usuarioCompleto.fullName || usuarioCompleto.username,
+            usuarioRadicador: usuarioCompleto.username,
+            rutaCarpetaRadicado: rutaCarpetaRadicado,
+            ultimoAcceso: new Date(),
+            ultimoUsuario: usuarioCompleto.fullName || usuarioCompleto.username,
+            fechaActualizacion: new Date(),
+            estado: 'RADICADO',  // ← IMPORTANTE: Queda en RADICADO esperando acta
+            contratistaId: contratista.id,
+            tokenPublico: randomUUID(),
+            tokenActivo: true,
+            tokenExpiraEn: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
+            usuarioAsignado: null,
+            usuarioAsignadoNombre: '',
+            // Campos de acta (inicialmente vacíos)
+            actaSupervisionPath: null,
+            actaSupervisionNombre: null,
+            actaSupervisionSubidaPor: null,
+            actaSupervisionFecha: null,
+            historialEstados: [{
+                fecha: new Date(),
+                estado: 'RADICADO',
+                usuarioId: usuarioCompleto.id,
+                usuarioNombre: usuarioCompleto.fullName || usuarioCompleto.username,
+                rolUsuario: usuarioCompleto.role,
+                observacion: 'Documento radicado inicialmente - Pendiente de acta de supervisión',
+            }],
+        };
+
+        const documento = this.documentoRepository.create(documentoData);
+        const savedDocumento = await this.documentoRepository.save(documento);
+
+        this.logger.log(`✅ Creado OK - ID: ${savedDocumento.id}`);
+        this.logger.log(`   Número radicado: ${savedDocumento.numeroRadicado}`);
+        this.logger.log(`   Primer radicado: ${savedDocumento.primerRadicadoDelAno ? 'SÍ' : 'NO'}`);
+        this.logger.log(`   Estado inicial: RADICADO (esperando acta de supervisión)`);
+        this.logger.log(`   Tipo almacenamiento: ${this.storageService.getStorageInfo().type}`);
+
+        // 12. REGISTRAR EN BITÁCORA
+        try {
+            await this.bitacoraService.registrar(
+                AccionBitacora.RADICAR_DOCUMENTO,
+                ModuloBitacora.RADICACION,
+                usuarioCompleto,
+                savedDocumento,
+                {
+                    detalles: `Documento radicado exitosamente - Contratista: ${savedDocumento.nombreContratista}`,
+                    numeroRadicado: savedDocumento.numeroRadicado,
+                    numeroContrato: savedDocumento.numeroContrato,
+                    documentosSubidos: nombresArchivos.length,
+                    primerRadicado: esPrimerRadicado,
+                    estado: 'RADICADO',
+                    mensaje: 'Pendiente de acta de supervisión por auxiliar auditor'
+                },
+            );
+            this.logger.log(`✅ Bitácora registrada: RADICAR_DOCUMENTO - ${savedDocumento.numeroRadicado}`);
+        } catch (bitacoraError) {
+            this.logger.warn(`⚠️ Error registrando bitácora (no crítico): ${bitacoraError.message}`);
+        }
+
+        // 13. IMPORTANTE: NO ASIGNAR AUTOMÁTICAMENTE A AUDITORES
+        // El documento queda en estado RADICADO
+        // El auxiliar de auditor subirá el acta de supervisión
+        // Cuando suba el acta, pasará a estado CON_ACTA y recién ahí estará disponible para auditores
+        
+        this.logger.log(`✅ Documento radicado - Esperando acta de supervisión del auxiliar auditor`);
+
+        return savedDocumento;
+
+    } catch (error) {
+        this.logger.error(`❌ Error creando documento: ${error.message}`);
+        throw error instanceof HttpException
+            ? error
+            : new InternalServerErrorException('Error interno al crear documento');
     }
+}
 
     private async asignarDocumentoAAuditores(documento: Documento): Promise<void> {
         try {
@@ -1048,11 +1083,9 @@ Ruta servidor: ${rutaCarpeta}
                 throw new NotFoundException(`Documento con ID ${id} no encontrado`);
             }
 
-            // ✅ Asegurar que los campos de archivos se devuelvan
             this.logger.log(`✅ Documento encontrado: ${documento.numeroRadicado}`);
-            this.logger.log(`   cuentaCobro: ${documento.cuentaCobro}`);
-            this.logger.log(`   seguridadSocial: ${documento.seguridadSocial}`);
-            this.logger.log(`   informeActividades: ${documento.informeActividades}`);
+            this.logger.log(`   emailContratista: ${documento.emailContratista}`);
+            this.logger.log(`   telefonoContratista: ${documento.telefonoContratista}`);
 
             return documento;
         } catch (error) {

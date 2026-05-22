@@ -29,60 +29,60 @@ export class ContratistaService {
   // GESTIÓN DE DOCUMENTOS USANDO STORAGE SERVICE
   // ===============================
 
- async subirDocumento(
-  contratistaId: string,
-  tipo: TipoDocumento,
-  archivo: Express.Multer.File,
-  usuario: string
-): Promise<DocumentoContratista> {
-  try {
-    const contratista = await this.buscarPorId(contratistaId);
+  async subirDocumento(
+    contratistaId: string,
+    tipo: TipoDocumento,
+    archivo: Express.Multer.File,
+    usuario: string
+  ): Promise<DocumentoContratista> {
+    try {
+      const contratista = await this.buscarPorId(contratistaId);
 
-    // ✅ Generar nombre de archivo único basado en el tipo
-    const extension = path.extname(archivo.originalname).toLowerCase();
-    const timestamp = Date.now();
-    const nombreUnico = `${tipo}_${timestamp}${extension}`;
-    
-    // Generar nombre de carpeta
-    const numeroContrato = contratista.numeroContrato || 'SIN_CONTRATO';
-    const razonSocialLimpia = contratista.razonSocial
-      .replace(/[^a-zA-Z0-9]/g, '_')
-      .substring(0, 50);
+      // ✅ Generar nombre de archivo único basado en el tipo
+      const extension = path.extname(archivo.originalname).toLowerCase();
+      const timestamp = Date.now();
+      const nombreUnico = `${tipo}_${timestamp}${extension}`;
 
-    const folderName = contratista.numeroContrato
-      ? `${numeroContrato}_${razonSocialLimpia}`
-      : `${contratistaId}`;
+      // Generar nombre de carpeta
+      const numeroContrato = contratista.numeroContrato || 'SIN_CONTRATO';
+      const razonSocialLimpia = contratista.razonSocial
+        .replace(/[^a-zA-Z0-9]/g, '_')
+        .substring(0, 50);
 
-    const folder = `contratistas/${folderName}`;
+      const folderName = contratista.numeroContrato
+        ? `${numeroContrato}_${razonSocialLimpia}`
+        : `${contratistaId}`;
 
-    // ✅ Usar StorageService con el nombre único
-    const result = await this.storageService.uploadFile(
-      archivo,
-      folder,
-      nombreUnico
-    );
+      const folder = `contratistas/${folderName}`;
 
-    this.logger.log(`✅ Archivo subido a: ${result.provider} - ${result.path}`);
+      // ✅ Usar StorageService con el nombre único
+      const result = await this.storageService.uploadFile(
+        archivo,
+        folder,
+        nombreUnico
+      );
 
-    // ✅ GUARDAR EN BD CON EL NOMBRE REAL DEL ARCHIVO (nombreUnico)
-    const documento = new DocumentoContratista();
-    documento.contratistaId = contratistaId;
-    documento.tipo = tipo;
-    documento.nombreArchivo = nombreUnico;  // ← AHORA USA EL NOMBRE REAL
-    documento.rutaArchivo = result.path;
-    documento.tipoMime = archivo.mimetype;
-    documento.tamanoBytes = archivo.size;
-    documento.subidoPor = usuario;
+      this.logger.log(`✅ Archivo subido a: ${result.provider} - ${result.path}`);
 
-    const saved = await this.documentoRepository.save(documento);
-    this.logger.log(`✅ Documento guardado en BD: ${tipo} - nombreArchivo: ${nombreUnico}`);
+      // ✅ GUARDAR EN BD CON EL NOMBRE REAL DEL ARCHIVO (nombreUnico)
+      const documento = new DocumentoContratista();
+      documento.contratistaId = contratistaId;
+      documento.tipo = tipo;
+      documento.nombreArchivo = nombreUnico;  // ← AHORA USA EL NOMBRE REAL
+      documento.rutaArchivo = result.path;
+      documento.tipoMime = archivo.mimetype;
+      documento.tamanoBytes = archivo.size;
+      documento.subidoPor = usuario;
 
-    return saved;
-  } catch (error) {
-    this.logger.error(`❌ Error subiendo documento: ${error.message}`);
-    throw error;
+      const saved = await this.documentoRepository.save(documento);
+      this.logger.log(`✅ Documento guardado en BD: ${tipo} - nombreArchivo: ${nombreUnico}`);
+
+      return saved;
+    } catch (error) {
+      this.logger.error(`❌ Error subiendo documento: ${error.message}`);
+      throw error;
+    }
   }
-}
 
   async descargarDocumento(documentoId: string, contratistaId: string): Promise<{ buffer: Buffer; nombre: string; mimeType: string }> {
     const documento = await this.obtenerDocumentoPorId(documentoId, contratistaId);
@@ -373,6 +373,7 @@ export class ContratistaService {
         return await this.obtenerTodos();
       }
       const terminoLower = termino.toLowerCase().trim();
+      // ✅ ELIMINAR filtro de estado 'ACTIVO'
       return await this.contratistaRepository.find({
         where: [
           { documentoIdentidad: ILike(`%${terminoLower}%`) },
@@ -409,8 +410,9 @@ export class ContratistaService {
     try {
       if (!razonSocial || razonSocial.trim().length < 1) return [];
       const razonSocialLower = razonSocial.toLowerCase().trim();
+      // ✅ ELIMINAR filtro de estado 'ACTIVO'
       return await this.contratistaRepository.find({
-        where: { razonSocial: ILike(`%${razonSocialLower}%`), estado: 'ACTIVO' },
+        where: { razonSocial: ILike(`%${razonSocialLower}%`) }, // ❌ ELIMINAR: estado: 'ACTIVO'
         relations: ['documentos'],
         order: { razonSocial: 'ASC' },
         take: 20,
@@ -425,8 +427,9 @@ export class ContratistaService {
     try {
       if (!numeroContrato || numeroContrato.trim().length < 1) return [];
       const numeroContratoLower = numeroContrato.toLowerCase().trim();
+      // ✅ ELIMINAR filtro de estado 'ACTIVO'
       return await this.contratistaRepository.find({
-        where: { numeroContrato: ILike(`%${numeroContratoLower}%`), estado: 'ACTIVO' },
+        where: { numeroContrato: ILike(`%${numeroContratoLower}%`) }, // ❌ ELIMINAR: estado: 'ACTIVO'
         relations: ['documentos'],
         order: { razonSocial: 'ASC' },
         take: 20,
@@ -445,15 +448,16 @@ export class ContratistaService {
         return null;
       }
 
+      // ✅ ELIMINAR filtro de estado 'ACTIVO' para mostrar también INACTIVOS
       const contratista = await this.contratistaRepository.findOne({
         where: {
-          numeroContrato: numeroContrato.trim(),
-          estado: 'ACTIVO'
+          numeroContrato: numeroContrato.trim()
+          // ❌ ELIMINAR: estado: 'ACTIVO'
         },
-        relations: ['documentos'], // ✅ Esto ya está bien
+        relations: ['documentos'],
         order: {
           documentos: {
-            fechaSubida: 'DESC'  // ✅ Ordenar documentos por fecha
+            fechaSubida: 'DESC'
           }
         }
       });
@@ -463,12 +467,7 @@ export class ContratistaService {
         return null;
       }
 
-      this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial} (${contratista.id}) con ${contratista.documentos?.length || 0} documentos`);
-
-      // Log para debugging
-      if (contratista.documentos && contratista.documentos.length > 0) {
-        this.logger.log(`📎 Tipos de documentos: ${contratista.documentos.map(d => d.tipo).join(', ')}`);
-      }
+      this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial} (${contratista.id}) - Estado: ${contratista.estado} con ${contratista.documentos?.length || 0} documentos`);
 
       return contratista;
     } catch (error) {
@@ -518,36 +517,56 @@ export class ContratistaService {
     estado?: string;
     numeroContrato?: string;
     cargo?: string;
-    objetivoContrato?: string;  // ✅ CAMBIADO DE observaciones A objetivoContrato
+    objetivoContrato?: string;
   }): Promise<Contratista> {
     try {
       if (!data.documentoIdentidad || !data.razonSocial) {
         throw new BadRequestException('Documento de identidad y razón social son requeridos');
       }
 
-      const existente = await this.contratistaRepository.findOne({
+      // ✅ OPCIÓN B: validar combinación documento + contrato, no documento solo
+      if (data.numeroContrato) {
+        const existeCombo = await this.contratistaRepository.findOne({
+          where: {
+            documentoIdentidad: data.documentoIdentidad,
+            numeroContrato: data.numeroContrato,
+          },
+        });
+        if (existeCombo) {
+          throw new ConflictException(
+            `Ya existe un registro con documento ${data.documentoIdentidad} y contrato ${data.numeroContrato}`
+          );
+        }
+      }
+
+      // ✅ Verificar que no haya más de un ACTIVO por documento
+      const existenteActivo = await this.contratistaRepository.findOne({
         where: { documentoIdentidad: data.documentoIdentidad, estado: 'ACTIVO' },
       });
-      if (existente) {
-        throw new ConflictException(`Ya existe un contratista activo con el documento ${data.documentoIdentidad}`);
+      if (existenteActivo) {
+        throw new ConflictException(
+          `Ya existe un contratista activo con el documento ${data.documentoIdentidad}`
+        );
       }
 
       const contratista = new Contratista();
+
+      // ✅✅✅ ASIGNAR TODOS LOS CAMPOS AL OBJETO ✅✅✅
       contratista.tipoDocumento = data.tipoDocumento || 'CC';
-      contratista.documentoIdentidad = data.documentoIdentidad.trim();
-      contratista.razonSocial = data.razonSocial.trim();
-      contratista.representanteLegal = data.representanteLegal?.trim() ?? null;
-      contratista.documentoRepresentante = data.documentoRepresentante?.trim() ?? null;
-      contratista.telefono = data.telefono?.trim() ?? null;
-      contratista.email = data.email?.trim() ?? null;
-      contratista.direccion = data.direccion?.trim() ?? null;
-      contratista.departamento = data.departamento?.trim() ?? null;
-      contratista.ciudad = data.ciudad?.trim() ?? null;
-      contratista.tipoContratista = data.tipoContratista?.trim() ?? null;
+      contratista.documentoIdentidad = data.documentoIdentidad;
+      contratista.razonSocial = data.razonSocial;
+      contratista.representanteLegal = data.representanteLegal ?? null;
+      contratista.documentoRepresentante = data.documentoRepresentante ?? null;
+      contratista.telefono = data.telefono ?? null;
+      contratista.email = data.email ?? null;
+      contratista.direccion = data.direccion ?? null;
+      contratista.departamento = data.departamento ?? null;
+      contratista.ciudad = data.ciudad ?? null;
+      contratista.tipoContratista = data.tipoContratista ?? null;
       contratista.estado = data.estado || 'ACTIVO';
-      contratista.numeroContrato = data.numeroContrato?.trim() ?? null;
-      contratista.cargo = data.cargo?.trim() ?? null;
-      contratista.objetivoContrato = data.objetivoContrato?.trim() ?? null;  // ✅ CAMBIADO
+      contratista.numeroContrato = data.numeroContrato ?? null;
+      contratista.cargo = data.cargo ?? null;
+      contratista.objetivoContrato = data.objetivoContrato ?? null;
 
       const saved = await this.contratistaRepository.save(contratista);
       this.logger.log(`✅ Contratista creado: ${saved.id} - ${saved.razonSocial}`);
@@ -594,13 +613,13 @@ export class ContratistaService {
   async obtenerTodos(options?: { limit?: number; offset?: number }): Promise<Contratista[]> {
     try {
       const queryOptions: any = {
-        order: { estado: 'DESC', razonSocial: 'ASC' },
+        order: { createdAt: 'DESC', razonSocial: 'ASC' }, // Ordenar por fecha de creación (más nuevos primero)
         relations: ['documentos'],
         select: [
           'id', 'tipoDocumento', 'documentoIdentidad', 'razonSocial',
           'representanteLegal', 'documentoRepresentante', 'telefono', 'email',
           'direccion', 'departamento', 'ciudad', 'tipoContratista', 'estado',
-          'numeroContrato', 'cargo', 'objetivoContrato', 'createdAt', 'updatedAt'  // ✅ CAMBIADO
+          'numeroContrato', 'cargo', 'objetivoContrato', 'createdAt', 'updatedAt'
         ]
       };
 
@@ -619,39 +638,39 @@ export class ContratistaService {
     }
   }
 
- async crearConDocumentos(
-  data: any,
-  documentos?: Array<{ tipo: TipoDocumento; archivo: Express.Multer.File }>,
-  usuario?: string
-): Promise<{ contratista: Contratista; documentos: DocumentoContratista[] }> {
-  try {
-    // Primero crear el contratista
-    const contratista = await this.crear(data);
-    const documentosSubidos: DocumentoContratista[] = [];
+  async crearConDocumentos(
+    data: any,
+    documentos?: Array<{ tipo: TipoDocumento; archivo: Express.Multer.File }>,
+    usuario?: string
+  ): Promise<{ contratista: Contratista; documentos: DocumentoContratista[] }> {
+    try {
+      // Primero crear el contratista
+      const contratista = await this.crear(data);
+      const documentosSubidos: DocumentoContratista[] = [];
 
-    if (documentos && documentos.length > 0) {
-      for (const doc of documentos) {
-        try {
-          // ✅ Usar el método subirDocumento que ya tiene la corrección
-          const docSubido = await this.subirDocumento(
-            contratista.id, 
-            doc.tipo, 
-            doc.archivo, 
-            usuario || 'sistema'
-          );
-          documentosSubidos.push(docSubido);
-        } catch (error) {
-          this.logger.error(`Error subiendo documento ${doc.tipo}: ${error.message}`);
+      if (documentos && documentos.length > 0) {
+        for (const doc of documentos) {
+          try {
+            // ✅ Usar el método subirDocumento que ya tiene la corrección
+            const docSubido = await this.subirDocumento(
+              contratista.id,
+              doc.tipo,
+              doc.archivo,
+              usuario || 'sistema'
+            );
+            documentosSubidos.push(docSubido);
+          } catch (error) {
+            this.logger.error(`Error subiendo documento ${doc.tipo}: ${error.message}`);
+          }
         }
       }
-    }
 
-    return { contratista, documentos: documentosSubidos };
-  } catch (error) {
-    this.logger.error(`❌ Error creando contratista con documentos: ${error.message}`);
-    throw error;
+      return { contratista, documentos: documentosSubidos };
+    } catch (error) {
+      this.logger.error(`❌ Error creando contratista con documentos: ${error.message}`);
+      throw error;
+    }
   }
-}
 
 
   async actualizarConDocumentos(
@@ -661,6 +680,8 @@ export class ContratistaService {
     usuario?: string
   ): Promise<{ contratistaOriginal: Contratista; contratistaNuevo: Contratista; documentos: DocumentoContratista[] }> {
     const contratistaOriginal = await this.buscarPorId(id);
+
+    // ✅ Actualizar el mismo contratista (NO crear uno nuevo)
     const contratistaNuevo = await this.actualizar(id, data);
 
     const documentosSubidos: DocumentoContratista[] = [];
@@ -685,8 +706,9 @@ export class ContratistaService {
 
   async existePorDocumento(documentoIdentidad: string): Promise<boolean> {
     try {
+      // ✅ Verificar TODOS los contratistas (no solo activos)
       const count = await this.contratistaRepository.count({
-        where: { documentoIdentidad, estado: 'ACTIVO' },
+        where: { documentoIdentidad }, // ❌ ELIMINAR: estado: 'ACTIVO'
       });
       return count > 0;
     } catch (error) {
@@ -724,5 +746,129 @@ export class ContratistaService {
       this.logger.error(`❌ Error obteniendo contratistas recientes: ${error.message}`);
       return [];
     }
+  }
+
+  async actualizarConVersionado(
+    id: string,
+    data: any,
+    documentos?: Array<{ tipo: TipoDocumento; archivo: Express.Multer.File }>,
+    usuario?: string
+  ): Promise<{ contratistaAnterior: Contratista; contratistaNuevo: Contratista; documentos: DocumentoContratista[] }> {
+
+    this.logger.log(`🔄 INICIANDO VERSIONADO para contratista ID: ${id}`);
+
+    // 1. Obtener el contratista actual
+    const contratistaAnterior = await this.buscarPorId(id);
+
+    if (!contratistaAnterior) {
+      throw new NotFoundException(`Contratista con ID ${id} no encontrado`);
+    }
+
+    this.logger.log(`📋 Contratista original: ${contratistaAnterior.razonSocial} (${contratistaAnterior.estado})`);
+    this.logger.log(`📋 Número de contrato original: ${contratistaAnterior.numeroContrato || 'Sin contrato'}`);
+
+    // 2. ✅ PASO CRÍTICO: marcar anterior INACTIVO antes de crear el nuevo
+    await this.contratistaRepository.update(id, { estado: 'INACTIVO' });
+    this.logger.log(`🔒 Contratista anterior marcado INACTIVO: ${contratistaAnterior.id}`);
+
+    // 3. Obtener el nuevo número de contrato (OBLIGATORIO)
+    let nuevoNumeroContrato = data.numeroContrato;
+
+    if (!nuevoNumeroContrato) {
+      throw new BadRequestException('El número de contrato es obligatorio al editar un contratista');
+    }
+
+    // Verificar que el nuevo número de contrato NO exista ya en la base de datos
+    const existeContrato = await this.contratistaRepository.findOne({
+      where: { numeroContrato: nuevoNumeroContrato }
+    });
+
+    if (existeContrato) {
+      throw new ConflictException(`El número de contrato "${nuevoNumeroContrato}" ya está en uso. Por favor use un número diferente.`);
+    }
+
+    this.logger.log(`📋 NUEVO número de contrato proporcionado: ${nuevoNumeroContrato}`);
+
+    // 4. Crear NUEVO contratista con los datos actualizados
+    const nuevoContratistaData = {
+      tipoDocumento: data.tipoDocumento || contratistaAnterior.tipoDocumento,
+      documentoIdentidad: data.documentoIdentidad || contratistaAnterior.documentoIdentidad,
+      razonSocial: data.razonSocial || contratistaAnterior.razonSocial,
+      representanteLegal: data.representanteLegal !== undefined ? data.representanteLegal : contratistaAnterior.representanteLegal,
+      documentoRepresentante: data.documentoRepresentante !== undefined ? data.documentoRepresentante : contratistaAnterior.documentoRepresentante,
+      telefono: data.telefono !== undefined ? data.telefono : contratistaAnterior.telefono,
+      email: data.email !== undefined ? data.email : contratistaAnterior.email,
+      direccion: data.direccion !== undefined ? data.direccion : contratistaAnterior.direccion,
+      departamento: data.departamento !== undefined ? data.departamento : contratistaAnterior.departamento,
+      ciudad: data.ciudad !== undefined ? data.ciudad : contratistaAnterior.ciudad,
+      tipoContratista: data.tipoContratista !== undefined ? data.tipoContratista : contratistaAnterior.tipoContratista,
+      estado: 'ACTIVO',
+      numeroContrato: nuevoNumeroContrato,
+      cargo: data.cargo !== undefined ? data.cargo : contratistaAnterior.cargo,
+      objetivoContrato: data.objetivoContrato !== undefined ? data.objetivoContrato : contratistaAnterior.objetivoContrato
+    };
+
+    this.logger.log(`📝 Creando NUEVO contratista con número: ${nuevoNumeroContrato}`);
+
+    const contratistaNuevo = await this.crear(nuevoContratistaData);
+    this.logger.log(`✅ NUEVO contratista creado: ${contratistaNuevo.id} - ${contratistaNuevo.razonSocial} (ACTIVO)`);
+
+    // 5. Copiar documentos del contratista anterior al nuevo
+    const documentosSubidos: DocumentoContratista[] = [];
+
+    const documentosAnteriores = await this.obtenerDocumentos(contratistaAnterior.id);
+    this.logger.log(`📎 Copiando ${documentosAnteriores.length} documentos del contratista anterior`);
+
+    for (const docAnt of documentosAnteriores) {
+      try {
+        const { buffer, nombre, mimeType } = await this.descargarDocumento(docAnt.id, contratistaAnterior.id);
+
+        const extension = nombre.split('.').pop() || 'pdf';
+        const nombreUnico = `${docAnt.tipo}_${Date.now()}_${Math.random().toString(36).substring(7)}.${extension}`;
+
+        const folderName = contratistaNuevo.numeroContrato
+          ? `${contratistaNuevo.numeroContrato}_${contratistaNuevo.razonSocial.replace(/[^a-zA-Z0-9]/g, '_')}`
+          : `${contratistaNuevo.id}`;
+        const folder = `contratistas/${folderName}`;
+
+        const result = await this.storageService.uploadFileFromBuffer(buffer, nombreUnico, mimeType, folder);
+
+        const nuevoDoc = new DocumentoContratista();
+        nuevoDoc.contratistaId = contratistaNuevo.id;
+        nuevoDoc.tipo = docAnt.tipo as TipoDocumento;
+        nuevoDoc.nombreArchivo = nombreUnico;
+        nuevoDoc.rutaArchivo = result.path;
+        nuevoDoc.tipoMime = mimeType;
+        nuevoDoc.tamanoBytes = buffer.length;
+        nuevoDoc.subidoPor = usuario || 'sistema';
+
+        const saved = await this.documentoRepository.save(nuevoDoc);
+        documentosSubidos.push(saved);
+        this.logger.log(`✅ Documento copiado: ${docAnt.tipo}`);
+      } catch (error) {
+        this.logger.error(`❌ Error copiando documento ${docAnt.id}: ${error.message}`);
+      }
+    }
+
+    
+    // 6. Subir nuevos documentos adicionales
+    if (documentos && documentos.length > 0) {
+      this.logger.log(`📤 Subiendo ${documentos.length} nuevos documentos`);
+      for (const doc of documentos) {
+        try {
+          const docSubido = await this.subirDocumento(contratistaNuevo.id, doc.tipo, doc.archivo, usuario || 'sistema');
+          documentosSubidos.push(docSubido);
+          this.logger.log(`✅ Nuevo documento subido: ${doc.tipo}`);
+        } catch (error) {
+          this.logger.error(`Error subiendo documento ${doc.tipo}: ${error.message}`);
+        }
+      }
+    }
+
+    return {
+      contratistaAnterior,
+      contratistaNuevo,
+      documentos: documentosSubidos
+    };
   }
 }
