@@ -7,7 +7,7 @@ import { Documento } from '../radicacion/entities/documento.entity';
 import { User } from '../users/entities/user.entity';
 import { StorageService } from '../common/storage/storage.service';
 import { JuridicaModule } from '../juridica/juridica.module';
-import { StorageModule } from '../common/storage/storage.module';
+import { StorageModule } from '../common/storage/storage.module';   
 
 @Module({
   imports: [
