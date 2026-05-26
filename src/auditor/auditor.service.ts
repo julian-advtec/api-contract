@@ -519,144 +519,210 @@ export class AuditorService {
   // 6. OBTENER DOCUMENTO PARA VISTA
   // ===============================
 
-  async obtenerDocumentoParaVista(
-    documentoId: string,
-    auditorId?: string,
-  ): Promise<any> {
-    this.logger.log(`🔍 Solicitando documento ${documentoId} para vista de auditoría (auditorId: ${auditorId || 'no proporcionado'})`);
+async obtenerDocumentoParaVista(
+  documentoId: string,
+  auditorId?: string,
+): Promise<any> {
+  this.logger.log(`🔍 Solicitando documento ${documentoId} para vista de auditoría (auditorId: ${auditorId || 'no proporcionado'})`);
 
-    try {
-      const documento = await this.documentoRepository.findOne({
-        where: { id: documentoId },
-        relations: ['radicador', 'usuarioAsignado'],
+  try {
+    // 1. Obtener el documento con TODOS los campos incluyendo acta
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId },
+      relations: ['radicador', 'usuarioAsignado'],
+      select: [
+        'id', 'numeroRadicado', 'numeroContrato', 'nombreContratista',
+        'documentoContratista', 'emailContratista', 'telefonoContratista',
+        'fechaInicio', 'fechaFin', 'estado', 'primerRadicadoDelAno',
+        'observacion', 'rutaCarpetaRadicado', 'fechaRadicacion',
+        'cuentaCobro', 'seguridadSocial', 'informeActividades',
+        'descripcionCuentaCobro', 'descripcionSeguridadSocial', 'descripcionInformeActividades',
+        'comentarios', 'correcciones', 'usuarioAsignadoNombre',
+        'nombreRadicador', 'usuarioRadicador', 'historialEstados',
+        'actaSupervisionPath', 'actaSupervisionNombre',
+        'actaSupervisionFecha', 'actaSupervisionSubidaPor'
+      ]
+    });
+
+    if (!documento) {
+      throw new NotFoundException(`Documento ${documentoId} no encontrado`);
+    }
+
+    this.logger.log(`📄 Documento encontrado: ${documento.numeroRadicado}`);
+    this.logger.log(`📋 Acta de supervisión en BD: ${documento.actaSupervisionPath ? 'SÍ' : 'NO'}`);
+    this.logger.log(`📊 Estado del documento: ${documento.estado}`);
+
+    // 2. ✅ MODIFICAR: Aceptar más estados para vista
+    // Incluir APROBADO_SUPERVISOR y otros estados finales en modo solo lectura
+    const estadosPermitidosVista = [
+      'RADICADO', 'CON_ACTA', 'EN_REVISION_AUDITOR',
+      'APROBADO_AUDITOR', 'OBSERVADO_AUDITOR', 'RECHAZADO_AUDITOR', 
+      'COMPLETADO_AUDITOR', 'APROBADO_SUPERVISOR', 'OBSERVADO_SUPERVISOR',
+      'RECHAZADO_SUPERVISOR', 'COMPLETADO', 'FIRMADO_SUPERVISOR',
+      'EN_REVISION_CONTABILIDAD', 'APROBADO_CONTABILIDAD', 'OBSERVADO_CONTABILIDAD',
+      'RECHAZADO_CONTABILIDAD', 'COMPLETADO_CONTABILIDAD',
+      // Revisión de tesorería
+      'EN_REVISION_TESORERIA', 'APROBADO_TESORERIA', 'OBSERVADO_TESORERIA',
+      'RECHAZADO_TESORERIA','COMPLETADO_TESORERIA',
+      // Revisión de asesor gerencia
+      'EN_REVISION_ASESOR_GERENCIA', 'APROBADO_ASESOR_GERENCIA', 'OBSERVADO_ASESOR_GERENCIA',
+      'RECHAZADO_ASESOR_GERENCIA',
+      // Revisión de rendición cuentas
+      'EN_REVISION_RENDICION_CUENTAS', 'APROBADO_RENDICION_CUENTAS', 'OBSERVADO_RENDICION_CUENTAS',
+      'RECHAZADO_RENDICION_CUENTAS',
+      // Estados finales
+      'COMPLETADO', 'PAGADO', 'FINALIZADO'
+    ];
+
+    let auditorDoc: AuditorDocumento | null = null;
+
+    if (auditorId) {
+      auditorDoc = await this.auditorDocumentoRepository.findOne({
+        where: {
+          documento: { id: documentoId },
+          auditor: { id: auditorId },
+        },
+        relations: ['auditor'],
       });
+    }
 
-      if (!documento) {
-        throw new NotFoundException(`Documento ${documentoId} no encontrado`);
-      }
+    let permitido = false;
+    let esSoloLectura = false;
 
-      const estadosPermitidosPrincipal = [
-        'RADICADO',
-        'EN_REVISION_AUDITOR',
-        'APROBADO_AUDITOR',
-        'OBSERVADO_AUDITOR',
-        'RECHAZADO_AUDITOR',
-        'COMPLETADO_AUDITOR',
-      ];
+    // Verificar si el estado está en la lista de permitidos
+    if (estadosPermitidosVista.includes(documento.estado)) {
+      permitido = true;
+    }
 
-      let auditorDoc: AuditorDocumento | null = null;
+    // Si es un estado final (aprobado, rechazado, etc.), forzar solo lectura
+    const estadosFinales = [
+      'APROBADO_SUPERVISOR', 'APROBADO_AUDITOR', 'APROBADO_RENDICION_CUENTAS',
+      'APROBADO_CONTABILIDAD', 'APROBADO_TESORERIA', 'COMPLETADO',
+      'COMPLETADO_AUDITOR', 'RECHAZADO_SUPERVISOR', 'RECHAZADO_AUDITOR',
+      'OBSERVADO_SUPERVISOR', 'OBSERVADO_AUDITOR', 'FIRMADO_SUPERVISOR', 'COMPLETADO_TESORERIA',
+    ];
 
-      if (auditorId) {
-        auditorDoc = await this.auditorDocumentoRepository.findOne({
-          where: {
-            documento: { id: documentoId },
-            auditor: { id: auditorId },
-          },
-          relations: ['auditor'],
+    if (estadosFinales.includes(documento.estado)) {
+      esSoloLectura = true;
+      this.logger.log(`🔒 Estado final: ${documento.estado} - Modo solo lectura forzado`);
+    }
+
+    // Si hay un registro en auditor_documento y está en estado final
+    if (auditorDoc && estadosFinales.includes(auditorDoc.estado)) {
+      esSoloLectura = true;
+    }
+
+    // ✅ NUEVO: Si el estado es APROBADO_SUPERVISOR, permitir vista en modo solo lectura
+    if (documento.estado === 'APROBADO_SUPERVISOR') {
+      permitido = true;
+      esSoloLectura = true;
+      this.logger.log(`🔓 Documento APROBADO_SUPERVISOR - Vista permitida en modo solo lectura`);
+    }
+
+    if (!permitido) {
+      this.logger.warn(`⚠️ Vista no permitida para estado: ${documento.estado}`);
+      throw new ForbiddenException(`Vista no permitida en estado actual (${documento.estado})`);
+    }
+
+    // 3. Obtener archivos del auditor (RP, CDP, etc.)
+    const tiposArchivo = [
+      { key: 'rp', desc: 'Resolución de Pago', campo: 'rpPath' },
+      { key: 'cdp', desc: 'Certificado de Disponibilidad Presupuestal', campo: 'cdpPath' },
+      { key: 'poliza', desc: 'Póliza de Cumplimiento', campo: 'polizaPath' },
+      { key: 'certificadoBancario', desc: 'Certificado Bancario', campo: 'certificadoBancarioPath' },
+      { key: 'minuta', desc: 'Minuta de Contrato', campo: 'minutaPath' },
+      { key: 'actaInicio', desc: 'Acta de Inicio', campo: 'actaInicioPath' },
+    ];
+
+    const archivosAuditor = [];
+
+    for (const tipo of tiposArchivo) {
+      const resultado = await this.encontrarRutaArchivoAuditor(documento, tipo.campo as any);
+
+      if (resultado) {
+        archivosAuditor.push({
+          tipo: tipo.key,
+          descripcion: tipo.desc,
+          subido: true,
+          nombreArchivo: resultado.nombreArchivo,
+          rutaServidor: resultado.rutaAbsoluta,
+        });
+      } else {
+        archivosAuditor.push({
+          tipo: tipo.key,
+          descripcion: tipo.desc,
+          subido: false,
+          nombreArchivo: 'No disponible',
+          rutaServidor: null,
         });
       }
-
-      let permitido = false;
-
-      if (estadosPermitidosPrincipal.includes(documento.estado)) {
-        permitido = true;
-      } else if (auditorDoc && auditorDoc.estado) {
-        const estadosPermitidosAuditoria = [
-          'APROBADO',
-          'APROBADO_AUDITOR',
-          'COMPLETADO_AUDITOR',
-          'COMPLETADO',
-        ];
-
-        if (estadosPermitidosAuditoria.includes(auditorDoc.estado)) {
-          permitido = true;
-        }
-      }
-
-      if (!permitido) {
-        throw new ForbiddenException(
-          `Vista no permitida en estado actual (${documento.estado})`
-        );
-      }
-
-      const tiposArchivo = [
-        { key: 'rp', desc: 'Resolución de Pago', campo: 'rpPath' },
-        { key: 'cdp', desc: 'Certificado de Disponibilidad Presupuestal', campo: 'cdpPath' },
-        { key: 'poliza', desc: 'Póliza de Cumplimiento', campo: 'polizaPath' },
-        { key: 'certificadoBancario', desc: 'Certificado Bancario', campo: 'certificadoBancarioPath' },
-        { key: 'minuta', desc: 'Minuta de Contrato', campo: 'minutaPath' },
-        { key: 'actaInicio', desc: 'Acta de Inicio', campo: 'actaInicioPath' },
-      ];
-
-      const archivosAuditor = [];
-
-      for (const tipo of tiposArchivo) {
-        const resultado = await this.encontrarRutaArchivoAuditor(documento, tipo.campo as any);
-
-        if (resultado) {
-          archivosAuditor.push({
-            tipo: tipo.key,
-            descripcion: tipo.desc,
-            subido: true,
-            nombreArchivo: resultado.nombreArchivo,
-            rutaServidor: resultado.rutaAbsoluta,
-          });
-        } else {
-          archivosAuditor.push({
-            tipo: tipo.key,
-            descripcion: tipo.desc,
-            subido: false,
-            nombreArchivo: 'No disponible',
-            rutaServidor: null,
-          });
-        }
-      }
-
-      return {
-        data: {
-          documento: {
-            id: documento.id,
-            numeroRadicado: documento.numeroRadicado,
-            numeroContrato: documento.numeroContrato,
-            nombreContratista: documento.nombreContratista,
-            documentoContratista: documento.documentoContratista,
-            fechaInicio: documento.fechaInicio,
-            fechaFin: documento.fechaFin,
-            fechaRadicacion: documento.fechaRadicacion,
-            radicador: documento.nombreRadicador,
-            supervisor: documento.usuarioAsignadoNombre,
-            observacion: documento.observacion,
-            estado: documento.estado,
-            primerRadicadoDelAno: documento.primerRadicadoDelAno,
-            usuarioAsignadoNombre: documento.usuarioAsignadoNombre,
-            historialEstados: documento.historialEstados || [],
-            rutaCarpetaRadicado: documento.rutaCarpetaRadicado,
-            cuentaCobro: documento.cuentaCobro,
-            seguridadSocial: documento.seguridadSocial,
-            informeActividades: documento.informeActividades,
-          },
-          archivosRadicados: [
-            { numero: 1, nombre: documento.cuentaCobro, descripcion: documento.descripcionCuentaCobro, tipo: 'cuenta_cobro', existe: !!documento.cuentaCobro },
-            { numero: 2, nombre: documento.seguridadSocial, descripcion: documento.descripcionSeguridadSocial, tipo: 'seguridad_social', existe: !!documento.seguridadSocial },
-            { numero: 3, nombre: documento.informeActividades, descripcion: documento.descripcionInformeActividades, tipo: 'informe_actividades', existe: !!documento.informeActividades },
-          ],
-          archivosAuditor,
-          auditor: auditorDoc ? {
-            id: auditorDoc.id,
-            estado: auditorDoc.estado,
-            observaciones: auditorDoc.observaciones,
-            tieneTodosDocumentos: auditorDoc.tieneTodosDocumentos(),
-            puedeSubirDocumentos: documento.primerRadicadoDelAno && documento.estado === 'EN_REVISION_AUDITOR',
-            documentosSubidos: archivosAuditor.filter(a => a.subido).map(a => a.tipo),
-            documentosFaltantes: this.obtenerDocumentosFaltantes(auditorDoc),
-          } : null,
-        }
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error grave en obtenerDocumentoParaVista: ${error.message}`, error.stack);
-      throw error;
     }
+
+    // 4. Construir respuesta INCLUYENDO el acta de supervisión y el modo solo lectura
+    const response = {
+      data: {
+        documento: {
+          id: documento.id,
+          numeroRadicado: documento.numeroRadicado,
+          numeroContrato: documento.numeroContrato,
+          nombreContratista: documento.nombreContratista,
+          documentoContratista: documento.documentoContratista,
+          emailContratista: documento.emailContratista,
+          telefonoContratista: documento.telefonoContratista,
+          fechaInicio: documento.fechaInicio,
+          fechaFin: documento.fechaFin,
+          fechaRadicacion: documento.fechaRadicacion,
+          radicador: documento.nombreRadicador,
+          supervisor: documento.usuarioAsignadoNombre,
+          observacion: documento.observacion,
+          estado: documento.estado,
+          primerRadicadoDelAno: documento.primerRadicadoDelAno,
+          usuarioAsignadoNombre: documento.usuarioAsignadoNombre,
+          historialEstados: documento.historialEstados || [],
+          rutaCarpetaRadicado: documento.rutaCarpetaRadicado,
+          cuentaCobro: documento.cuentaCobro,
+          seguridadSocial: documento.seguridadSocial,
+          informeActividades: documento.informeActividades,
+          descripcionCuentaCobro: documento.descripcionCuentaCobro,
+          descripcionSeguridadSocial: documento.descripcionSeguridadSocial,
+          descripcionInformeActividades: documento.descripcionInformeActividades,
+          // ✅ INCLUIR CAMPOS DEL ACTA DE SUPERVISIÓN
+          actaSupervisionPath: documento.actaSupervisionPath,
+          actaSupervisionNombre: documento.actaSupervisionNombre,
+          actaSupervisionFecha: documento.actaSupervisionFecha,
+          actaSupervisionSubidaPor: documento.actaSupervisionSubidaPor
+        },
+        archivosRadicados: [
+          { numero: 1, nombre: documento.cuentaCobro, descripcion: documento.descripcionCuentaCobro, tipo: 'cuenta_cobro', existe: !!documento.cuentaCobro },
+          { numero: 2, nombre: documento.seguridadSocial, descripcion: documento.descripcionSeguridadSocial, tipo: 'seguridad_social', existe: !!documento.seguridadSocial },
+          { numero: 3, nombre: documento.informeActividades, descripcion: documento.descripcionInformeActividades, tipo: 'informe_actividades', existe: !!documento.informeActividades },
+        ],
+        archivosAuditor,
+        // ✅ NUEVO: Indicar si es solo lectura
+        esSoloLectura: esSoloLectura,
+        auditor: auditorDoc ? {
+          id: auditorDoc.id,
+          estado: auditorDoc.estado,
+          observaciones: auditorDoc.observaciones,
+          tieneTodosDocumentos: auditorDoc.tieneTodosDocumentos(),
+          puedeSubirDocumentos: !esSoloLectura && documento.primerRadicadoDelAno && documento.estado === 'EN_REVISION_AUDITOR',
+          documentosSubidos: archivosAuditor.filter(a => a.subido).map(a => a.tipo),
+          documentosFaltantes: this.obtenerDocumentosFaltantes(auditorDoc),
+        } : null,
+      }
+    };
+
+    // Log para verificar el acta en la respuesta
+    this.logger.log(`📤 Respuesta - Acta incluida: ${!!response.data.documento.actaSupervisionPath}`);
+    this.logger.log(`📤 Modo solo lectura: ${esSoloLectura}`);
+
+    return response;
+  } catch (error) {
+    this.logger.error(`❌ Error grave en obtenerDocumentoParaVista: ${error.message}`, error.stack);
+    throw error;
   }
+}
+
 
   // ===============================
   // 7. LIBERAR DOCUMENTO
@@ -1546,4 +1612,30 @@ export class AuditorService {
       throw error;
     }
   }
+
+  async obtenerDocumentoConActa(documentoId: string): Promise<Documento> {
+    this.logger.log(`[SERVICE] Buscando documento ${documentoId} para acta`);
+
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId },
+      select: [
+        'id',
+        'numeroRadicado',
+        'actaSupervisionPath',
+        'actaSupervisionNombre',
+        'actaSupervisionFecha',
+        'actaSupervisionSubidaPor',
+        'estado'
+      ]
+    });
+
+    if (!documento) {
+      throw new NotFoundException(`Documento ${documentoId} no encontrado`);
+    }
+
+    this.logger.log(`[SERVICE] Documento encontrado - Acta path: ${documento.actaSupervisionPath || 'No tiene acta'}`);
+
+    return documento;
+  }
+  
 }

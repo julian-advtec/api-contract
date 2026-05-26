@@ -1,4 +1,3 @@
-// src/contabilidad/contabilidad.controller.ts
 import {
     Controller,
     Get,
@@ -37,7 +36,7 @@ import { ContabilidadEstado, TipoCausacion } from './entities/contabilidad-docum
 import { multerContabilidadConfig } from './../config/multer-contabilidad.config';
 import { Public } from './../common/decorators/public.decorator';
 
-// ✅ Interfaz JwtUser consistente
+// Interfaz JwtUser consistente
 interface JwtUser {
     id: string;
     username: string;
@@ -118,7 +117,6 @@ export class ContabilidadController {
             [
                 { name: 'glosa', maxCount: 1 },
                 { name: 'causacion', maxCount: 1 },
-                { name: 'extracto', maxCount: 1 },
                 { name: 'comprobanteEgreso', maxCount: 1 },
             ],
             multerContabilidadConfig
@@ -405,12 +403,12 @@ export class ContabilidadController {
     }
 
     // ───────────────────────────────────────────────────────────────
-    // ✅ OBTENER SOLO CONTABILIDAD - CORREGIDO
+    // OBTENER SOLO CONTABILIDAD
     // ───────────────────────────────────────────────────────────────
     @Get('documentos/:id/contabilidad')
     async obtenerSoloContabilidad(
         @Param('id') id: string,
-        @GetUser() user: JwtUser,  // ✅ CORREGIDO: usando @GetUser en lugar de @Req
+        @GetUser() user: JwtUser,
     ) {
         if (!user?.id) {
             throw new NotFoundException('Usuario no identificado en el token');
@@ -432,7 +430,6 @@ export class ContabilidadController {
                 tipoCausacion: contabilidad.tipoCausacion,
                 glosaPath: contabilidad.glosaPath,
                 causacionPath: contabilidad.causacionPath,
-                extractoPath: contabilidad.extractoPath,
                 comprobanteEgresoPath: contabilidad.comprobanteEgresoPath,
                 fechaFinRevision: contabilidad.fechaFinRevision,
                 contador: contabilidad.contador?.fullName || contabilidad.contador?.username || 'Contador',

@@ -26,6 +26,7 @@ import type { Response } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Public } from '../common/decorators/public.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
 import { ContratistaService } from './contratista.service';
 import { TipoDocumento } from './entities/documento-contratista.entity';
@@ -48,6 +49,7 @@ export class ContratistasController {
   // ===============================
 
   @Get('health')
+  @Public()
   async healthCheck() {
     return {
       ok: true,
@@ -556,7 +558,7 @@ export class ContratistasController {
   }
 
   @Get('buscar-por-contrato/:numeroContrato')
-  @Roles(UserRole.ADMIN, UserRole.JURIDICA)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   async buscarPorNumeroContrato(@Param('numeroContrato') numeroContrato: string, @Req() req?: any) {
     const inicio = Date.now();
     try {
@@ -613,7 +615,7 @@ export class ContratistasController {
   // ===============================
 
   @Get('autocomplete/nombre')
-  @Roles(UserRole.ADMIN, UserRole.JURIDICA)
+  @UseGuards(JwtAuthGuard)
   async autocompletePorNombre(@Query('q') query: string, @Req() req?: any) {
     try {
       this.logger.log(`🔍 Autocomplete por nombre: "${query}"`);
@@ -661,7 +663,7 @@ export class ContratistasController {
   }
 
   @Get('autocomplete/documento')
-  @Roles(UserRole.ADMIN, UserRole.JURIDICA)
+  @UseGuards(JwtAuthGuard)
   async autocompletePorDocumento(@Query('q') query: string, @Req() req?: any) {
     try {
       this.logger.log(`🔍 Autocomplete por documento: "${query}"`);
@@ -709,7 +711,7 @@ export class ContratistasController {
   }
 
   @Get('autocomplete/contrato')
-  @Roles(UserRole.ADMIN, UserRole.JURIDICA)
+  @UseGuards(JwtAuthGuard)
   async autocompletePorContrato(@Query('q') query: string, @Req() req?: any) {
     try {
       this.logger.log(`🔍 Autocomplete por contrato: "${query}"`);
@@ -1035,158 +1037,156 @@ export class ContratistasController {
     }
   }
 
-@Put(':id/completo')
-@Roles(UserRole.ADMIN, UserRole.JURIDICA)
-@UseInterceptors(FilesInterceptor('documentos', 20))
-async actualizarContratistaCompleto(
-  @Param('id') id: string,
-  @Body() body: any,
-  @UploadedFiles() files: Express.Multer.File[],
-  @Req() req: any
-) {
-  const inicio = Date.now();
-  try {
-    this.logger.log(`✏️ ACTUALIZANDO CON VERSIONADO contratista: ${id}`);
+  @Put(':id/completo')
+  @Roles(UserRole.ADMIN, UserRole.JURIDICA)
+  @UseInterceptors(FilesInterceptor('documentos', 20))
+  async actualizarContratistaCompleto(
+    @Param('id') id: string,
+    @Body() body: any,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Req() req: any
+  ) {
+    const inicio = Date.now();
+    try {
+      this.logger.log(`✏️ ACTUALIZANDO CON VERSIONADO contratista: ${id}`);
 
-    const datosActualizar: any = {};
+      const datosActualizar: any = {};
 
-    if (body.tipoDocumento !== undefined) datosActualizar.tipoDocumento = body.tipoDocumento;
-    if (body.documentoIdentidad !== undefined) datosActualizar.documentoIdentidad = body.documentoIdentidad;
-    if (body.razonSocial !== undefined) datosActualizar.razonSocial = body.razonSocial;
-    if (body.representanteLegal !== undefined) datosActualizar.representanteLegal = body.representanteLegal;
-    if (body.documentoRepresentante !== undefined) datosActualizar.documentoRepresentante = body.documentoRepresentante;
-    if (body.telefono !== undefined) datosActualizar.telefono = body.telefono;
-    if (body.email !== undefined) datosActualizar.email = body.email;
-    if (body.direccion !== undefined) datosActualizar.direccion = body.direccion;
-    if (body.departamento !== undefined) datosActualizar.departamento = body.departamento;
-    if (body.ciudad !== undefined) datosActualizar.ciudad = body.ciudad;
-    if (body.tipoContratista !== undefined) datosActualizar.tipoContratista = body.tipoContratista;
-    if (body.estado !== undefined) datosActualizar.estado = body.estado;
-    if (body.numeroContrato !== undefined) datosActualizar.numeroContrato = body.numeroContrato;
-    if (body.cargo !== undefined) datosActualizar.cargo = body.cargo;
-    if (body.objetivoContrato !== undefined) datosActualizar.objetivoContrato = body.objetivoContrato;
+      if (body.tipoDocumento !== undefined) datosActualizar.tipoDocumento = body.tipoDocumento;
+      if (body.documentoIdentidad !== undefined) datosActualizar.documentoIdentidad = body.documentoIdentidad;
+      if (body.razonSocial !== undefined) datosActualizar.razonSocial = body.razonSocial;
+      if (body.representanteLegal !== undefined) datosActualizar.representanteLegal = body.representanteLegal;
+      if (body.documentoRepresentante !== undefined) datosActualizar.documentoRepresentante = body.documentoRepresentante;
+      if (body.telefono !== undefined) datosActualizar.telefono = body.telefono;
+      if (body.email !== undefined) datosActualizar.email = body.email;
+      if (body.direccion !== undefined) datosActualizar.direccion = body.direccion;
+      if (body.departamento !== undefined) datosActualizar.departamento = body.departamento;
+      if (body.ciudad !== undefined) datosActualizar.ciudad = body.ciudad;
+      if (body.tipoContratista !== undefined) datosActualizar.tipoContratista = body.tipoContratista;
+      if (body.estado !== undefined) datosActualizar.estado = body.estado;
+      if (body.numeroContrato !== undefined) datosActualizar.numeroContrato = body.numeroContrato;
+      if (body.cargo !== undefined) datosActualizar.cargo = body.cargo;
+      if (body.objetivoContrato !== undefined) datosActualizar.objetivoContrato = body.objetivoContrato;
 
-    const documentos = [];
-    if (files && files.length > 0) {
-      for (let i = 0; i < files.length; i++) {
-        const tipo = body[`tipo_documento_${i}`];
-        if (tipo && Object.values(TipoDocumento).includes(tipo as TipoDocumento)) {
-          documentos.push({ tipo: tipo as TipoDocumento, archivo: files[i] });
+      const documentos = [];
+      if (files && files.length > 0) {
+        for (let i = 0; i < files.length; i++) {
+          const tipo = body[`tipo_documento_${i}`];
+          if (tipo && Object.values(TipoDocumento).includes(tipo as TipoDocumento)) {
+            documentos.push({ tipo: tipo as TipoDocumento, archivo: files[i] });
+          }
         }
       }
+
+      const resultado = await this.contratistaService.actualizarConVersionado(
+        id,
+        datosActualizar,
+        documentos,
+        req.user?.email || 'sistema'
+      );
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_EDITAR_USUARIO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Contratista versionado: Anterior ID ${resultado.contratistaAnterior.id} (INACTIVO) → Nuevo ID ${resultado.contratistaNuevo.id} (ACTIVO)`,
+          contratistaId: resultado.contratistaNuevo.id,
+          duracionMs: Date.now() - inicio,
+        },
+        req,
+      );
+
+      return {
+        ok: true,
+        data: {
+          success: true,
+          message: 'Contratista actualizado correctamente (versión anterior conservada como inactiva)',
+          data: resultado
+        }
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error actualizando contratista: ${error.message}`);
+      return {
+        ok: true,
+        data: {
+          success: false,
+          message: error.message,
+          data: null
+        }
+      };
     }
-
-    // ✅ USAR EL NUEVO MÉTODO CON VERSIONADO
-    const resultado = await this.contratistaService.actualizarConVersionado(
-      id,
-      datosActualizar,
-      documentos,
-      req.user?.email || 'sistema'
-    );
-
-    await this.bitacoraService.registrar(
-      AccionBitacora.ADMIN_EDITAR_USUARIO,
-      ModuloBitacora.ADMINISTRACION,
-      req.user,
-      undefined,
-      {
-        detalles: `Contratista versionado: Anterior ID ${resultado.contratistaAnterior.id} (INACTIVO) → Nuevo ID ${resultado.contratistaNuevo.id} (ACTIVO)`,
-        contratistaId: resultado.contratistaNuevo.id,
-        duracionMs: Date.now() - inicio,
-      },
-      req,
-    );
-
-    return {
-      ok: true,
-      data: {
-        success: true,
-        message: 'Contratista actualizado correctamente (versión anterior conservada como inactiva)',
-        data: resultado
-      }
-    };
-  } catch (error) {
-    this.logger.error(`❌ Error actualizando contratista: ${error.message}`);
-    return {
-      ok: true,
-      data: {
-        success: false,
-        message: error.message,
-        data: null
-      }
-    };
   }
-}
 
   // ===============================
   // ELIMINAR CONTRATISTA - ADMIN Y JURIDICA
   // ===============================
 
- @Delete(':id')
-@Roles(UserRole.ADMIN, UserRole.JURIDICA)
-async eliminar(@Param('id') id: string, @Req() req?: any) {
-  const inicio = Date.now();
-  try {
-    this.logger.log(`🗑️ Desactivando contratista: ${id}`);
+  @Delete(':id')
+  @Roles(UserRole.ADMIN, UserRole.JURIDICA)
+  async eliminar(@Param('id') id: string, @Req() req?: any) {
+    const inicio = Date.now();
+    try {
+      this.logger.log(`🗑️ Desactivando contratista: ${id}`);
 
-    // Verificar que existe
-    const contratistaExistente = await this.contratistaService.buscarPorId(id);
-    
-    if (!contratistaExistente) {
+      const contratistaExistente = await this.contratistaService.buscarPorId(id);
+      
+      if (!contratistaExistente) {
+        return {
+          ok: true,
+          data: {
+            success: false,
+            message: `Contratista con ID ${id} no encontrado`
+          }
+        };
+      }
+
+      const contratista = await this.contratistaService.actualizar(id, { estado: 'INACTIVO' });
+
+      await this.bitacoraService.registrar(
+        AccionBitacora.ADMIN_ELIMINAR_USUARIO,
+        ModuloBitacora.ADMINISTRACION,
+        req.user,
+        undefined,
+        {
+          detalles: `Contratista desactivado: ${contratista.razonSocial} (${contratista.documentoIdentidad})`,
+          contratistaId: id,
+          duracionMs: Date.now() - inicio,
+        },
+        req,
+      );
+
+      return {
+        ok: true,
+        data: {
+          success: true,
+          message: 'Contratista desactivado exitosamente',
+          data: contratista
+        }
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error desactivando contratista: ${error.message}`);
       return {
         ok: true,
         data: {
           success: false,
-          message: `Contratista con ID ${id} no encontrado`
+          message: error.message || 'Error al desactivar contratista'
         }
       };
     }
-
-    // Cambiar estado a INACTIVO en lugar de eliminar físicamente
-    const contratista = await this.contratistaService.actualizar(id, { estado: 'INACTIVO' });
-
-    await this.bitacoraService.registrar(
-      AccionBitacora.ADMIN_ELIMINAR_USUARIO,
-      ModuloBitacora.ADMINISTRACION,
-      req.user,
-      undefined,
-      {
-        detalles: `Contratista desactivado: ${contratista.razonSocial} (${contratista.documentoIdentidad})`,
-        contratistaId: id,
-        duracionMs: Date.now() - inicio,
-      },
-      req,
-    );
-
-    return {
-      ok: true,
-      data: {
-        success: true,
-        message: 'Contratista desactivado exitosamente',
-        data: contratista
-      }
-    };
-  } catch (error) {
-    this.logger.error(`❌ Error desactivando contratista: ${error.message}`);
-    return {
-      ok: true,
-      data: {
-        success: false,
-        message: error.message || 'Error al desactivar contratista'
-      }
-    };
   }
-}
 
   // ===============================
-  // GESTIÓN DE DOCUMENTOS - ADMIN Y JURIDICA
+  // GESTIÓN DE DOCUMENTOS - PÚBLICO (todos los usuarios autenticados)
   // ===============================
 
   @Get(':id/documentos')
-  @Roles(UserRole.ADMIN, UserRole.JURIDICA)
+  @Public()
   async obtenerDocumentos(@Param('id') id: string, @Req() req?: any) {
     try {
       this.logger.log(`📋 Obteniendo documentos de contratista ${id}`);
+      this.logger.log(`👤 Usuario: ${req.user?.username || 'No autenticado'} (${req.user?.role || 'sin rol'})`);
 
       const documentos = await this.contratistaService.obtenerDocumentos(id);
 
@@ -1273,7 +1273,7 @@ async eliminar(@Param('id') id: string, @Req() req?: any) {
   }
 
   @Get(':id/documentos/:documentoId/descargar')
-  @Roles(UserRole.ADMIN, UserRole.JURIDICA)
+  @Public()
   async descargarDocumento(
     @Param('id') contratistaId: string,
     @Param('documentoId') documentoId: string,
@@ -1283,6 +1283,7 @@ async eliminar(@Param('id') id: string, @Req() req?: any) {
     const inicio = Date.now();
     try {
       this.logger.log(`📥 Descargando documento ${documentoId} del contratista ${contratistaId}`);
+      this.logger.log(`👤 Usuario: ${req.user?.username || 'No autenticado'} (${req.user?.role || 'sin rol'})`);
 
       const { buffer, nombre, mimeType } = await this.contratistaService.descargarDocumento(
         documentoId,
@@ -1323,7 +1324,7 @@ async eliminar(@Param('id') id: string, @Req() req?: any) {
   }
 
   @Get(':id/documentos/descargar-todos')
-  @Roles(UserRole.ADMIN, UserRole.JURIDICA)
+  @Public()
   async descargarTodosDocumentos(
     @Param('id') id: string,
     @Res() res: Response,
@@ -1332,6 +1333,7 @@ async eliminar(@Param('id') id: string, @Req() req?: any) {
     const inicio = Date.now();
     try {
       this.logger.log(`📦 Descargando TODOS los documentos del contratista ${id} como ZIP`);
+      this.logger.log(`👤 Usuario: ${req.user?.username || 'No autenticado'} (${req.user?.role || 'sin rol'})`);
 
       const { zipBuffer, nombreZip, totalDocumentos } = await this.contratistaService.descargarTodosDocumentos(id);
 

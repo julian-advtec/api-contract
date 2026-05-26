@@ -1,3 +1,5 @@
+// src/supervisor/entities/supervisor.entity.ts
+
 import { 
   Entity, 
   PrimaryGeneratedColumn, 
@@ -58,6 +60,17 @@ export class SupervisorDocumento {
   @Column({ type: 'varchar', length: 255, nullable: true })
   pazSalvo: string;
 
+  // ========== CAMPOS PARA ACTA FIRMADA (con name explícito en minúsculas) ==========
+  @Column({ name: 'actafirmadapath', type: 'varchar', length: 500, nullable: true })
+  actaFirmadaPath: string;
+
+  @Column({ name: 'actafirmadanombre', type: 'varchar', length: 255, nullable: true })
+  actaFirmadaNombre: string;
+
+  @Column({ name: 'fechafirma', type: 'timestamp', nullable: true })
+  fechaFirma: Date;
+  // ==============================================
+
   @CreateDateColumn({ type: 'timestamp' })
   fechaCreacion: Date;
 
@@ -92,17 +105,18 @@ export class SupervisorDocumento {
   dispositivoUltimoAcceso: string;
 
   public getRutaArchivoSupervisor(): string | null {
-    if (!this.nombreArchivoSupervisor || !this.documento) {
-      return null;
-    }
+    if (!this.nombreArchivoSupervisor || !this.documento) return null;
     return `${this.documento.rutaCarpetaRadicado}/supervisor/${this.nombreArchivoSupervisor}`;
   }
 
   public getRutaPazSalvo(): string | null {
-    if (!this.pazSalvo || !this.documento) {
-      return null;
-    }
+    if (!this.pazSalvo || !this.documento) return null;
     return `${this.documento.rutaCarpetaRadicado}/supervisor/${this.pazSalvo}`;
+  }
+
+  public getRutaActaFirmada(): string | null {
+    if (!this.actaFirmadaPath || !this.documento) return null;
+    return this.actaFirmadaPath;
   }
 
   public iniciarRevision(ip?: string, dispositivo?: string): void {
@@ -110,7 +124,6 @@ export class SupervisorDocumento {
     this.fechaInicioRevision = new Date();
     this.fechaActualizacion = new Date();
     this.intentosRevision += 1;
-    
     if (ip) this.ipUltimoAcceso = ip;
     if (dispositivo) this.dispositivoUltimoAcceso = dispositivo;
   }
@@ -120,7 +133,6 @@ export class SupervisorDocumento {
     this.fechaFinRevision = new Date();
     this.fechaActualizacion = new Date();
     this.observacion = observacion || this.observacion;
-    
     if (estado === SupervisorEstado.APROBADO) {
       this.fechaAprobacion = new Date();
     }

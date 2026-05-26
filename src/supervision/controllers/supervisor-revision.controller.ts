@@ -27,6 +27,8 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { SupervisorGuard } from '../../common/guards/supervisor.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { UserRole } from '../../users/enums/user-role.enum';
+import * as pdfjsLib from 'pdfjs-dist';
+
 
 @Controller('supervisor/revision')
 @UseGuards(JwtAuthGuard, RolesGuard, SupervisorGuard)
@@ -58,77 +60,50 @@ export class SupervisorRevisionController {
   // REVISAR DOCUMENTO (con archivos - paz y salvo)
   // ===============================
 
-  @Post(':documentoId')
-  @UseInterceptors(
+@Post(':documentoId')
+@UseInterceptors(
     FileFieldsInterceptor([
-      { name: 'archivoAprobacion', maxCount: 1 },
-      { name: 'pazSalvo', maxCount: 1 },
+        { name: 'archivoAprobacion', maxCount: 1 },
+        { name: 'pazSalvo', maxCount: 1 },
     ]),
-  )
-  async revisarDocumento(
+)
+async revisarDocumento(
     @Param('documentoId') documentoId: string,
     @Body(new ValidationPipe({ transform: true })) dto: RevisarDocumentoDto,
     @UploadedFiles() files: {
-      archivoAprobacion?: Express.Multer.File[];
-      pazSalvo?: Express.Multer.File[];
+        archivoAprobacion?: Express.Multer.File[];
+        pazSalvo?: Express.Multer.File[];
     },
     @Req() req: Request,
-  ) {
+) {
     this.logger.log(`📝 ===== INICIO REVISIÓN DOCUMENTO =====`);
-    this.logger.log(`📝 Documento ID recibido: "${documentoId}" (tipo: ${typeof documentoId})`);
-    this.logger.log(`📝 ¿DocumentoId es array?: ${Array.isArray(documentoId)}`);
-
-    // Si es array, tomar el primer elemento
-    let idReal = documentoId;
-    if (Array.isArray(documentoId)) {
-      idReal = documentoId[0];
-      this.logger.warn(`⚠️ documentoId era un array, usando el primer elemento: ${idReal}`);
-    }
-
-    this.logger.log(`📝 DTO recibido:`, JSON.stringify(dto, null, 2));
-    this.logger.log(`📝 Archivos:`, {
-      archivoAprobacion: files?.archivoAprobacion?.length || 0,
-      pazSalvo: files?.pazSalvo?.length || 0
-    });
+    this.logger.log(`📝 Documento ID: ${documentoId}`);
+    this.logger.log(`📝 Estado: ${dto.estado}`);
+    this.logger.log(`📝 SignatureId recibido: ${dto.signatureId || 'NO'}`);
+    this.logger.log(`📝 SignaturePosition recibido: ${dto.signaturePosition ? 'SÍ' : 'NO'}`);
 
     const userId = this.getUserIdFromRequest(req);
-    this.logger.log(`👤 UserId: ${userId}`);
-
     const archivoAprobacion = files?.archivoAprobacion?.[0];
     const pazSalvo = files?.pazSalvo?.[0];
 
-    try {
-      const result = await this.supervisorRevisionService.revisarDocumento(
-        idReal,
+    const result = await this.supervisorRevisionService.revisarDocumento(
+        documentoId,
         userId,
         dto,
         archivoAprobacion,
         pazSalvo,
-      );
+    );
 
-      this.logger.log(`📝 ===== FIN REVISIÓN DOCUMENTO (ÉXITO) =====`);
-
-      return {
+    return {
         success: true,
         message: `Documento revisado (${dto.estado})`,
         data: result,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error revisando documento: ${error.message}`);
-      this.logger.error(error.stack);
+    };
+}
 
-      // Devolver el error con más detalles
-      throw new HttpException(
-        {
-          success: false,
-          message: error.message || 'Error al revisar',
-          error: error.toString(),
-          stack: error.stack
-        },
-        error instanceof HttpException ? error.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
+
+
+
 
   // ===============================
   // DEVOLVER DOCUMENTO AL RADICADOR
@@ -213,4 +188,6 @@ export class SupervisorRevisionController {
       );
     }
   }
+
+  
 }

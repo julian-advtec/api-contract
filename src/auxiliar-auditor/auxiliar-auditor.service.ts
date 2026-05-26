@@ -122,106 +122,107 @@ export class AuxiliarAuditorService {
         };
     }
 
-    /**
-     * Subir acta de supervisión
-     */
-    async subirActaSupervision(
-        documentoId: string,
-        auxiliarId: string,
-        file: Express.Multer.File,
-    ): Promise<any> {
-        this.logger.log(`📤 Auxiliar ${auxiliarId} subiendo acta para documento ${documentoId}`);
+  /**
+ * Subir acta de supervisión
+ */
+async subirActaSupervision(
+    documentoId: string,
+    auxiliarId: string,
+    file: Express.Multer.File,
+): Promise<any> {
+    this.logger.log(`📤 Auxiliar ${auxiliarId} subiendo acta para documento ${documentoId}`);
 
-        const documento = await this.documentoRepository.findOne({
-            where: { id: documentoId },
-            relations: ['radicador'],
-        });
+    const documento = await this.documentoRepository.findOne({
+        where: { id: documentoId },
+        relations: ['radicador'],
+    });
 
-        if (!documento) {
-            throw new NotFoundException('Documento no encontrado');
-        }
-
-        // Verificar que esté en estado RADICADO
-        if (documento.estado !== 'RADICADO') {
-            throw new BadRequestException(
-                `El documento está en estado "${documento.estado}". Solo puede subir acta cuando está RADICADO.`
-            );
-        }
-
-        // Verificar si ya tiene acta
-        if (documento.actaSupervisionPath) {
-            throw new BadRequestException('Este documento ya tiene un acta de supervisión');
-        }
-
-        const auxiliar = await this.userRepository.findOne({
-            where: { id: auxiliarId }
-        });
-
-        if (!auxiliar) {
-            throw new ForbiddenException('Usuario auxiliar no encontrado');
-        }
-
-        // Generar nombre de archivo seguro
-        const extension = path.extname(file.originalname).toLowerCase();
-        const nombreArchivo = `acta_supervision_${documento.numeroRadicado}${extension}`;
-
-        // Ruta relativa dentro de la carpeta del documento
-        const anoRadicado = documento.numeroRadicado.substring(1, 5);
-        const relativePath = path.join(
-            documento.documentoContratista,
-            anoRadicado,
-            documento.numeroContrato,
-            documento.numeroRadicado,
-            nombreArchivo
-        );
-
-        this.logger.log(`📂 Subiendo acta a: ${relativePath}`);
-
-        // Subir archivo usando StorageService
-        const result = await this.storageService.uploadFile(
-            relativePath,
-            file.buffer,
-            file.mimetype
-        );
-
-        // Actualizar documento
-        documento.actaSupervisionPath = result.path;
-        documento.actaSupervisionNombre = nombreArchivo;
-        documento.actaSupervisionSubidaPor = auxiliar.username;
-        documento.actaSupervisionFecha = new Date();
-
-        // Cambiar estado para indicar que ya tiene acta
-        documento.estado = 'CON_ACTA';
-        documento.fechaActualizacion = new Date();
-        documento.ultimoUsuario = `Auxiliar: ${auxiliar.username}`;
-
-        // Agregar al historial
-        const historial = documento.historialEstados || [];
-        historial.push({
-            fecha: new Date(),
-            estado: 'CON_ACTA',
-            usuarioId: auxiliar.id,
-            usuarioNombre: auxiliar.fullName || auxiliar.username,
-            rolUsuario: auxiliar.role,
-            observacion: `Acta de supervisión subida por auxiliar ${auxiliar.username}`
-        });
-        documento.historialEstados = historial;
-
-        const savedDocumento = await this.documentoRepository.save(documento);
-
-        this.logger.log(`✅ Acta subida para ${documento.numeroRadicado}, ahora en estado CON_ACTA`);
-
-        // Nota: Los auditores ahora podrán ver este documento porque tiene acta
-        // El documento está listo para ser tomado por los auditores
-
-        return {
-            documentoId: savedDocumento.id,
-            numeroRadicado: savedDocumento.numeroRadicado,
-            estado: savedDocumento.estado,
-            actaNombre: nombreArchivo,
-            actaFecha: savedDocumento.actaSupervisionFecha,
-        };
+    if (!documento) {
+        throw new NotFoundException('Documento no encontrado');
     }
+
+    // Verificar que esté en estado RADICADO
+    if (documento.estado !== 'RADICADO') {
+        throw new BadRequestException(
+            `El documento está en estado "${documento.estado}". Solo puede subir acta cuando está RADICADO.`
+        );
+    }
+
+    // Verificar si ya tiene acta
+    if (documento.actaSupervisionPath) {
+        throw new BadRequestException('Este documento ya tiene un acta de supervisión');
+    }
+
+    const auxiliar = await this.userRepository.findOne({
+        where: { id: auxiliarId }
+    });
+
+    if (!auxiliar) {
+        throw new ForbiddenException('Usuario auxiliar no encontrado');
+    }
+
+    // Generar nombre de archivo seguro
+    const extension = path.extname(file.originalname).toLowerCase();
+    const nombreArchivo = `acta_supervision_${documento.numeroRadicado}${extension}`;
+
+    // ✅ CORREGIDO: Guardar solo el nombre del archivo (no la ruta completa)
+    // La carpeta se define en el storageService, pero en la BD solo guardamos el nombre
+    const relativePath = nombreArchivo; // ✅ SOLO EL NOMBRE DEL ARCHIVO
+
+    this.logger.log(`📂 Subiendo acta con nombre: ${relativePath}`);
+
+    // Subir archivo usando StorageService - pasar la carpeta por separado
+    const folderPath = path.join(
+        documento.documentoContratista,
+        documento.numeroRadicado.substring(1, 5),
+        documento.numeroContrato,
+        documento.numeroRadicado
+    ).replace(/\\/g, '/');
+
+    // Usar uploadFileFromBuffer para controlar mejor la ruta
+    const result = await this.storageService.uploadFileFromBuffer(
+        file.buffer,
+        nombreArchivo,
+        file.mimetype,
+        folderPath
+    );
+
+    // ✅ GUARDAR SOLO EL NOMBRE DEL ARCHIVO (no la ruta completa)
+    documento.actaSupervisionPath = nombreArchivo;  // ✅ SOLO EL NOMBRE
+    documento.actaSupervisionNombre = nombreArchivo;
+    documento.actaSupervisionSubidaPor = auxiliar.username;
+    documento.actaSupervisionFecha = new Date();
+
+    // Cambiar estado para indicar que ya tiene acta
+    documento.estado = 'CON_ACTA';
+    documento.fechaActualizacion = new Date();
+    documento.ultimoUsuario = `Auxiliar: ${auxiliar.username}`;
+
+    // Agregar al historial
+    const historial = documento.historialEstados || [];
+    historial.push({
+        fecha: new Date(),
+        estado: 'CON_ACTA',
+        usuarioId: auxiliar.id,
+        usuarioNombre: auxiliar.fullName || auxiliar.username,
+        rolUsuario: auxiliar.role,
+        observacion: `Acta de supervisión subida por auxiliar ${auxiliar.username}`
+    });
+    documento.historialEstados = historial;
+
+    const savedDocumento = await this.documentoRepository.save(documento);
+
+    this.logger.log(`✅ Acta subida para ${documento.numeroRadicado}, ahora en estado CON_ACTA`);
+    this.logger.log(`   Ruta guardada: ${documento.actaSupervisionPath}`);
+
+    return {
+        documentoId: savedDocumento.id,
+        numeroRadicado: savedDocumento.numeroRadicado,
+        estado: savedDocumento.estado,
+        actaNombre: nombreArchivo,
+        actaFecha: savedDocumento.actaSupervisionFecha,
+    };
+}
 
     /**
      * Obtener acta de supervisión para descargar

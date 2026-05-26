@@ -50,7 +50,7 @@ export class JuridicaService {
     private verificarRutaServidor(): void {
         try {
             this.logger.log(`📁 Ruta base jurídica: ${this.basePath}`);
-            
+
             if (!fs.existsSync(this.basePath)) {
                 fs.mkdirSync(this.basePath, { recursive: true });
                 this.logger.log(`✅ Directorio base creado: ${this.basePath}`);
@@ -63,7 +63,7 @@ export class JuridicaService {
         }
     }
 
-    
+
     // ==================== CONTRATOS ====================
 
     async create(
@@ -246,10 +246,11 @@ export class JuridicaService {
             const nombreArchivoServidor = `${tipoDocumentoLower}_${Date.now()}${extension}`;
 
             // Usar StorageService para guardar el archivo
+            const fileRelativePath = `${folder}/${nombreArchivoServidor}`;
             const result = await this.storageService.uploadFile(
-                file,
-                folder,
-                nombreArchivoServidor            
+                fileRelativePath,  // string - ruta completa relativa
+                file.buffer,       // Buffer - el contenido del archivo
+                file.mimetype      // string - tipo MIME
             );
 
             this.logger.log(`✅ Archivo subido a: ${result.provider} - ${result.path}`);

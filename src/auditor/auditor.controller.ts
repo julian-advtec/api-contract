@@ -50,11 +50,11 @@ const execAsync = promisify(exec);
 
 @Controller('auditor')
 @UseGuards(JwtAuthGuard, RolesGuard, AuditorGuard)
-@Roles(UserRole.AUDITOR_CUENTAS, UserRole.ADMIN)
+@Roles(UserRole.AUDITOR_CUENTAS, UserRole.ADMIN, UserRole.SUPERVISOR)
 export class AuditorController {
   private readonly logger = new Logger(AuditorController.name);
 
-  constructor(private readonly auditorService: AuditorService) {}
+  constructor(private readonly auditorService: AuditorService) { }
 
   @Get('documentos/disponibles')
   async getDocumentosDisponibles(@GetUser() user: any) {
@@ -94,7 +94,7 @@ export class AuditorController {
     );
   }
 
-  
+
   @Get('mis-documentos')
   async getMisDocumentos(@GetUser() user: any) {
     return this.auditorService.obtenerDocumentosEnRevision(user.id);
@@ -183,7 +183,7 @@ export class AuditorController {
 
   // RUTA PÚBLICA - SIN AUTENTICACIÓN
   @Get('documentos/:documentoId/archivo-auditor/:tipo')
-  @Public()
+  @Public() // ← Ya es pública, mantener
   async previsualizarArchivoAuditor(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
     @Param('tipo') tipo: string,
@@ -213,7 +213,7 @@ export class AuditorController {
           res.setHeader('Content-Type', 'application/pdf');
           res.setHeader('Content-Disposition', 'inline; filename="vista.pdf"');
           const stream = fs.createReadStream(tmpPdf);
-          stream.on('end', () => fs.unlink(tmpPdf, () => {}));
+          stream.on('end', () => fs.unlink(tmpPdf, () => { }));
           return stream.pipe(res);
         } catch (e) {
           this.logger.error(`[CONVERSIÓN ERROR] ${e.message}`);
@@ -300,6 +300,7 @@ export class AuditorController {
   ) {
     console.log('[AUDITOR-CONTROLLER] ===== VISTA DOCUMENTO =====');
     console.log('[AUDITOR-CONTROLLER] Documento ID:', documentoId);
+    console.log('[AUDITOR-CONTROLLER] Usuario rol:', userFromDecorator?.role);
 
     let auditorId = userFromDecorator?.id;
 
@@ -309,19 +310,25 @@ export class AuditorController {
 
     if (!auditorId && (req as any).user) {
       auditorId = (req as any).user.id || (req as any).user.userId || (req as any).user.sub;
-      console.log('[FALLBACK VISTA] Usuario encontrado en req.user');
-    }
-
-    if (!auditorId) {
-      const authHeader = req.headers.authorization;
-      console.log('[DEBUG VISTA] Authorization header:', authHeader || 'ausente');
     }
 
     console.log('[AUDITOR-CONTROLLER] AuditorId final:', auditorId || 'NO ENCONTRADO');
-    console.log('[AUDITOR-CONTROLLER] ===========================');
 
-    return this.auditorService.obtenerDocumentoParaVista(documentoId, auditorId);
+    const resultado = await this.auditorService.obtenerDocumentoParaVista(documentoId, auditorId);
+    
+    console.log('[AUDITOR-CONTROLLER] Acta en respuesta:', {
+      tieneActa: !!resultado.documento?.actaSupervisionPath,
+      path: resultado.documento?.actaSupervisionPath,
+      nombre: resultado.documento?.actaSupervisionNombre
+    });
+    
+    console.log('[AUDITOR-CONTROLLER] ===========================');
+    
+    return resultado;
   }
+
+  // Endpoint para archivos de auditoría (permitir acceso GET)
+  
 
   @Get('mis-auditorias')
   async getMisAuditorias(@GetUser() user: any) {
@@ -510,4 +517,153 @@ export class AuditorController {
       throw error;
     }
   }
+
+@Get('documentos/:documentoId/acta')
+@Public() // ← Permite acceso sin autenticación
+async verActaSupervision(
+  @Param('documentoId', ParseUUIDPipe) documentoId: string,
+  @Query('download') download: string = 'false',
+  @Res() res: Response,
+) {
+  this.logger.log(`[ACTA] Solicitando acta para documento: ${documentoId}, download: ${download}`);
+
+  try {
+    // 1. Buscar el documento
+    const documento = await this.auditorService.obtenerDocumentoConActa(documentoId);
+
+    if (!documento) {
+      this.logger.warn(`[ACTA] Documento no encontrado: ${documentoId}`);
+      return res.status(HttpStatus.NOT_FOUND).json({
+        success: false,
+        message: 'Documento no encontrado'
+      });
+    }
+
+    // 2. Verificar que tenga acta de supervisión
+    if (!documento.actaSupervisionPath || documento.actaSupervisionPath.trim() === '') {
+      this.logger.warn(`[ACTA] Documento ${documentoId} no tiene acta de supervisión`);
+      return res.status(HttpStatus.NOT_FOUND).json({
+        success: false,
+        message: 'El documento no tiene acta de supervisión asociada'
+      });
+    }
+
+    // ✅ CORRECCIÓN: Usar la ruta base del servidor de red
+    const basePath = process.env.STORAGE_LOCAL_PATH || '\\\\R2-D2\\api-contract';
+    
+    // Limpiar la ruta original (reemplazar \ por / si es necesario)
+    let rutaRelativa = documento.actaSupervisionPath.replace(/\\/g, '/');
+    
+    // Construir ruta absoluta correcta
+    let rutaAbsoluta = path.join(basePath, rutaRelativa);
+    
+    this.logger.log(`[ACTA] Ruta original en BD: ${documento.actaSupervisionPath}`);
+    this.logger.log(`[ACTA] Base path: ${basePath}`);
+    this.logger.log(`[ACTA] Ruta absoluta construida: ${rutaAbsoluta}`);
+
+    // 4. Verificar que el archivo exista físicamente
+    if (!fs.existsSync(rutaAbsoluta)) {
+      this.logger.error(`[ACTA] Archivo NO encontrado en: ${rutaAbsoluta}`);
+
+      // Buscar en ubicaciones alternativas dentro del servidor de red
+      const posiblesRutas = [
+        rutaAbsoluta,
+        path.join(basePath, 'uploads', path.basename(rutaRelativa)),
+        path.join(basePath, 'uploads', 'actas', path.basename(rutaRelativa)),
+        path.join(basePath, 'uploads', 'auxiliar-auditor', path.basename(rutaRelativa)),
+        path.join(basePath, 'uploads', 'documentos', 'actas', path.basename(rutaRelativa)),
+        // Buscar en la estructura de carpetas del número de documento
+        path.join(basePath, rutaRelativa.replace(/\//g, path.sep)),
+        // Buscar directamente en la ruta completa sin modificar
+        path.join(basePath, documento.actaSupervisionPath),
+      ];
+
+      let archivoEncontrado = false;
+      for (const ruta of posiblesRutas) {
+        if (fs.existsSync(ruta)) {
+          rutaAbsoluta = ruta;
+          archivoEncontrado = true;
+          this.logger.log(`[ACTA] ✅ Archivo encontrado en ruta alternativa: ${ruta}`);
+          break;
+        }
+      }
+
+      if (!archivoEncontrado) {
+        this.logger.error(`[ACTA] ❌ Archivo no encontrado en ninguna ubicación`);
+        return res.status(HttpStatus.NOT_FOUND).json({
+          success: false,
+          message: 'Archivo de acta no encontrado en el servidor',
+          debug: {
+            pathOriginal: documento.actaSupervisionPath,
+            basePath: basePath,
+            rutasBuscadas: posiblesRutas
+          }
+        });
+      }
+    }
+
+    // 5. Obtener nombre del archivo
+    const nombreArchivo = documento.actaSupervisionNombre ||
+      `acta_supervision_${documento.numeroRadicado || documentoId}.pdf`;
+
+    // 6. Configurar headers
+    const mimeType = 'application/pdf';
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    if (download === 'true') {
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreArchivo)}"`);
+      this.logger.log(`[ACTA] Descargando archivo: ${nombreArchivo}`);
+    } else {
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(nombreArchivo)}"`);
+      this.logger.log(`[ACTA] Visualizando archivo: ${nombreArchivo}`);
+    }
+
+    // 7. Enviar el archivo
+    const stat = fs.statSync(rutaAbsoluta);
+    res.setHeader('Content-Length', stat.size);
+
+    const stream = fs.createReadStream(rutaAbsoluta);
+
+    stream.on('error', (error) => {
+      this.logger.error(`[ACTA] Error al leer archivo: ${error.message}`);
+      if (!res.headersSent) {
+        res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+          success: false,
+          message: 'Error al leer el archivo'
+        });
+      }
+    });
+
+    stream.on('end', () => {
+      this.logger.log(`[ACTA] Archivo enviado correctamente: ${stat.size} bytes`);
+    });
+
+    return stream.pipe(res);
+
+  } catch (error: any) {
+    this.logger.error(`[ACTA ERROR] ${error.message}`, error.stack);
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      message: error.message || 'Error al obtener el acta de supervisión'
+    });
+  }
+}
+
+  /**
+   * Descargar acta de supervisión (método específico)
+   */
+@Get('documentos/:documentoId/acta/descargar')
+@Public()
+async descargarActaSupervision(
+  @Param('documentoId', ParseUUIDPipe) documentoId: string,
+  @Res() res: Response,
+) {
+  this.logger.log(`[ACTA-DOWNLOAD] Descargando acta para documento: ${documentoId}`);
+  
+  // Reutilizar el método ver con download=true
+  return this.verActaSupervision(documentoId, 'true', res);
+}
 }

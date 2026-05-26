@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { UserRole } from '../../users/enums/user-role.enum';
@@ -19,7 +19,7 @@ export class AuditorGuard implements CanActivate {
       return true;
     }
 
-    // Ruta protegida → validar que sea auditor o admin
+    // Ruta protegida → validar permisos
     const request = context.switchToHttp().getRequest();
     const user = request.user;
 
@@ -28,10 +28,97 @@ export class AuditorGuard implements CanActivate {
       return false;
     }
 
-    const isAllowed = user.role === UserRole.AUDITOR_CUENTAS || user.role === UserRole.ADMIN;
+    // ✅ ADMIN siempre permitido
+    if (user.role === UserRole.ADMIN) {
+      console.log(`[AUDITOR GUARD] Usuario: ${user.username} | Rol: ${user.role} → permitido (ADMIN)`);
+      return true;
+    }
 
-    console.log(`[AUDITOR GUARD] Usuario: ${user.username || user.id} | Rol: ${user.role} → ${isAllowed ? 'permitido' : 'denegado'}`);
+    // ✅ AUDITOR_CUENTAS siempre permitido
+    if (user.role === UserRole.AUDITOR_CUENTAS) {
+      console.log(`[AUDITOR GUARD] Usuario: ${user.username} | Rol: ${user.role} → permitido (AUDITOR)`);
+      return true;
+    }
 
-    return isAllowed;
+    // ✅ SUPERVISOR: solo permitir métodos GET (solo lectura)
+    if (user.role === UserRole.SUPERVISOR) {
+      const method = request.method;
+      const url = request.url;
+      
+      // Permitir solo métodos GET
+      if (method === 'GET') {
+        console.log(`[AUDITOR GUARD] Usuario: ${user.username} | Rol: ${user.role} → permitido (GET - solo lectura)`);
+        return true;
+      }
+      
+      // Bloquear métodos de escritura (POST, PUT, DELETE)
+      console.log(`[AUDITOR GUARD] Supervisor ${user.username} intentando ${method} en ${url} → denegado`);
+      throw new ForbiddenException('Los supervisores solo tienen acceso de lectura a auditoría');
+    }
+
+    if (user.role === UserRole.CONTABILIDAD) {
+      const method = request.method;
+      const url = request.url;
+      
+      // Permitir solo métodos GET
+      if (method === 'GET') {
+        console.log(`[AUDITOR GUARD] Usuario: ${user.username} | Rol: ${user.role} → permitido (GET - solo lectura)`);
+        return true;
+      }
+      
+      // Bloquear métodos de escritura (POST, PUT, DELETE)
+      console.log(`[AUDITOR GUARD] Supervisor ${user.username} intentando ${method} en ${url} → denegado`);
+      throw new ForbiddenException('Los supervisores solo tienen acceso de lectura a auditoría');
+    }
+    if (user.role === UserRole.ASESOR_GERENCIA) {
+      const method = request.method;
+      const url = request.url;
+      
+      // Permitir solo métodos GET
+      if (method === 'GET') {
+        console.log(`[AUDITOR GUARD] Usuario: ${user.username} | Rol: ${user.role} → permitido (GET - solo lectura)`);
+        return true;
+      }
+      
+      // Bloquear métodos de escritura (POST, PUT, DELETE)
+      console.log(`[AUDITOR GUARD] Supervisor ${user.username} intentando ${method} en ${url} → denegado`);
+      throw new ForbiddenException('Los supervisores solo tienen acceso de lectura a auditoría');
+    }
+
+    if (user.role === UserRole.RENDICION_CUENTAS) {
+      const method = request.method;
+      const url = request.url;
+      
+      // Permitir solo métodos GET
+      if (method === 'GET') {
+        console.log(`[AUDITOR GUARD] Usuario: ${user.username} | Rol: ${user.role} → permitido (GET - solo lectura)`);
+        return true;
+      }
+      
+      // Bloquear métodos de escritura (POST, PUT, DELETE)
+      console.log(`[AUDITOR GUARD] Supervisor ${user.username} intentando ${method} en ${url} → denegado`);
+      throw new ForbiddenException('Los supervisores solo tienen acceso de lectura a auditoría');
+    }
+
+    if (user.role === UserRole.TESORERIA) {
+      const method = request.method;
+      const url = request.url;
+      
+      // Permitir solo métodos GET
+      if (method === 'GET') {
+        console.log(`[AUDITOR GUARD] Usuario: ${user.username} | Rol: ${user.role} → permitido (GET - solo lectura)`);
+        return true;
+      }
+      
+      // Bloquear métodos de escritura (POST, PUT, DELETE)
+      console.log(`[AUDITOR GUARD] Supervisor ${user.username} intentando ${method} en ${url} → denegado`);
+      throw new ForbiddenException('Los supervisores solo tienen acceso de lectura a auditoría');
+    }
+
+
+
+
+    console.log(`[AUDITOR GUARD] Usuario: ${user.username || user.id} | Rol: ${user.role} → denegado`);
+    return false;
   }
 }

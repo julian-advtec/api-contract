@@ -30,7 +30,11 @@ export class SupervisorGuard implements CanActivate {
     // Para rutas protegidas, verificar rol
     const hasAccess = user && (
       user.role === UserRole.SUPERVISOR || 
-      user.role === UserRole.ADMIN
+      user.role === UserRole.ADMIN || 
+      user.role === UserRole.CONTABILIDAD || 
+      user.role === UserRole.TESORERIA || 
+      user.role === UserRole.ASESOR_GERENCIA || 
+      user.role === UserRole.RENDICION_CUENTAS 
     );
 
     if (!hasAccess) {

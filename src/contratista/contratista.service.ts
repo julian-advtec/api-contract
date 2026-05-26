@@ -56,11 +56,12 @@ export class ContratistaService {
       const folder = `contratistas/${folderName}`;
 
       // ✅ Usar StorageService con el nombre único
-      const result = await this.storageService.uploadFile(
-        archivo,
-        folder,
-        nombreUnico
-      );
+     const fileRelativePath = `${folder}/${nombreUnico}`;
+const result = await this.storageService.uploadFile(
+    fileRelativePath,  // string - ruta completa relativa
+    archivo.buffer,     // Buffer - el contenido del archivo
+    archivo.mimetype    // string - tipo MIME
+);
 
       this.logger.log(`✅ Archivo subido a: ${result.provider} - ${result.path}`);
 

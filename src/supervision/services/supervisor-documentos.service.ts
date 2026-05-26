@@ -1,9 +1,13 @@
+// src/supervisor/services/supervisor-documentos.service.ts
+
 import {
   Injectable,
   NotFoundException,
   BadRequestException,
   Logger,
   InternalServerErrorException,
+  ForbiddenException,
+
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -11,6 +15,16 @@ import { SupervisorDocumento, SupervisorEstado } from '../entities/supervisor.en
 import { Documento } from '../../radicacion/entities/documento.entity';
 import { User } from '../../users/entities/user.entity';
 import { UserRole } from '../../users/enums/user-role.enum';
+import { StorageService } from '../../common/storage/storage.service';
+import { SignaturesService } from '../../signatures/signatures.service';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import * as path from 'path';
+import { SignaturePositionDto } from '../dto/signature-position.dto';
+
+import { promises as fsPromises } from 'fs';
+import * as fs from 'fs';
+
+import { SupervisorSignatureService } from './supervisor-signature.service';
 
 @Injectable()
 export class SupervisorDocumentosService {
@@ -19,173 +33,204 @@ export class SupervisorDocumentosService {
   constructor(
     @InjectRepository(SupervisorDocumento)
     private supervisorRepository: Repository<SupervisorDocumento>,
-
     @InjectRepository(Documento)
     private documentoRepository: Repository<Documento>,
-
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    private storageService: StorageService,
+    private signaturesService: SignaturesService,
+    private supervisorSignatureService: SupervisorSignatureService,
   ) { }
 
-  /**
-   * ✅ OBTENER DOCUMENTOS DISPONIBLES PARA REVISIÓN
-   */
-async obtenerDocumentosDisponibles(supervisorId: string): Promise<any[]> {
-  this.logger.log(`📋 Supervisor ${supervisorId} solicitando documentos disponibles (APROBADOS POR AUDITOR)`);
+  async obtenerDocumentosDisponibles(supervisorId: string): Promise<any[]> {
+    this.logger.log(`📋 Supervisor ${supervisorId} solicitando documentos disponibles (APROBADOS POR AUDITOR O EN_REVISION_SUPERVISOR)`);
 
-  try {
-    // ✅ CAMBIO IMPORTANTE: Traer documentos en estado APROBADO_AUDITOR
-    const documentos = await this.documentoRepository
-      .createQueryBuilder('documento')
-      .leftJoinAndSelect('documento.radicador', 'radicador')
-      .leftJoinAndSelect('documento.usuarioAsignado', 'usuarioAsignado')
-      .where("documento.estado = :estado", { estado: 'APROBADO_AUDITOR' })  // ← CAMBIADO
-      .orderBy('documento.fechaRadicacion', 'ASC')
-      .getMany();
+    try {
+      // ✅ Cambiar: Buscar documentos en APROBADO_AUDITOR O EN_REVISION_SUPERVISOR
+      const documentos = await this.documentoRepository
+        .createQueryBuilder('documento')
+        .leftJoinAndSelect('documento.radicador', 'radicador')
+        .leftJoinAndSelect('documento.usuarioAsignado', 'usuarioAsignado')
+        .where("documento.estado IN (:...estados)", {
+          estados: ['APROBADO_AUDITOR', 'EN_REVISION_SUPERVISOR']
+        })
+        .orderBy('documento.fechaRadicacion', 'ASC')
+        .getMany();
 
-    this.logger.log(`✅ Encontrados ${documentos.length} documentos en estado APROBADO_AUDITOR`);
+      this.logger.log(`✅ Encontrados ${documentos.length} documentos en estados APROBADO_AUDITOR o EN_REVISION_SUPERVISOR`);
 
-    const supervisorDocs = await this.supervisorRepository.find({
-      where: {
-        supervisor: { id: supervisorId },
-        estado: SupervisorEstado.EN_REVISION
-      },
-      relations: ['documento']
-    });
+      const supervisorDocs = await this.supervisorRepository.find({
+        where: {
+          supervisor: { id: supervisorId },
+          estado: SupervisorEstado.EN_REVISION
+        },
+        relations: ['documento']
+      });
 
-    const documentosEnRevisionIds = supervisorDocs.map(sd => sd.documento.id);
+      const documentosEnRevisionIds = supervisorDocs.map(sd => sd.documento.id);
 
-    const documentosConEstado = documentos.map(documento => {
-      const estaRevisandoYo = documentosEnRevisionIds.includes(documento.id);
+      const documentosConEstado = documentos.map(documento => {
+        const estaRevisandoYo = documentosEnRevisionIds.includes(documento.id);
+        const estadoDoc = documento.estado;
+
+        return {
+          id: documento.id,
+          numeroRadicado: documento.numeroRadicado,
+          numeroContrato: documento.numeroContrato,
+          nombreContratista: documento.nombreContratista,
+          documentoContratista: documento.documentoContratista,
+          fechaInicio: documento.fechaInicio,
+          fechaFin: documento.fechaFin,
+          estado: documento.estado,
+          fechaRadicacion: documento.fechaRadicacion,
+          radicador: documento.nombreRadicador,
+          observacion: documento.observacion || '',
+          disponible: true,
+          tieneActa: !!documento.actaSupervisionPath,
+          actaNombre: documento.actaSupervisionNombre,
+          auditorAprobo: estadoDoc === 'APROBADO_AUDITOR',
+          yaEnRevision: estadoDoc === 'EN_REVISION_SUPERVISOR',
+          asignacion: {
+            enRevision: estaRevisandoYo,
+            puedoTomar: !estaRevisandoYo && estadoDoc === 'APROBADO_AUDITOR',
+            puedeContinuar: estaRevisandoYo && estadoDoc === 'EN_REVISION_SUPERVISOR',
+            usuarioAsignado: documento.usuarioAsignadoNombre,
+            supervisorActual: documento.usuarioAsignado ?
+              documento.usuarioAsignado.fullName || documento.usuarioAsignado.username : null
+          }
+        };
+      });
+
+      return documentosConEstado;
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo documentos disponibles: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // src/supervisor/services/supervisor-documentos.service.ts
+
+  async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Promise<{ success: boolean; message: string; documento: any }> {
+    this.logger.log(`🤝 Supervisor ${supervisorId} tomando documento ${documentoId} para revisión`);
+
+    try {
+      // ✅ Permitir documentos en APROBADO_AUDITOR o EN_REVISION_SUPERVISOR (si ya está asignado a este supervisor)
+      const documento = await this.documentoRepository.findOne({
+        where: { id: documentoId },
+        relations: ['radicador', 'usuarioAsignado']
+      });
+
+      if (!documento) {
+        throw new NotFoundException('Documento no encontrado');
+      }
+
+      // Verificar si ya está en revisión por este supervisor
+      const existingSupervisorDoc = await this.supervisorRepository.findOne({
+        where: {
+          documento: { id: documentoId },
+          supervisor: { id: supervisorId }
+        },
+        relations: ['documento', 'supervisor']
+      });
+
+      // Si ya tiene un registro y está EN_REVISION, permitir continuar
+      if (existingSupervisorDoc && existingSupervisorDoc.estado === SupervisorEstado.EN_REVISION) {
+        this.logger.log(`📝 Supervisor ${supervisorId} continúa revisión del documento ${documentoId}`);
+
+        return {
+          success: true,
+          message: `Continuando revisión del documento ${documento.numeroRadicado}`,
+          documento: this.mapearDocumentoParaRespuesta(documento, existingSupervisorDoc)
+        };
+      }
+
+      // Si no está en estado permitido para tomar
+      if (documento.estado !== 'APROBADO_AUDITOR' && documento.estado !== 'EN_REVISION_SUPERVISOR') {
+        throw new BadRequestException(`Documento no disponible para revisión. Estado actual: ${documento.estado}`);
+      }
+
+      // Si ya está en revisión por otro supervisor
+      if (documento.estado === 'EN_REVISION_SUPERVISOR' && documento.usuarioAsignado && documento.usuarioAsignado.id !== supervisorId) {
+        throw new BadRequestException(`Este documento ya está siendo revisado por ${documento.usuarioAsignadoNombre}`);
+      }
+
+      const supervisor = await this.userRepository.findOne({
+        where: { id: supervisorId }
+      });
+
+      if (!supervisor) {
+        throw new NotFoundException('Supervisor no encontrado');
+      }
+
+      // Actualizar estado del documento principal
+      const estadoAnterior = documento.estado;
+      documento.estado = 'EN_REVISION_SUPERVISOR';
+      documento.fechaActualizacion = new Date();
+      documento.ultimoAcceso = new Date();
+      documento.ultimoUsuario = `Supervisor: ${supervisor.fullName || supervisor.username}`;
+      documento.usuarioAsignado = supervisor;
+      documento.usuarioAsignadoNombre = supervisor.fullName || supervisor.username;
+
+      const historial = documento.historialEstados || [];
+      historial.push({
+        fecha: new Date(),
+        estado: 'EN_REVISION_SUPERVISOR',
+        usuarioId: supervisor.id,
+        usuarioNombre: supervisor.fullName || supervisor.username,
+        rolUsuario: supervisor.role,
+        observacion: estadoAnterior === 'APROBADO_AUDITOR'
+          ? `Documento tomado para revisión por supervisor (aprobado previamente por auditor)`
+          : `Supervisor ${supervisor.username} continúa revisión del documento`
+      });
+      documento.historialEstados = historial;
+
+      await this.documentoRepository.save(documento);
+      this.logger.log(`📝 Documento principal actualizado a estado: ${documento.estado}`);
+
+      let supervisorDoc = await this.supervisorRepository.findOne({
+        where: {
+          documento: { id: documentoId },
+          supervisor: { id: supervisorId }
+        },
+        relations: ['documento', 'supervisor']
+      });
+
+      if (supervisorDoc) {
+        supervisorDoc.estado = SupervisorEstado.EN_REVISION;
+        supervisorDoc.fechaActualizacion = new Date();
+        supervisorDoc.fechaInicioRevision = supervisorDoc.fechaInicioRevision || new Date();
+        supervisorDoc.observacion = estadoAnterior === 'APROBADO_AUDITOR'
+          ? 'Documento tomado para revisión (aprobado por auditor)'
+          : 'Continuación de revisión';
+      } else {
+        supervisorDoc = this.supervisorRepository.create({
+          documento: documento,
+          supervisor: supervisor,
+          estado: SupervisorEstado.EN_REVISION,
+          fechaCreacion: new Date(),
+          fechaActualizacion: new Date(),
+          fechaInicioRevision: new Date(),
+          observacion: 'Documento tomado para revisión (aprobado por auditor)'
+        });
+      }
+
+      await this.supervisorRepository.save(supervisorDoc);
+
+      this.logger.log(`✅ Documento ${documento.numeroRadicado} en revisión por ${supervisor.username}. Estado: EN_REVISION_SUPERVISOR`);
 
       return {
-        id: documento.id,
-        numeroRadicado: documento.numeroRadicado,
-        numeroContrato: documento.numeroContrato,
-        nombreContratista: documento.nombreContratista,
-        documentoContratista: documento.documentoContratista,
-        fechaInicio: documento.fechaInicio,
-        fechaFin: documento.fechaFin,
-        estado: documento.estado,
-        fechaRadicacion: documento.fechaRadicacion,
-        radicador: documento.nombreRadicador,
-        observacion: documento.observacion || '',
-        disponible: true,
-        // ✅ Indicar que ya fue revisado por auditor
-        auditorAprobo: true,
-        asignacion: {
-          enRevision: estaRevisandoYo,
-          puedoTomar: !estaRevisandoYo && documento.estado === 'APROBADO_AUDITOR',  // ← CAMBIADO
-          usuarioAsignado: documento.usuarioAsignadoNombre,
-          supervisorActual: documento.usuarioAsignado ?
-            documento.usuarioAsignado.fullName || documento.usuarioAsignado.username : null
-        }
+        success: true,
+        message: estadoAnterior === 'APROBADO_AUDITOR'
+          ? `Documento ${documento.numeroRadicado} tomado para revisión`
+          : `Continuando revisión del documento ${documento.numeroRadicado}`,
+        documento: this.mapearDocumentoParaRespuesta(documento, supervisorDoc)
       };
-    });
-
-    return documentosConEstado;
-
-  } catch (error) {
-    this.logger.error(`❌ Error obteniendo documentos disponibles: ${error.message}`);
-    throw error;
+    } catch (error) {
+      this.logger.error(`❌ Error tomando documento: ${error.message}`, error.stack);
+      throw error;
+    }
   }
-}
-  /**
-   * ✅ TOMAR DOCUMENTO PARA REVISIÓN
-   */
-async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Promise<{ success: boolean; message: string; documento: any }> {
-  this.logger.log(`🤝 Supervisor ${supervisorId} tomando documento ${documentoId} para revisión`);
 
-  try {
-    // ✅ CAMBIO: Buscar documentos en APROBADO_AUDITOR
-    const documento = await this.documentoRepository.findOne({
-      where: { id: documentoId, estado: 'APROBADO_AUDITOR' },  // ← CAMBIADO
-      relations: ['radicador', 'usuarioAsignado']
-    });
-
-    if (!documento) {
-      throw new NotFoundException('Documento no encontrado o no está disponible para revisión (debe estar en estado APROBADO_AUDITOR)');
-    }
-
-    const supervisor = await this.userRepository.findOne({
-      where: { id: supervisorId }
-    });
-
-    if (!supervisor) {
-      throw new NotFoundException('Supervisor no encontrado');
-    }
-
-    // Verificar si ya está asignado a otro supervisor
-    if (documento.usuarioAsignado && documento.usuarioAsignado.id !== supervisorId) {
-      throw new BadRequestException(`Este documento ya está asignado a ${documento.usuarioAsignadoNombre}`);
-    }
-
-    // ✅ Cambiar a EN_REVISION_SUPERVISOR
-    documento.estado = 'EN_REVISION_SUPERVISOR';
-    documento.fechaActualizacion = new Date();
-    documento.ultimoAcceso = new Date();
-    documento.ultimoUsuario = `Supervisor: ${supervisor.fullName || supervisor.username}`;
-    documento.usuarioAsignado = supervisor;
-    documento.usuarioAsignadoNombre = supervisor.fullName || supervisor.username;
-
-    const historial = documento.historialEstados || [];
-    historial.push({
-      fecha: new Date(),
-      estado: 'EN_REVISION_SUPERVISOR',
-      usuarioId: supervisor.id,
-      usuarioNombre: supervisor.fullName || supervisor.username,
-      rolUsuario: supervisor.role,
-      observacion: `Documento tomado para revisión por supervisor (aprobado previamente por auditor)`
-    });
-    documento.historialEstados = historial;
-
-    await this.documentoRepository.save(documento);
-    this.logger.log(`📝 Documento principal actualizado a estado: ${documento.estado}`);
-
-    let supervisorDoc = await this.supervisorRepository.findOne({
-      where: {
-        documento: { id: documentoId },
-        supervisor: { id: supervisorId }
-      },
-      relations: ['documento', 'supervisor']
-    });
-
-    if (supervisorDoc) {
-      supervisorDoc.estado = SupervisorEstado.EN_REVISION;
-      supervisorDoc.fechaActualizacion = new Date();
-      supervisorDoc.fechaInicioRevision = new Date();
-      supervisorDoc.observacion = 'Documento tomado para revisión (aprobado por auditor)';
-    } else {
-      supervisorDoc = this.supervisorRepository.create({
-        documento: documento,
-        supervisor: supervisor,
-        estado: SupervisorEstado.EN_REVISION,
-        fechaCreacion: new Date(),
-        fechaActualizacion: new Date(),
-        fechaInicioRevision: new Date(),
-        observacion: 'Documento tomado para revisión (aprobado por auditor)'
-      });
-    }
-
-    await this.supervisorRepository.save(supervisorDoc);
-
-    this.logger.log(`✅ Documento ${documento.numeroRadicado} tomado para revisión por ${supervisor.username}. Estado: EN_REVISION_SUPERVISOR`);
-
-    return {
-      success: true,
-      message: `Documento ${documento.numeroRadicado} tomado para revisión`,
-      documento: this.mapearDocumentoParaRespuesta(documento, supervisorDoc)
-    };
-
-  } catch (error) {
-    this.logger.error(`❌ Error tomando documento: ${error.message}`, error.stack);
-    throw error;
-  }
-}
-
-  /**
-   * ✅ OBTENER DOCUMENTOS QUE ESTOY REVISANDO
-   */
   async obtenerDocumentosEnRevision(supervisorId: string): Promise<any[]> {
     this.logger.log(`📋 Supervisor ${supervisorId} solicitando documentos en revisión`);
 
@@ -217,16 +262,12 @@ async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Pro
         const asignacion = mapaAsignaciones.get(documento.id);
         return this.mapearDocumentoParaRespuesta(documento, asignacion);
       });
-
     } catch (error) {
       this.logger.error(`❌ Error obteniendo documentos en revisión: ${error.message}`);
       throw error;
     }
   }
 
-  /**
-   * ✅ LIBERAR DOCUMENTO
-   */
   async liberarDocumento(documentoId: string, supervisorId: string): Promise<{ success: boolean; message: string }> {
     this.logger.log(`🔄 Supervisor ${supervisorId} liberando documento ${documentoId}`);
 
@@ -246,7 +287,7 @@ async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Pro
 
       const documento = supervisorDoc.documento;
 
-      documento.estado = 'RADICADO';
+      documento.estado = 'APROBADO_AUDITOR';
       documento.fechaActualizacion = new Date();
       documento.ultimoAcceso = new Date();
       documento.ultimoUsuario = `Supervisor: liberado`;
@@ -256,11 +297,11 @@ async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Pro
       const historial = documento.historialEstados || [];
       historial.push({
         fecha: new Date(),
-        estado: 'RADICADO',
+        estado: 'APROBADO_AUDITOR',
         usuarioId: supervisorId,
         usuarioNombre: 'Sistema',
         rolUsuario: 'SUPERVISOR',
-        observacion: 'Documento liberado por supervisor - Volvió a estado RADICADO'
+        observacion: 'Documento liberado por supervisor - Volvió a estado APROBADO_AUDITOR'
       });
       documento.historialEstados = historial;
 
@@ -273,72 +314,82 @@ async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Pro
 
       await this.supervisorRepository.save(supervisorDoc);
 
-      this.logger.log(`✅ Documento ${documento.numeroRadicado} liberado por ${supervisorId}. Estado revertido a RADICADO`);
+      this.logger.log(`✅ Documento ${documento.numeroRadicado} liberado por ${supervisorId}. Estado revertido a APROBADO_AUDITOR`);
 
       return {
         success: true,
         message: 'Documento liberado correctamente y disponible para otros supervisores'
       };
-
     } catch (error) {
       this.logger.error(`❌ Error liberando documento: ${error.message}`);
       throw error;
     }
   }
 
-  /**
-   * ✅ OBTENER DETALLE DE DOCUMENTO PARA REVISIÓN
-   */
-  async obtenerDetalleDocumento(documentoId: string, supervisorId: string): Promise<any> {
-    this.logger.log(`🔍 Supervisor ${supervisorId} solicitando detalle de documento ${documentoId}`);
+  async obtenerDetalleDocumento(documentoId: string, userId: string): Promise<any> {
+    this.logger.log(`🔍 Supervisor ${userId} solicitando detalle de documento ${documentoId}`);
 
-    try {
-      const supervisor = await this.userRepository.findOne({
-        where: { id: supervisorId }
-      });
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId },
+      relations: ['radicador', 'usuarioAsignado']
+    });
 
-      if (!supervisor) {
-        throw new NotFoundException('Supervisor no encontrado');
-      }
-
-      const supervisorDoc = await this.supervisorRepository.findOne({
-        where: {
-          documento: { id: documentoId },
-          supervisor: { id: supervisorId }
-        },
-        relations: ['documento', 'documento.radicador', 'documento.usuarioAsignado'],
-      });
-
-      const documento = await this.documentoRepository.findOne({
-        where: { id: documentoId },
-        relations: ['radicador', 'usuarioAsignado'],
-      });
-
-      if (!documento) {
-        throw new NotFoundException('Documento no encontrado');
-      }
-
-      if (supervisorDoc) {
-        return this.construirRespuestaDetalle(documento, supervisorDoc, supervisor);
-      } else {
-        if (documento.estado !== 'RADICADO' && documento.estado !== 'EN_REVISION_SUPERVISOR') {
-          throw new BadRequestException('Solo puedes acceder a documentos en estado RADICADO o EN_REVISION_SUPERVISOR');
-        }
-        return this.construirRespuestaDetalle(documento, null, supervisor);
-      }
-
-    } catch (error) {
-      this.logger.error(`❌ Error obteniendo detalle: ${error.message}`);
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
-        throw error;
-      }
-      throw new InternalServerErrorException('Error al obtener detalle del documento');
+    if (!documento) {
+      throw new NotFoundException('Documento no encontrado');
     }
+
+    // ✅ INCLUIR LOS CAMPOS DEL ACTA FIRMADA EN LA RESPUESTA
+    const detalle = {
+      id: documento.id,
+      numeroRadicado: documento.numeroRadicado,
+      numeroContrato: documento.numeroContrato,
+      nombreContratista: documento.nombreContratista,
+      documentoContratista: documento.documentoContratista,
+      emailContratista: documento.emailContratista,
+      telefonoContratista: documento.telefonoContratista,
+      fechaInicio: documento.fechaInicio,
+      fechaFin: documento.fechaFin,
+      estado: documento.estado,
+      fechaRadicacion: documento.fechaRadicacion,
+      observacion: documento.observacion,
+      nombreRadicador: documento.nombreRadicador,
+      usuarioRadicador: documento.usuarioRadicador,
+      rutaCarpetaRadicado: documento.rutaCarpetaRadicado,
+      primerRadicadoDelAno: documento.primerRadicadoDelAno,
+      esUltimoRadicado: documento.esUltimoRadicado,
+      usuarioAsignadoNombre: documento.usuarioAsignadoNombre,
+      comentarios: documento.comentarios,
+      correcciones: documento.correcciones,
+      historialEstados: documento.historialEstados || [],
+
+      // Archivos radicados
+      cuentaCobro: documento.cuentaCobro,
+      seguridadSocial: documento.seguridadSocial,
+      informeActividades: documento.informeActividades,
+      descripcionCuentaCobro: documento.descripcionCuentaCobro,
+      descripcionSeguridadSocial: documento.descripcionSeguridadSocial,
+      descripcionInformeActividades: documento.descripcionInformeActividades,
+
+      // Acta de supervisión
+      actaSupervisionPath: documento.actaSupervisionPath,
+      actaSupervisionNombre: documento.actaSupervisionNombre,
+      actaSupervisionSubidaPor: documento.actaSupervisionSubidaPor,
+      actaSupervisionFecha: documento.actaSupervisionFecha,
+
+      // ✅ Acta firmada
+      actaFirmadaPath: documento.actaFirmadaPath,
+      actaFirmadaNombre: documento.actaFirmadaNombre,
+      actaFirmadaFecha: documento.actaFirmadaFecha,
+      actaFirmadaPor: documento.actaFirmadaPor,
+      tieneActaFirmada: !!documento.actaFirmadaPath
+    };
+
+    this.logger.log(`✅ Detalle construido para ${documento.numeroRadicado}. Tiene acta firmada: ${detalle.tieneActaFirmada}`);
+
+    return detalle;
   }
 
-  /**
-   * ✅ ASIGNAR DOCUMENTO A SUPERVISORES AUTOMÁTICAMENTE
-   */
+
   async asignarDocumentoASupervisoresAutomaticamente(documentoId: string): Promise<void> {
     try {
       this.logger.log(`🔄 Asignando documento ${documentoId} a supervisores automáticamente...`);
@@ -353,8 +404,8 @@ async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Pro
         return;
       }
 
-      if (documento.estado !== 'RADICADO') {
-        this.logger.warn(`⚠️ Documento ${documentoId} no está en estado RADICADO, estado actual: ${documento.estado}`);
+      if (documento.estado !== 'APROBADO_AUDITOR') {
+        this.logger.warn(`⚠️ Documento ${documentoId} no está en estado APROBADO_AUDITOR, estado actual: ${documento.estado}`);
         return;
       }
 
@@ -405,14 +456,11 @@ async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Pro
     }
   }
 
-  /**
-   * ✅ WEBHOOK para cambio de estado
-   */
   async onDocumentoCambiaEstado(documentoId: string, nuevoEstado: string): Promise<void> {
     this.logger.log(`🔄 Webhook: Documento ${documentoId} cambió a estado ${nuevoEstado}`);
 
     try {
-      if (nuevoEstado === 'RADICADO') {
+      if (nuevoEstado === 'APROBADO_AUDITOR') {
         await this.asignarDocumentoASupervisoresAutomaticamente(documentoId);
       }
     } catch (error) {
@@ -420,19 +468,16 @@ async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Pro
     }
   }
 
-  /**
-   * ✅ ASIGNAR TODOS LOS DOCUMENTOS RADICADOS A SUPERVISORES
-   */
   async asignarTodosDocumentosASupervisores(): Promise<{ asignados: number; total: number }> {
     try {
-      this.logger.log('🔄 Asignando TODOS los documentos RADICADOS a supervisores...');
+      this.logger.log('🔄 Asignando TODOS los documentos APROBADOS_AUDITOR a supervisores...');
 
-      const documentosRadicados = await this.documentoRepository.find({
-        where: { estado: 'RADICADO' }
+      const documentos = await this.documentoRepository.find({
+        where: { estado: 'APROBADO_AUDITOR' }
       });
 
-      if (documentosRadicados.length === 0) {
-        this.logger.log('✅ No hay documentos RADICADOS para asignar');
+      if (documentos.length === 0) {
+        this.logger.log('✅ No hay documentos APROBADOS_AUDITOR para asignar');
         return { asignados: 0, total: 0 };
       }
 
@@ -445,12 +490,12 @@ async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Pro
 
       if (supervisores.length === 0) {
         this.logger.warn('⚠️ No hay supervisores disponibles');
-        return { asignados: 0, total: documentosRadicados.length };
+        return { asignados: 0, total: documentos.length };
       }
 
       let documentosAsignados = 0;
 
-      for (const documento of documentosRadicados) {
+      for (const documento of documentos) {
         try {
           const tieneAsignaciones = await this.supervisorRepository.count({
             where: { documento: { id: documento.id } }
@@ -478,96 +523,21 @@ async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Pro
         }
       }
 
-      this.logger.log(`✅ ${documentosAsignados} documentos disponibles de ${documentosRadicados.length} totales`);
+      this.logger.log(`✅ ${documentosAsignados} documentos disponibles de ${documentos.length} totales`);
       return {
         asignados: documentosAsignados,
-        total: documentosRadicados.length
+        total: documentos.length
       };
-
     } catch (error) {
       this.logger.error(`❌ Error asignando todos los documentos: ${error.message}`);
       throw new InternalServerErrorException('Error al asignar documentos a supervisores');
     }
   }
 
-  /**
-   * ✅ OBTENER CONTEO DE DOCUMENTOS RADICADOS
-   */
   async obtenerConteoDocumentosRadicados(): Promise<number> {
     return await this.documentoRepository.count({
-      where: { estado: 'RADICADO' }
+      where: { estado: 'APROBADO_AUDITOR' }
     });
-  }
-
-  /**
-   * ✅ MÉTODO AUXILIAR: Mapear documento para respuesta
-   */
-  private mapearDocumentoParaRespuesta(documento: Documento, supervisorDoc?: SupervisorDocumento): any {
-    return {
-      id: documento.id,
-      numeroRadicado: documento.numeroRadicado,
-      numeroContrato: documento.numeroContrato,
-      nombreContratista: documento.nombreContratista,
-      documentoContratista: documento.documentoContratista,
-      fechaInicio: documento.fechaInicio,
-      fechaFin: documento.fechaFin,
-      estado: documento.estado,
-      fechaRadicacion: documento.fechaRadicacion,
-      radicador: documento.nombreRadicador,
-      observacion: documento.observacion,
-      usuarioAsignadoNombre: documento.usuarioAsignadoNombre,
-      asignacion: supervisorDoc ? {
-        id: supervisorDoc.id,
-        estado: supervisorDoc.estado,
-        fechaInicioRevision: supervisorDoc.fechaInicioRevision,
-        supervisor: {
-          id: supervisorDoc.supervisor.id,
-          nombre: supervisorDoc.supervisor.fullName,
-          username: supervisorDoc.supervisor.username
-        }
-      } : null
-    };
-  }
-
-  /**
-   * Helper para construir respuesta de detalle
-   */
-  private construirRespuestaDetalle(documento: Documento, supervisorDoc: any, supervisor: User): any {
-    return {
-      documento: {
-        id: documento.id,
-        numeroRadicado: documento.numeroRadicado,
-        numeroContrato: documento.numeroContrato,
-        nombreContratista: documento.nombreContratista,
-        documentoContratista: documento.documentoContratista,
-        fechaInicio: documento.fechaInicio,
-        fechaFin: documento.fechaFin,
-        fechaRadicacion: documento.fechaRadicacion,
-        radicador: documento.nombreRadicador,
-        observacion: documento.observacion,
-        estadoActual: supervisorDoc?.estado || 'DISPONIBLE',
-        estadoDocumento: documento.estado,
-        usuarioAsignado: documento.usuarioAsignadoNombre,
-        historialEstados: documento.historialEstados || [],
-        rutaCarpeta: documento.rutaCarpetaRadicado,
-        tokenPublico: documento.tokenPublico,
-        cuentaCobro: documento.cuentaCobro,
-        seguridadSocial: documento.seguridadSocial,
-        informeActividades: documento.informeActividades,
-        descripcionCuentaCobro: documento.descripcionCuentaCobro,
-        descripcionSeguridadSocial: documento.descripcionSeguridadSocial,
-        descripcionInformeActividades: documento.descripcionInformeActividades
-      },
-      supervisor: supervisorDoc ? {
-        id: supervisorDoc.id,
-        estado: supervisorDoc.estado,
-        observacion: supervisorDoc.observacion,
-        fechaCreacion: supervisorDoc.fechaCreacion,
-        fechaInicioRevision: supervisorDoc.fechaInicioRevision,
-        nombreArchivoSupervisor: supervisorDoc.nombreArchivoSupervisor,
-        pazSalvo: supervisorDoc.pazSalvo
-      } : null
-    };
   }
 
   async obtenerDocumentosRevisados(supervisorId: string): Promise<any[]> {
@@ -601,16 +571,17 @@ async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Pro
         supervisorRechazo: sd.supervisor?.fullName || sd.supervisor?.username,
         cuentaCobro: sd.documento.cuentaCobro,
         seguridadSocial: sd.documento.seguridadSocial,
-        informeActividades: sd.documento.informeActividades
+        informeActividades: sd.documento.informeActividades,
+        actaFirmadaPath: sd.actaFirmadaPath,
+        actaFirmadaNombre: sd.actaFirmadaNombre,
+        fechaFirma: sd.fechaFirma
       }));
     } catch (error) {
       this.logger.error(`❌ Error obteniendo documentos revisados: ${error.message}`);
       throw error;
     }
-
   }
 
-  // En supervisor-documentos.service.ts (Backend)
   async obtenerMisSupervisiones(supervisorId: string): Promise<any[]> {
     this.logger.log(`📋 Supervisor ${supervisorId} solicitando todas sus supervisiones`);
 
@@ -638,9 +609,7 @@ async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Pro
           fechaFin: documento.fechaFin,
           fechaRadicacion: documento.fechaRadicacion,
           radicador: documento.nombreRadicador,
-          // Estado del documento principal
           estado: documento.estado,
-          // Estado en supervisor_documentos
           supervisorEstado: sd.estado,
           observacion: sd.observacion || '',
           fechaInicioRevision: sd.fechaInicioRevision,
@@ -651,17 +620,427 @@ async tomarDocumentoParaRevision(documentoId: string, supervisorId: string): Pro
           nombreArchivoSupervisor: sd.nombreArchivoSupervisor,
           tienePazSalvo: !!sd.pazSalvo,
           pazSalvo: sd.pazSalvo,
+          tieneActaFirmada: !!sd.actaFirmadaPath,
+          actaFirmadaNombre: sd.actaFirmadaNombre,
+          fechaFirma: sd.fechaFirma,
           puedeEditar: sd.estado === 'EN_REVISION',
           cuentaCobro: documento.cuentaCobro,
           seguridadSocial: documento.seguridadSocial,
           informeActividades: documento.informeActividades
         };
       });
-
     } catch (error) {
       this.logger.error(`❌ Error obteniendo supervisiones: ${error.message}`);
       throw error;
     }
   }
+
+
+async obtenerActaFirmada(
+  documentoId: string,
+  userId: string
+): Promise<{ buffer: Buffer; mimeType: string; nombre: string }> {
+  this.logger.log(`📄 Usuario ${userId} solicitando acta firmada del documento ${documentoId}`);
+
+  const documento = await this.documentoRepository.findOne({
+    where: { id: documentoId }
+  });
+
+  if (!documento) {
+    throw new NotFoundException('Documento no encontrado');
+  }
+
+  // Verificar en documentos primero
+  let actaPath = documento.actaFirmadaPath;
+  
+  // Si no está en documentos, buscar en supervisor_documentos
+  if (!actaPath) {
+    const supervisorDoc = await this.supervisorRepository.findOne({
+      where: { documento: { id: documentoId } },
+      order: { fechaActualizacion: 'DESC' }
+    });
+    
+    if (supervisorDoc && supervisorDoc.actaFirmadaPath) {
+      actaPath = supervisorDoc.actaFirmadaPath;
+      this.logger.log(`📝 Acta firmada encontrada en supervisor_documentos: ${actaPath}`);
+      
+      // Sincronizar con documentos
+      documento.actaFirmadaPath = actaPath;
+      documento.actaFirmadaNombre = supervisorDoc.actaFirmadaNombre;
+      documento.actaFirmadaFecha = supervisorDoc.fechaFirma;
+      documento.actaFirmadaPor = supervisorDoc.supervisor?.id;
+      await this.documentoRepository.save(documento);
+      this.logger.log(`✅ Acta firmada sincronizada con documentos`);
+    }
+  }
+
+  if (!actaPath) {
+    this.logger.warn(`⚠️ Documento ${documento.numeroRadicado} no tiene acta firmada`);
+    throw new NotFoundException('No hay acta firmada para este documento');
+  }
+
+  // ✅ CONSTRUIR LA RUTA COMPLETA CORRECTAMENTE
+  let rutaCompleta: string;
+  
+  // Si la ruta ya es absoluta
+  if (actaPath.includes(':') || actaPath.startsWith('\\\\')) {
+    rutaCompleta = actaPath;
+  } 
+  // Si la ruta es relativa (empieza con "firmas/")
+  else if (actaPath.startsWith('firmas') || actaPath.startsWith('firmas\\')) {
+    // Construir ruta completa: basePath + carpeta_documento + actaPath
+    rutaCompleta = path.join(documento.rutaCarpetaRadicado, actaPath);
+  }
+  else {
+    // Si es solo el nombre del archivo
+    rutaCompleta = path.join(documento.rutaCarpetaRadicado, 'firmas', actaPath);
+  }
+
+  this.logger.log(`📁 Buscando acta firmada en: ${rutaCompleta}`);
+
+  // Verificar que el archivo exista
+  if (!fs.existsSync(rutaCompleta)) {
+    this.logger.error(`❌ El archivo no existe en: ${rutaCompleta}`);
+    throw new NotFoundException('El archivo del acta firmada no existe en el servidor');
+  }
+
+  const buffer = fs.readFileSync(rutaCompleta);
+  const stats = fs.statSync(rutaCompleta);
+  this.logger.log(`✅ Acta firmada encontrada: ${rutaCompleta} (${stats.size} bytes)`);
+
+  return {
+    buffer,
+    mimeType: 'application/pdf',
+    nombre: documento.actaFirmadaNombre || `acta_firmada_${documento.numeroRadicado}.pdf`
+  };
+}
+
+  // ==================== VER ACTA DE SUPERVISIÓN ====================
+  async obtenerActaSupervision(
+    documentoId: string,
+    userId: string
+  ): Promise<{ buffer: Buffer; mimeType: string; nombre: string }> {
+    this.logger.log(`📄 Usuario ${userId} solicitando acta de supervisión del documento ${documentoId}`);
+
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId }
+    });
+
+    if (!documento) {
+      throw new NotFoundException('Documento no encontrado');
+    }
+
+    if (!documento.actaSupervisionPath) {
+      throw new NotFoundException('Este documento no tiene acta de supervisión');
+    }
+
+    try {
+      const buffer = await this.storageService.getFile(documento.actaSupervisionPath);
+      const extension = path.extname(documento.actaSupervisionNombre || '').toLowerCase();
+
+      const mimeTypes: Record<string, string> = {
+        '.pdf': 'application/pdf',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      };
+
+      return {
+        buffer,
+        mimeType: mimeTypes[extension] || 'application/octet-stream',
+        nombre: documento.actaSupervisionNombre || 'acta_supervision.pdf',
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo acta de supervisión: ${error.message}`);
+      throw new NotFoundException('No se pudo obtener el archivo del acta de supervisión');
+    }
+  }
+
+  // ==================== VER ACTA ORIGINAL ====================
+  async obtenerActaOriginal(
+    documentoId: string,
+    userId: string
+  ): Promise<{ buffer: Buffer; mimeType: string; nombre: string }> {
+    this.logger.log(`📄 Usuario ${userId} solicitando acta original del documento ${documentoId}`);
+
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId }
+    });
+
+    if (!documento) {
+      throw new NotFoundException('Documento no encontrado');
+    }
+
+    if (!documento.actaSupervisionPath) {
+      throw new NotFoundException('Este documento no tiene acta de supervisión');
+    }
+
+    try {
+      const buffer = await this.storageService.getFile(documento.actaSupervisionPath);
+      const extension = path.extname(documento.actaSupervisionNombre || '').toLowerCase();
+
+      const mimeTypes: Record<string, string> = {
+        '.pdf': 'application/pdf',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      };
+
+      return {
+        buffer,
+        mimeType: mimeTypes[extension] || 'application/octet-stream',
+        nombre: documento.actaSupervisionNombre || `acta_original_${documento.numeroRadicado}.pdf`,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error obteniendo acta original: ${error.message}`);
+      throw new NotFoundException('No se pudo obtener el archivo del acta original');
+    }
+  }
+
+  // ==================== FIRMAR ACTA ====================
+  async firmarActa(
+    documentoId: string,
+    supervisorId: string,
+    signatureId: string,
+    position: SignaturePositionDto
+  ): Promise<{ success: boolean; message: string; data: any }> {
+    this.logger.log(`🔏 Firmando acta para documento ${documentoId} por supervisor ${supervisorId}`);
+
+    const queryRunner = this.documentoRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const documento = await queryRunner.manager.findOne(Documento, {
+        where: { id: documentoId }
+      });
+
+      if (!documento) {
+        throw new NotFoundException('Documento no encontrado');
+      }
+
+      if (!documento.actaSupervisionPath) {
+        throw new BadRequestException('El documento no tiene acta de supervisión para firmar');
+      }
+
+      if (documento.actaFirmadaPath) {
+        throw new BadRequestException('El documento ya tiene un acta firmada');
+      }
+
+      if (documento.usuarioAsignado?.id !== supervisorId) {
+        const supervisor = await this.userRepository.findOne({ where: { id: supervisorId } });
+        if (supervisor?.role !== 'admin') {
+          throw new ForbiddenException('No tienes permisos para firmar este documento');
+        }
+      }
+
+      // Obtener el buffer del acta de supervisión
+      let actaBuffer: Buffer;
+      let actaPath = documento.actaSupervisionPath;
+
+      if (fs.existsSync(actaPath)) {
+        actaBuffer = fs.readFileSync(actaPath);
+      } else {
+        const rutaCompleta = path.join(documento.rutaCarpetaRadicado, actaPath);
+        if (!fs.existsSync(rutaCompleta)) {
+          throw new NotFoundException('El archivo del acta de supervisión no existe');
+        }
+        actaBuffer = fs.readFileSync(rutaCompleta);
+      }
+
+      const signedPdfBuffer = await this.supervisorSignatureService.aplicarFirmaEnActa(
+        actaBuffer,
+        signatureId,
+        position
+      );
+
+      const fechaFirma = new Date();
+      const firmasDir = path.join(documento.rutaCarpetaRadicado, 'firmas');
+
+      if (!fs.existsSync(firmasDir)) {
+        fs.mkdirSync(firmasDir, { recursive: true });
+      }
+
+      const nombreActaFirmada = `acta_firmada_${documento.numeroRadicado}_${fechaFirma.getTime()}.pdf`;
+      const rutaRelativaFirmada = path.join('firmas', nombreActaFirmada).replace(/\\/g, '/');
+      const rutaAbsolutaFirmada = path.join(firmasDir, nombreActaFirmada);
+
+
+      fs.writeFileSync(rutaAbsolutaFirmada, signedPdfBuffer);
+
+      // Actualizar DOCUMENTOS
+      documento.actaFirmadaPath = rutaRelativaFirmada;
+      documento.actaFirmadaNombre = nombreActaFirmada;
+      documento.actaFirmadaFecha = fechaFirma;
+      documento.actaFirmadaPor = supervisorId;
+      documento.estado = 'APROBADO';
+      documento.fechaActualizacion = new Date();
+
+      // Actualizar SUPERVISOR_DOCUMENTOS
+      let supervisorDoc = await queryRunner.manager.findOne(SupervisorDocumento, {
+        where: {
+          documento: { id: documentoId },
+          supervisor: { id: supervisorId }
+        }
+      });
+
+      if (supervisorDoc) {
+        supervisorDoc.estado = SupervisorEstado.APROBADO;
+        supervisorDoc.actaFirmadaPath = rutaRelativaFirmada;
+        supervisorDoc.actaFirmadaNombre = nombreActaFirmada;
+        supervisorDoc.fechaFirma = fechaFirma;
+        supervisorDoc.fechaAprobacion = fechaFirma;
+        supervisorDoc.fechaActualizacion = new Date();
+      } else {
+        const supervisor = await this.userRepository.findOne({ where: { id: supervisorId } });
+        supervisorDoc = queryRunner.manager.create(SupervisorDocumento, {
+          documento: documento,
+          supervisor: supervisor,
+          estado: SupervisorEstado.APROBADO,
+          actaFirmadaPath: rutaRelativaFirmada,
+          actaFirmadaNombre: nombreActaFirmada,
+          fechaFirma: fechaFirma,
+          fechaAprobacion: fechaFirma,
+          fechaCreacion: new Date(),
+          fechaActualizacion: new Date()
+        });
+      }
+      
+
+      const historial = documento.historialEstados || [];
+      historial.push({
+        fecha: new Date(),
+        estado: 'APROBADO',
+        usuarioId: supervisorId,
+        usuarioNombre: 'Supervisor',
+        rolUsuario: 'supervisor',
+        observacion: `Acta firmada digitalmente. Archivo: ${nombreActaFirmada}`
+      });
+      documento.historialEstados = historial;
+
+      await queryRunner.manager.save(documento);
+      await queryRunner.manager.save(supervisorDoc);
+      await queryRunner.commitTransaction();
+
+      this.logger.log(`✅ Acta firmada exitosamente para ${documento.numeroRadicado}`);
+      this.logger.log(`   Ruta guardada en documentos: ${documento.actaFirmadaPath}`);
+
+      return {
+        success: true,
+        message: 'Acta firmada exitosamente',
+        data: {
+          documentoId: documento.id,
+          numeroRadicado: documento.numeroRadicado,
+          actaFirmadaPath: documento.actaFirmadaPath,
+          actaFirmadaNombre: documento.actaFirmadaNombre,
+          fechaFirma: documento.actaFirmadaFecha,
+          estado: documento.estado
+        }
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error(`❌ Error firmando acta: ${error.message}`);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  private mapearDocumentoParaRespuesta(documento: Documento, supervisorDoc?: SupervisorDocumento): any {
+    return {
+      id: documento.id,
+      numeroRadicado: documento.numeroRadicado,
+      numeroContrato: documento.numeroContrato,
+      nombreContratista: documento.nombreContratista,
+      documentoContratista: documento.documentoContratista,
+      fechaInicio: documento.fechaInicio,
+      fechaFin: documento.fechaFin,
+      estado: documento.estado,
+      fechaRadicacion: documento.fechaRadicacion,
+      radicador: documento.nombreRadicador,
+      observacion: documento.observacion,
+      usuarioAsignadoNombre: documento.usuarioAsignadoNombre,
+      tieneActa: !!documento.actaSupervisionPath,
+      actaNombre: documento.actaSupervisionNombre,
+      asignacion: supervisorDoc ? {
+        id: supervisorDoc.id,
+        estado: supervisorDoc.estado,
+        fechaInicioRevision: supervisorDoc.fechaInicioRevision,
+        actaFirmadaPath: supervisorDoc.actaFirmadaPath,
+        actaFirmadaNombre: supervisorDoc.actaFirmadaNombre,
+        fechaFirma: supervisorDoc.fechaFirma,
+        supervisor: {
+          id: supervisorDoc.supervisor.id,
+          nombre: supervisorDoc.supervisor.fullName,
+          username: supervisorDoc.supervisor.username
+        }
+      } : null
+    };
+  }
+
+
+  private construirRespuestaDetalle(documento: Documento, supervisorDoc: any, supervisor: User): any {
+    return {
+      documento: {
+        id: documento.id,
+        numeroRadicado: documento.numeroRadicado,
+        numeroContrato: documento.numeroContrato,
+        nombreContratista: documento.nombreContratista,
+        documentoContratista: documento.documentoContratista,
+        fechaInicio: documento.fechaInicio,
+        fechaFin: documento.fechaFin,
+        fechaRadicacion: documento.fechaRadicacion,
+        radicador: documento.nombreRadicador,
+        observacion: documento.observacion,
+        estadoActual: supervisorDoc?.estado || 'DISPONIBLE',
+        estadoDocumento: documento.estado,
+        usuarioAsignado: documento.usuarioAsignadoNombre,
+        historialEstados: documento.historialEstados || [],
+        rutaCarpeta: documento.rutaCarpetaRadicado,
+        tokenPublico: documento.tokenPublico,
+        cuentaCobro: documento.cuentaCobro,
+        seguridadSocial: documento.seguridadSocial,
+        informeActividades: documento.informeActividades,
+        descripcionCuentaCobro: documento.descripcionCuentaCobro,
+        descripcionSeguridadSocial: documento.descripcionSeguridadSocial,
+        descripcionInformeActividades: documento.descripcionInformeActividades,
+        tieneActaOriginal: !!documento.actaSupervisionPath,
+        actaOriginalNombre: documento.actaSupervisionNombre,
+        actaOriginalSubidaPor: documento.actaSupervisionSubidaPor,
+        actaOriginalFecha: documento.actaSupervisionFecha
+      },
+      supervisor: supervisorDoc ? {
+        id: supervisorDoc.id,
+        estado: supervisorDoc.estado,
+        observacion: supervisorDoc.observacion,
+        correcciones: supervisorDoc.correcciones,
+        fechaCreacion: supervisorDoc.fechaCreacion,
+        fechaInicioRevision: supervisorDoc.fechaInicioRevision,
+        nombreArchivoSupervisor: supervisorDoc.nombreArchivoSupervisor,
+        pazSalvo: supervisorDoc.pazSalvo,
+        actaFirmadaPath: supervisorDoc.actaFirmadaPath,
+        actaFirmadaNombre: supervisorDoc.actaFirmadaNombre,
+        fechaFirma: supervisorDoc.fechaFirma
+      } : null
+    };
+  }
+
+
+
+  // src/supervision/services/supervisor-documentos.service.ts
+
+  async obtenerDocumentoPorId(documentoId: string): Promise<Documento> {
+    this.logger.log(`🔍 Buscando documento por ID: ${documentoId}`);
+
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId },
+      relations: ['radicador', 'usuarioAsignado']
+    });
+
+    if (!documento) {
+      throw new NotFoundException('Documento no encontrado');
+    }
+
+    return documento;
+  }
+
 
 }

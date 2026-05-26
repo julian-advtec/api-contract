@@ -43,7 +43,7 @@ export class AsesorGerenciaController {
   constructor(private readonly service: AsesorGerenciaService) { }
 
   @Get('documentos/disponibles')
-  @Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA)
+  @Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA,  UserRole.RENDICION_CUENTAS)
   async getDocumentosDisponibles(@GetUser() user: JwtUser) {
     this.logger.log(`[Disponibles] Solicitado por ${user.username} (${user.role})`);
     return this.service.obtenerDocumentosDisponibles(user.id);
@@ -147,7 +147,7 @@ export class AsesorGerenciaController {
   }
 
   @Get('documentos/:documentoId/detalle')
-  @Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA)
+  @Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA,  UserRole.RENDICION_CUENTAS)
   async getDetalleRevision(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
     @GetUser() user: JwtUser,
@@ -172,7 +172,7 @@ export class AsesorGerenciaController {
   }
 
   @Get('documentos/:documentoId/archivo/:tipo')
-  @Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA)
+  @Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA, UserRole.RENDICION_CUENTAS)
   async verArchivo(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
     @Param('tipo') tipo: string,
@@ -225,7 +225,7 @@ export class AsesorGerenciaController {
   }
 
   @Get('documentos/:documentoId/comprobante-firmado')
-  @Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA)
+  @Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA, UserRole.RENDICION_CUENTAS)
   async verComprobanteFirmado(
     @Param('documentoId', ParseUUIDPipe) documentoId: string,
     @Res() res: Response,
@@ -273,4 +273,39 @@ export class AsesorGerenciaController {
     };
   }
 
+  @Get('documentos/:documentoId/descargar/:tipo')
+  @Roles(UserRole.ADMIN, UserRole.ASESOR_GERENCIA,  UserRole.RENDICION_CUENTAS)
+  async descargarArchivo(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @Param('tipo') tipo: string,
+    @Res() res: Response,
+  ) {
+    try {
+      const tipoNormalizado = tipo.toLowerCase();
+      this.logger.log(`📥 Descargando archivo - doc: ${documentoId}, tipo: ${tipoNormalizado}`);
+
+      const { rutaAbsoluta, nombreArchivo } = await this.service.obtenerRutaArchivo(documentoId, tipoNormalizado);
+
+      // Determinar Content-Type
+      const ext = path.extname(rutaAbsoluta).toLowerCase();
+      let contentType = 'application/octet-stream';
+      if (ext === '.pdf') contentType = 'application/pdf';
+      else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+      else if (ext === '.png') contentType = 'image/png';
+      else if (ext === '.doc') contentType = 'application/msword';
+      else if (ext === '.docx') contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+      // Para descarga, usar attachment en lugar de inline
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreArchivo)}"`);
+      res.sendFile(rutaAbsoluta);
+    } catch (error) {
+      this.logger.error(`❌ Error al descargar archivo ${tipo} para ${documentoId}: ${error.message}`);
+      if (error instanceof NotFoundException) {
+        res.status(404).json({ success: false, message: error.message });
+      } else {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    }
+  }
 }

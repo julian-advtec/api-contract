@@ -35,23 +35,23 @@ export class SignaturesService {
         private encryptionService: EncryptionService,
     ) { }
 
-async getMySignature(userId: string): Promise<SignatureResponseDto | null> {
-  const signature = await this.signaturesRepository.findOne({
-    where: { userId },
-    select: [
-      'id',           // ← asegúrate de que esté aquí
-      'userId',
-      'name',
-      'type',
-      'mimeType',
-      'fileSize',
-      'createdAt',
-      'updatedAt'
-    ]
-  });
+    async getMySignature(userId: string): Promise<SignatureResponseDto | null> {
+        const signature = await this.signaturesRepository.findOne({
+            where: { userId },
+            select: [
+                'id',           // ← asegúrate de que esté aquí
+                'userId',
+                'name',
+                'type',
+                'mimeType',
+                'fileSize',
+                'createdAt',
+                'updatedAt'
+            ]
+        });
 
-  return signature ? new SignatureResponseDto(signature) : null;
-}
+        return signature ? new SignatureResponseDto(signature) : null;
+    }
 
     async uploadSignature(
         userId: string,
@@ -159,6 +159,7 @@ async getMySignature(userId: string): Promise<SignatureResponseDto | null> {
         // Lista de roles permitidos también normalizados
         const allowedRoles = [
             UserRole.ADMIN,
+            UserRole.SUPERVISOR,
             UserRole.ASESOR_GERENCIA,
             UserRole.RENDICION_CUENTAS,
             UserRole.TESORERIA

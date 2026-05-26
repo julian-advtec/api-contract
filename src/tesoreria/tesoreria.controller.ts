@@ -84,7 +84,8 @@ export class TesoreriaController {
     @UseInterceptors(
         FileFieldsInterceptor(
             [
-                { name: 'pagoRealizado', maxCount: 1 }
+                { name: 'pagoRealizado', maxCount: 1 },
+                { name: 'comprobanteExtra', maxCount: 1 }
             ],
             multerTesoreriaConfig
         ),
@@ -95,15 +96,21 @@ export class TesoreriaController {
         @Body() body: any,
         @UploadedFiles() files: { [fieldname: string]: Express.Multer.File[] },
     ) {
-        this.logger.log(`[SUBIR] Tesorero ${user.id} subiendo pago para ${documentoId}`);
-        this.logger.log(`📥 signatureId: ${body.signatureId}`);
-        this.logger.log(`📥 signaturePosition: ${body.signaturePosition}`);
+        this.logger.log(`[SUBIR] Tesorero ${user.id} subiendo documentos para ${documentoId}`);
+        this.logger.log(`[SUBIR] Archivos recibidos: ${Object.keys(files || {}).join(', ')}`);
+        
+        if (files?.['comprobanteExtra']) {
+            this.logger.log(`[SUBIR] comprobanteExtra: ${files['comprobanteExtra'][0]?.originalname}`);
+        }
+        if (files?.['pagoRealizado']) {
+            this.logger.log(`[SUBIR] pagoRealizado: ${files['pagoRealizado'][0]?.originalname}`);
+        }
 
         const datos = {
             observaciones: body.observaciones,
             estadoFinal: body.estadoFinal,
-            signatureId: body.signatureId, // 👈 AGREGAR
-            signaturePosition: body.signaturePosition // 👈 AGREGAR
+            signatureId: body.signatureId,
+            signaturePosition: body.signaturePosition
         };
 
         return this.tesoreriaService.subirDocumentoTesoreria(
@@ -142,23 +149,29 @@ export class TesoreriaController {
         return this.tesoreriaService.liberarDocumento(documentoId, user.id);
     }
 
-    @Get('documentos/:documentoId/descargar/:tipo')
-    async descargarArchivoTesoreria(
-        @Param('documentoId', ParseUUIDPipe) documentoId: string,
-        @Param('tipo') tipo: string,
-        @GetUser() user: JwtUser,
-        @Res() res: Response,
-    ) {
-        const { ruta, nombre } = await this.tesoreriaService.descargarArchivoTesoreria(
-            documentoId,
-            tipo,
-            user.id
-        );
-        res.download(ruta, nombre);
+@Get('documentos/:documentoId/descargar/:tipo')
+async descargarArchivoTesoreria(
+    @Param('documentoId', ParseUUIDPipe) documentoId: string,
+    @Param('tipo') tipo: string,
+    @GetUser() user: JwtUser,
+    @Res() res: Response,
+) {
+    // ✅ Asegurar que tipo sea válido (ya incluye comprobanteextra)
+    const tiposPermitidos = ['pagorealizado', 'comprobanteextra'];
+    if (!tiposPermitidos.includes(tipo.toLowerCase())) {
+        throw new BadRequestException(`Tipo de archivo no válido: ${tipo}`);
     }
+    
+    const { ruta, nombre } = await this.tesoreriaService.descargarArchivoTesoreria(
+        documentoId,
+        tipo,
+        user.id
+    );
+    res.download(ruta, nombre);
+}
 
     @Get('documentos/:documentoId/archivo/:tipo')
-    @Public() // O con autenticación según tu necesidad
+    @Public()
     async previsualizarArchivoTesoreria(
         @Param('documentoId', ParseUUIDPipe) documentoId: string,
         @Param('tipo') tipo: string,
@@ -168,25 +181,18 @@ export class TesoreriaController {
         this.logger.log(`[PUBLIC-PREVIEW] Acceso público → ${documentoId}/${tipo}`);
 
         try {
-            // Obtener la ruta del archivo (sin userId para acceso público)
             const { rutaAbsoluta, nombreArchivo } = await this.tesoreriaService.obtenerRutaArchivoTesoreriaFull(
                 documentoId,
                 tipo,
-                undefined // undefined para no requerir userId
+                undefined
             );
 
-            this.logger.log(`[PUBLIC-PREVIEW] Ruta encontrada: ${rutaAbsoluta}`);
-
             if (!fs.existsSync(rutaAbsoluta)) {
-                this.logger.error(`[PUBLIC-PREVIEW 404] No existe: ${rutaAbsoluta}`);
                 return res.status(HttpStatus.NOT_FOUND).json({ message: 'Archivo no encontrado' });
             }
 
             const ext = path.extname(nombreArchivo).toLowerCase();
             const mimeType = mime.lookup(ext) || 'application/octet-stream';
-
-            // Para vista previa (download=false), usar inline
-            // Para descarga (download=true), usar attachment
             const contentDisposition = download === 'true'
                 ? `attachment; filename="${nombreArchivo}"`
                 : 'inline';
@@ -268,20 +274,19 @@ export class TesoreriaController {
         });
     }
 
-@Get('rechazados-visibles')
-async obtenerRechazadosVisibles(@GetUser() user: JwtUser) {
-  const docs = await this.tesoreriaService.obtenerRechazadosVisibles(user);
-  return {
-    success: true,
-    count: docs.length,
-    data: docs // ← Esto es el array directamente
-  };
-}
+    @Get('rechazados-visibles')
+    async obtenerRechazadosVisibles(@GetUser() user: JwtUser) {
+        const docs = await this.tesoreriaService.obtenerRechazadosVisibles(user);
+        return {
+            success: true,
+            count: docs.length,
+            data: docs
+        };
+    }
 
     @Get('test-metadata')
     async testMetadata() {
         const count = await this.tesoreriaService.getTesoreriaCount();
         return { success: true, count };
     }
-
 }

@@ -12,7 +12,7 @@ import { AsesorGerenciaSignatureService } from './asesor-gerencia-signature.serv
 import { AsesorGerenciaEstado } from './entities/asesor-gerencia-estado.enum';
 import { RendicionCuentasDocumento } from '../rendicion-cuentas/entities/rendicion-cuentas-documento.entity';
 
-import { UserRole } from '../users/enums/user-role.enum'; 
+import { UserRole } from '../users/enums/user-role.enum';
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -22,7 +22,7 @@ export class AsesorGerenciaService {
   private readonly logger = new Logger(AsesorGerenciaService.name);
 
   constructor(
-  @InjectRepository(AsesorGerenciaDocumento)
+    @InjectRepository(AsesorGerenciaDocumento)
     private asesorGerenciaRepository: Repository<AsesorGerenciaDocumento>,
     @InjectRepository(Documento)
     private documentoRepository: Repository<Documento>, // ✅ Cambiado de documentoRepo
@@ -33,8 +33,8 @@ export class AsesorGerenciaService {
     @InjectRepository(RendicionCuentasDocumento) // ✅ Inyección agregada
     private rendicionCuentasRepository: Repository<RendicionCuentasDocumento>, // ✅ Nueva propiedad
     private readonly signatureService: AsesorGerenciaSignatureService,
-  ) {}
-  
+  ) { }
+
   async obtenerDocumentosDisponibles(asesorId: string): Promise<any[]> {
     const documentos = await this.documentoRepository
       .createQueryBuilder('documento')
@@ -351,25 +351,24 @@ export class AsesorGerenciaService {
     };
   }
 
-async obtenerRutaArchivo(
-  documentoId: string,
-  tipo: string,
-): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
-  this.logger.log(`[obtenerRutaArchivo] Solicitando tipo=${tipo} para documento=${documentoId}`);
+  async obtenerRutaArchivo(
+    documentoId: string,
+    tipo: string,
+  ): Promise<{ rutaAbsoluta: string; nombreArchivo: string }> {
+    this.logger.log(`[obtenerRutaArchivo] Solicitando tipo=${tipo} para documento=${documentoId}`);
 
-  // ✅ Usar documentoRepository en lugar de documentoRepo
-  const documento = await this.documentoRepository.findOne({
-    where: { id: documentoId },
-  });
+    const documento = await this.documentoRepository.findOne({
+      where: { id: documentoId },
+    });
 
-  if (!documento) {
-    throw new NotFoundException('Documento no encontrado');
-  }
+    if (!documento) {
+      throw new NotFoundException('Documento no encontrado');
+    }
 
     let nombreArchivo: string | null = null;
     const carpetaBase = documento.rutaCarpetaRadicado;
 
-    // ✅ Normalizar el tipo
+    // ✅ Normalizar el tipo a minúsculas
     const tipoLower = tipo.toLowerCase();
 
     // Caso 1: Comprobante firmado por gerencia
@@ -399,7 +398,7 @@ async obtenerRutaArchivo(
         throw new NotFoundException('No se subió archivo de aprobación');
       }
     }
-    // Caso 3: Comprobante de pago subido por Tesorería ✅
+    // Caso 3: Comprobante de pago subido por Tesorería
     else if (tipoLower === 'pagorealizado' || tipoLower === 'pago_realizado') {
       const tesoreria = await this.tesoreriaRepository.findOne({
         where: { documento: { id: documentoId } }
@@ -419,8 +418,30 @@ async obtenerRutaArchivo(
 
       this.logger.log(`✅ Path encontrado en tesorería: ${nombreArchivo}`);
     }
-    else {
-      throw new BadRequestException(`Tipo de archivo no soportado: ${tipo}`);
+    // ✅ Caso 4: NUEVO - Comprobante extra subido por Tesorería
+    else if (tipoLower === 'comprobanteextra' || tipoLower === 'comprobante_extra') {
+      this.logger.log(`[COMPROBANTE EXTRA] Buscando en tesoreria para documento ${documentoId}`);
+
+      const tesoreria = await this.tesoreriaRepository.findOne({
+        where: { documento: { id: documentoId } }
+      });
+
+      if (!tesoreria) {
+        this.logger.warn(`[COMPROBANTE EXTRA] No hay registro en tesoreria_documentos para ${documentoId}`);
+        throw new NotFoundException('No hay comprobante extra registrado (sin registro en tesorería)');
+      }
+
+      this.logger.log(`[COMPROBANTE EXTRA] Tesoreria encontrado: id=${tesoreria.id}`);
+      this.logger.log(`[COMPROBANTE EXTRA] comprobanteExtraPath = ${tesoreria.comprobanteExtraPath}`);
+
+      nombreArchivo = tesoreria.comprobanteExtraPath;
+
+      if (!nombreArchivo) {
+        this.logger.warn(`[COMPROBANTE EXTRA] comprobanteExtraPath está vacío para ${documentoId}`);
+        throw new NotFoundException('Registro de tesorería encontrado, pero no hay path del comprobante extra');
+      }
+
+      this.logger.log(`✅ Path de comprobante extra encontrado: ${nombreArchivo}`);
     }
 
     // Construir ruta absoluta
@@ -526,6 +547,24 @@ async obtenerRutaArchivo(
         relations: ['asesor'],
       });
 
+      // ✅ OBTENER DATOS DE TESORERÍA con los nombres correctos de campos
+      let tesoreriaData = null;
+      try {
+        const tesoreria = await this.tesoreriaRepository.findOne({
+          where: { documento: { id: documentoId } }
+        });
+        if (tesoreria) {
+          tesoreriaData = {
+            pagoRealizadoPath: tesoreria.pagoRealizadoPath,
+            comprobanteExtraPath: tesoreria.comprobanteExtraPath,
+            comprobanteExtraFecha: tesoreria.comprobanteExtraFecha, // ✅ Nombre correcto
+            observacionesTesoreria: tesoreria.observaciones
+          };
+        }
+      } catch (error) {
+        this.logger.warn(`No se pudo obtener datos de tesorería para ${documentoId}: ${error.message}`);
+      }
+
       return {
         success: true,
         data: {
@@ -542,9 +581,14 @@ async obtenerRutaArchivo(
           fechaAsignacionGerencia: registroGerencia?.fechaInicioRevision || null,
           aprobacionPath: registroGerencia?.aprobacionPath || null,
           firmaAplicada: registroGerencia?.firmaAplicada || false,
-          comprobanteFirmadoPath: registroGerencia?.comprobanteFirmadoPath || null,  // ← AGREGAR ESTA LÍNEA
+          comprobanteFirmadoPath: registroGerencia?.comprobanteFirmadoPath || null,
           estadoGerencia: registroGerencia?.estado || 'PENDIENTE',
           observacionesGerencia: registroGerencia?.observaciones || '',
+          // ✅ Usar los nombres correctos de los campos
+          pagoRealizadoPath: tesoreriaData?.pagoRealizadoPath || null,
+          comprobanteExtraPath: tesoreriaData?.comprobanteExtraPath || null,
+          fechaComprobanteExtra: tesoreriaData?.comprobanteExtraFecha || null,  // Mapeamos el nombre
+          observacionesTesoreria: tesoreriaData?.observacionesTesoreria || null
         }
       };
     } catch (error) {
@@ -552,6 +596,8 @@ async obtenerRutaArchivo(
       throw new InternalServerErrorException(`Error al cargar detalle del documento: ${error.message}`);
     }
   }
+
+
   async finalizarRevision(
     documentoId: string,
     asesorId: string,
@@ -752,7 +798,7 @@ async obtenerRutaArchivo(
 
   async obtenerRendicionPorDocumentoId(documentoId: string, asesorId: string): Promise<any> {
     this.logger.log(`[obtenerRendicionPorDocumentoId] Buscando rendición para doc radicado: ${documentoId}`);
-    
+
     // Buscar el registro de asesor_gerencia_documentos por documentoId
     const registro = await this.asesorGerenciaRepository.findOne({
       where: {
@@ -760,12 +806,12 @@ async obtenerRutaArchivo(
       },
       relations: ['documento', 'asesor'],
     });
-    
+
     if (!registro) {
       this.logger.warn(`No se encontró registro de asesor gerencia para documento ${documentoId}`);
       return null;
     }
-    
+
     // ✅ Usar rendicionCuentasRepository en lugar de documentoRepo.manager
     const rendicionCuentas = await this.rendicionCuentasRepository.findOne({
       where: {
@@ -773,17 +819,17 @@ async obtenerRutaArchivo(
       },
       relations: ['documento', 'responsable'],
     });
-    
+
     if (!rendicionCuentas) {
       this.logger.warn(`No se encontró rendición de cuentas para documento ${documentoId}`);
       return null;
     }
-    
+
     // Verificar permisos
     if (registro.asesor.id !== asesorId && !await this.esAdmin(asesorId)) {
       throw new ForbiddenException('No tienes acceso a esta rendición');
     }
-    
+
     return {
       id: rendicionCuentas.id,
       documentoId: rendicionCuentas.documento.id,
@@ -808,4 +854,6 @@ async obtenerRutaArchivo(
     const user = await this.userRepository.findOne({ where: { id: usuarioId } });
     return user?.role === UserRole.ADMIN; // ✅ UserRole ahora está importado
   }
+
+  
 }

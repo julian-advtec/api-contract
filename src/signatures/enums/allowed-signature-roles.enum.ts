@@ -5,5 +5,6 @@ export const ALLOWED_SIGNATURE_ROLES = [
   UserRole.ADMIN,
   UserRole.ASESOR_GERENCIA,
   UserRole.RENDICION_CUENTAS,
-  UserRole.TESORERIA
+  UserRole.TESORERIA,
+  UserRole.SUPERVISOR,
 ] as const;

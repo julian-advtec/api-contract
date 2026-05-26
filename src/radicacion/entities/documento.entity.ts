@@ -158,6 +158,18 @@ export class Documento {
   @Column({ name: 'contratista_id', nullable: true })
   contratistaId?: string;
 
+  @Column({ name: 'acta_firmada_path', type: 'text', nullable: true })
+  actaFirmadaPath: string;
+
+  @Column({ name: 'acta_firmada_nombre', length: 255, nullable: true })
+  actaFirmadaNombre: string;
+
+  @Column({ name: 'acta_firmada_fecha', type: 'timestamp', nullable: true })
+  actaFirmadaFecha: Date;
+
+  @Column({ name: 'acta_firmada_por', length: 100, nullable: true })
+  actaFirmadaPor: string;
+
   @Column({ name: 'historial_estados', type: 'json', nullable: true })
   historialEstados: Array<{
     fecha: Date;

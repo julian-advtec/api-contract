@@ -291,7 +291,7 @@ export class RadicacionService {
 
             const result = await this.storageService.uploadFile(
                 fileRelativePath,
-                file.buffer,
+                file.buffer, 
                 file.mimetype
             );
 

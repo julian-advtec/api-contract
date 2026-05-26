@@ -1,11 +1,12 @@
+// src/config/multer-tesoreria.config.ts
 import { MulterOptions } from '@nestjs/platform-express/multer/interfaces/multer-options.interface';
 import { memoryStorage } from 'multer';
 
-export const multerTesoreriaConfig : MulterOptions = {
-  storage: memoryStorage(), // ← USAR memoryStorage para procesar en memoria
+export const multerTesoreriaConfig: MulterOptions = {
+  storage: memoryStorage(),
   limits: {
     fileSize: 15 * 1024 * 1024, // 15MB por archivo
-    files: 1, // Máximo 4 archivos (glosa, causacion, extracto, comprobanteEgreso)
+    files: 5, // Permitir hasta 5 archivos
   },
   fileFilter: (req, file, cb) => {
     const allowedMimes = [

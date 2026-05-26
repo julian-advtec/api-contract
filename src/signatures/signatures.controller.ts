@@ -1,4 +1,3 @@
-// src/signatures/signatures.controller.ts
 import {
   Controller,
   Post,
@@ -12,14 +11,16 @@ import {
   Res,
   HttpCode,
   HttpStatus,
+  Param,
+  Query,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Request, Response } from 'express'; // ← import type para evitar TS1272
+import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SignatureRoleGuard } from './guards/signature-role.guard';
 import { SignaturesService } from './signatures.service';
 import { CreateSignatureDto } from './dto/create-signature.dto';
-import { NotFoundException } from '@nestjs/common'; // ← IMPORTAR AQUÍ
+import { NotFoundException } from '@nestjs/common';
 
 interface RequestWithUser extends Request {
   user: {
@@ -40,16 +41,24 @@ export class SignaturesController {
     return this.signaturesService.getMySignature(req.user.id);
   }
 
+  // ✅ Usar query param en lugar de optional param
   @Post('upload')
   @UseGuards(SignatureRoleGuard)
   @UseInterceptors(FileInterceptor('file'))
   async uploadSignature(
     @Req() req: RequestWithUser,
+    @Query('userId') targetUserId: string,
     @UploadedFile() file: Express.Multer.File,
     @Body() createSignatureDto: CreateSignatureDto,
   ) {
+    const userId = (req.user.role === 'admin' && targetUserId) 
+      ? targetUserId 
+      : req.user.id;
+    
+    console.log(`📤 Subiendo firma - Usuario objetivo: ${userId} (Admin: ${req.user.role === 'admin'})`);
+    
     return this.signaturesService.uploadSignature(
-      req.user.id,
+      userId,
       file,
       createSignatureDto.name,
     );
@@ -57,22 +66,44 @@ export class SignaturesController {
 
   @Delete('delete')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteSignature(@Req() req: RequestWithUser) {
-    await this.signaturesService.deleteSignature(req.user.id);
+  async deleteSignature(
+    @Req() req: RequestWithUser,
+    @Query('userId') targetUserId: string,
+  ) {
+    const userId = (req.user.role === 'admin' && targetUserId) 
+      ? targetUserId 
+      : req.user.id;
+    
+    await this.signaturesService.deleteSignature(userId);
   }
 
   @Get('has-signature')
-  async hasSignature(@Req() req: RequestWithUser) {
-    const has = await this.signaturesService.hasSignature(req.user.id);
+  async hasSignature(
+    @Req() req: RequestWithUser,
+    @Query('userId') targetUserId: string,
+  ) {
+    const userId = (req.user.role === 'admin' && targetUserId) 
+      ? targetUserId 
+      : req.user.id;
+    
+    const has = await this.signaturesService.hasSignature(userId);
     return { has };
   }
 
   @Get('view')
-  async viewSignature(@Req() req: RequestWithUser, @Res() res: Response) {
-    console.log(`[VIEW] Solicitud de firma para usuario: ${req.user.id}`);
+  async viewSignature(
+    @Req() req: RequestWithUser,
+    @Query('userId') targetUserId: string,
+    @Res() res: Response,
+  ) {
+    const userId = (req.user.role === 'admin' && targetUserId) 
+      ? targetUserId 
+      : req.user.id;
+    
+    console.log(`[VIEW] Solicitando firma para usuario: ${userId}`);
 
     try {
-      const signature = await this.signaturesService.getSignatureForSigning(req.user.id);
+      const signature = await this.signaturesService.getSignatureForSigning(userId);
 
       res.setHeader('Content-Type', signature.mimeType);
       res.setHeader('Content-Disposition', `inline; filename="firma.${signature.type === 'pdf' ? 'pdf' : 'png'}"`);

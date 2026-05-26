@@ -103,7 +103,7 @@ export class RadicacionController {
     }
   }
 
-  
+
   @Get('test/server-access')
   async testServerAccess() {
     try {
@@ -630,113 +630,113 @@ export class RadicacionController {
   // ===============================
   // GESTIÓN DE ARCHIVOS
   // ===============================
-@Get(':id/descargar/:numeroDocumento')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.AUDITOR_CUENTAS)
-async descargarDocumento(
+  @Get(':id/descargar/:numeroDocumento')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.AUDITOR_CUENTAS)
+  async descargarDocumento(
     @Param('id') id: string,
     @Param('numeroDocumento') numeroDocumento: number,
     @Req() req: Request,
     @Res() res: Response,
-) {
+  ) {
     try {
-        const user = req.user as any;
-        this.logger.log(`📥 Descarga solicitada: documento ${id}, archivo ${numeroDocumento}`);
+      const user = req.user as any;
+      this.logger.log(`📥 Descarga solicitada: documento ${id}, archivo ${numeroDocumento}`);
 
-        // Obtenemos la ruta RELATIVA
-        const relativePath = await this.radicacionService.obtenerRutaArchivo(
-            id, 
-            +numeroDocumento, 
-            user
-        );
+      // Obtenemos la ruta RELATIVA
+      const relativePath = await this.radicacionService.obtenerRutaArchivo(
+        id,
+        +numeroDocumento,
+        user
+      );
 
-        // ✅ Usamos StorageService para obtener el stream
-        const fileBuffer = await this.storageService.getFile(relativePath);
+      // ✅ Usamos StorageService para obtener el stream
+      const fileBuffer = await this.storageService.getFile(relativePath);
 
-        const fileName = path.basename(relativePath);
+      const fileName = path.basename(relativePath);
 
-        res.setHeader('Content-Type', 'application/octet-stream');
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
-        res.setHeader('Content-Length', fileBuffer.length);
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+      res.setHeader('Content-Length', fileBuffer.length);
 
-        res.end(fileBuffer);   // Más simple y confiable que stream en muchos casos
+      res.end(fileBuffer);   // Más simple y confiable que stream en muchos casos
 
     } catch (error: any) {
-        this.logger.error(`❌ Error en descarga: ${error.message}`);
+      this.logger.error(`❌ Error en descarga: ${error.message}`);
 
-        if (!res.headersSent) {
-            const status = error.status || HttpStatus.NOT_FOUND;
-            res.status(status).json({
-                success: false,
-                message: error.message || 'No se pudo descargar el archivo'
-            });
-        }
+      if (!res.headersSent) {
+        const status = error.status || HttpStatus.NOT_FOUND;
+        res.status(status).json({
+          success: false,
+          message: error.message || 'No se pudo descargar el archivo'
+        });
+      }
     }
-}
+  }
 
-@Get(':id/archivo/:index')
-async archivoPublico(
+  @Get(':id/archivo/:index')
+  async archivoPublico(
     @Param('id') id: string,
     @Param('index') index: number,
     @Query('token') token: string,
     @Query('download') download: string,
     @Res() res: Response
-) {
+  ) {
     try {
-        if (!token) throw new UnauthorizedException('Token requerido');
+      if (!token) throw new UnauthorizedException('Token requerido');
 
-        const doc = await this.radicacionService.findOnePublico(id, token);
-        if (!doc) throw new NotFoundException('Documento no encontrado');
+      const doc = await this.radicacionService.findOnePublico(id, token);
+      if (!doc) throw new NotFoundException('Documento no encontrado');
 
-        const nombres = [doc.cuentaCobro, doc.seguridadSocial, doc.informeActividades];
-        const relativePath = nombres[index - 1];
+      const nombres = [doc.cuentaCobro, doc.seguridadSocial, doc.informeActividades];
+      const relativePath = nombres[index - 1];
 
-        if (!relativePath) throw new NotFoundException('Archivo no registrado');
+      if (!relativePath) throw new NotFoundException('Archivo no registrado');
 
-        // Verificar existencia
-        if (!(await this.storageService.fileExists(relativePath))) {
-            throw new NotFoundException('Archivo no encontrado en el servidor');
-        }
+      // Verificar existencia
+      if (!(await this.storageService.fileExists(relativePath))) {
+        throw new NotFoundException('Archivo no encontrado en el servidor');
+      }
 
-        const buffer = await this.storageService.getFile(relativePath);
-        const ext = path.extname(relativePath).toLowerCase();
-        const fileName = path.basename(relativePath);
+      const buffer = await this.storageService.getFile(relativePath);
+      const ext = path.extname(relativePath).toLowerCase();
+      const fileName = path.basename(relativePath);
 
-        const mime: Record<string, string> = {
-            '.pdf': 'application/pdf',
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.png': 'image/png',
-            '.doc': 'application/msword',
-            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        };
+      const mime: Record<string, string> = {
+        '.pdf': 'application/pdf',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      };
 
-        res.setHeader('Content-Type', mime[ext] || 'application/octet-stream');
+      res.setHeader('Content-Type', mime[ext] || 'application/octet-stream');
 
-        if (download === 'true') {
-            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
-        } else {
-            res.setHeader('Content-Disposition', 'inline');
-        }
+      if (download === 'true') {
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+      } else {
+        res.setHeader('Content-Disposition', 'inline');
+      }
 
-        // Para Word → convertir a PDF si no se pide descarga (opcional, puedes quitarlo si molesta)
-        if ((ext === '.doc' || ext === '.docx') && download !== 'true') {
-            // Aquí mantienes tu lógica de conversión si la necesitas
-            // Por ahora lo enviamos tal cual
-        }
+      // Para Word → convertir a PDF si no se pide descarga (opcional, puedes quitarlo si molesta)
+      if ((ext === '.doc' || ext === '.docx') && download !== 'true') {
+        // Aquí mantienes tu lógica de conversión si la necesitas
+        // Por ahora lo enviamos tal cual
+      }
 
-        res.end(buffer);
+      res.end(buffer);
 
     } catch (error: any) {
-        this.logger.error(`❌ Error previsualizando archivo: ${error.message}`);
-        if (!res.headersSent) {
-            res.status(error.status || 404).json({
-                success: false,
-                message: error.message
-            });
-        }
+      this.logger.error(`❌ Error previsualizando archivo: ${error.message}`);
+      if (!res.headersSent) {
+        res.status(error.status || 404).json({
+          success: false,
+          message: error.message
+        });
+      }
     }
-}
+  }
 
   // ===============================
   // ✅ NUEVO ENDPOINT: Primeros radicados por año
@@ -982,7 +982,7 @@ async archivoPublico(
 
   @Get('documento/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.AUDITOR_CUENTAS)
+
   async obtenerDocumentoPorId(@Param('id') id: string, @Req() req: Request) {
     try {
       const user = req.user as any;

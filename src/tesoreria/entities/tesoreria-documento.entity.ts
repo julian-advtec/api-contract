@@ -1,3 +1,4 @@
+// src/tesoreria/entities/tesoreria-documento.entity.ts
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { Documento } from '../../radicacion/entities/documento.entity';
 import { User } from '../../users/entities/user.entity';
@@ -27,11 +28,19 @@ export class TesoreriaDocumento {
   @Column({ type: 'text', nullable: true })
   observaciones: string;
 
+  // Documento principal con firma
   @Column({ nullable: true })
   pagoRealizadoPath: string;
 
   @Column({ type: 'timestamp', nullable: true })
   fechaPago: Date;
+
+  // ✅ NUEVO: Documento extra SIN firma
+  @Column({ nullable: true })
+  comprobanteExtraPath: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  comprobanteExtraFecha: Date;
 
   @CreateDateColumn()
   fechaCreacion: Date;
@@ -44,8 +53,9 @@ export class TesoreriaDocumento {
 
   @Column({ type: 'timestamp', nullable: true })
   fechaFinRevision: Date;
+
   @Column({ name: 'firma_aplicada', default: false })
-firmaAplicada: boolean;
+  firmaAplicada: boolean;
 
   puedeFinalizar(): { puede: boolean; razon?: string } {
     if (!this.pagoRealizadoPath) {
