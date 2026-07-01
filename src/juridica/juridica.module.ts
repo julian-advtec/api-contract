@@ -3,7 +3,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JuridicaController } from './juridica.controller';
 import { JuridicaService } from './juridica.service';
-import { ContratistaService } from '../contratista/contratista.service'; // ✅ Importar
+import { ContratistaService } from '../contratista/services/contratista.service'; // ✅ Importar
 import { Contratista } from '../contratista/entities/contratista.entity'; // ✅ Importar
 import { DocumentoContratista } from '../contratista/entities/documento-contratista.entity'; // ✅ Importar
 import { Contrato } from './entities/contrato.entity';

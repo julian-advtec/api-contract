@@ -25,15 +25,16 @@ async function createAdminUser() {
       return;
     }
 
-    // Crear usuario admin
+    // Crear usuario admin - Usando camelCase
     const hashedPassword = await bcrypt.hash('admin123', 12);
     
     const adminUser = usersRepository.create({
       username: 'admin',
       email: 'admin@contratos.com',
+      fullName: 'Administrador del Sistema', // ← Cambiado: full_name → fullName
       password: hashedPassword,
       role: UserRole.ADMIN,
-      isEmailVerified: true,
+      isEmailVerified: true, // ← Cambiado: is_email_verified → isEmailVerified
     });
 
     await usersRepository.save(adminUser);
@@ -47,10 +48,8 @@ async function createAdminUser() {
   } finally {
     if (dataSource.isInitialized) {
       await dataSource.destroy();
-      console.log('✅ Conexión cerrada');
     }
   }
 }
 
-// Ejecutar el script
 createAdminUser();

@@ -36,10 +36,11 @@ export class TesoreriaDocumento {
   fechaPago: Date;
 
   // ✅ NUEVO: Documento extra SIN firma
-  @Column({ nullable: true })
+  // ✅ NUEVO: Documento extra SIN firma
+  @Column({ name: 'comprobante_extra_path', nullable: true })
   comprobanteExtraPath: string;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ name: 'comprobante_extra_fecha', type: 'timestamp', nullable: true })
   comprobanteExtraFecha: Date;
 
   @CreateDateColumn()

@@ -140,7 +140,8 @@ function getCorsOrigins(): string[] {
             'https://advtec.netlify.app',
             'https://api-contract.onrender.com',
             'http://192.168.7.56:8091',
-            'http://localhost:4200'
+            'http://localhost:4200',
+            'http://localhost:4201',
         );
         
         const frontendUrl = process.env.FRONTEND_URL;
@@ -164,6 +165,7 @@ function getCorsOrigins(): string[] {
             'http://127.0.0.1:4200',
             'http://127.0.0.1:8091',
             'http://192.168.7.56:8091',
+            'http://localhost:4201',
         );
     }
 

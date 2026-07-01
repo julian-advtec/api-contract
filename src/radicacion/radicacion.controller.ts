@@ -34,7 +34,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { Like, Not } from 'typeorm';
 import { PrimerRadicadoInfo } from './interfaces/primer-radicado-info.interface';
-import { StorageService } from 'src/common/storage/storage.service';
+import { StorageService } from '../common/storage/storage.service';
 
 @Controller('radicacion')
 export class RadicacionController {
@@ -258,6 +258,7 @@ export class RadicacionController {
     UserRole.ADMIN,
     UserRole.SUPERVISOR,
     UserRole.AUDITOR_CUENTAS,
+    UserRole.AUXILIAR_AUDITOR,
     UserRole.CONTABILIDAD,
     UserRole.TESORERIA,
     UserRole.ASESOR_GERENCIA,
@@ -307,7 +308,8 @@ export class RadicacionController {
     UserRole.RADICADOR,
     UserRole.ADMIN,
     UserRole.SUPERVISOR,
-    UserRole.AUDITOR_CUENTAS
+    UserRole.AUDITOR_CUENTAS,
+    UserRole.AUXILIAR_AUDITOR
   )
   async buscar(
     @Req() req: Request,
@@ -355,7 +357,8 @@ export class RadicacionController {
   @Roles(
     UserRole.RADICADOR,
     UserRole.ADMIN,
-    UserRole.SUPERVISOR
+    UserRole.SUPERVISOR,
+    UserRole.AUXILIAR_AUDITOR,
   )
   async obtenerPorContratista(
     @Param('documento') documento: string,
@@ -417,7 +420,7 @@ export class RadicacionController {
 
   @Get(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR)
+  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.AUXILIAR_AUDITOR)
   async findOne(@Param('id') id: string, @Req() req: Request) {
     try {
       const documento = await this.radicacionService.findOne(id, req.user as any);
@@ -632,7 +635,7 @@ export class RadicacionController {
   // ===============================
   @Get(':id/descargar/:numeroDocumento')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.AUDITOR_CUENTAS)
+  @Roles(UserRole.RADICADOR, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.AUDITOR_CUENTAS, UserRole.AUXILIAR_AUDITOR)
   async descargarDocumento(
     @Param('id') id: string,
     @Param('numeroDocumento') numeroDocumento: number,

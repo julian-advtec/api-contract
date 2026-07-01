@@ -756,44 +756,94 @@ async obtenerActaFirmada(
   }
 
   // ==================== VER ACTA ORIGINAL ====================
-  async obtenerActaOriginal(
-    documentoId: string,
-    userId: string
-  ): Promise<{ buffer: Buffer; mimeType: string; nombre: string }> {
-    this.logger.log(`📄 Usuario ${userId} solicitando acta original del documento ${documentoId}`);
+async obtenerActaOriginal(
+  documentoId: string,
+  userId: string
+): Promise<{ buffer: Buffer; mimeType: string; nombre: string }> {
+  this.logger.log(`📄 Usuario ${userId} solicitando acta original del documento ${documentoId}`);
 
-    const documento = await this.documentoRepository.findOne({
-      where: { id: documentoId }
-    });
+  const documento = await this.documentoRepository.findOne({
+    where: { id: documentoId }
+  });
 
-    if (!documento) {
-      throw new NotFoundException('Documento no encontrado');
+  if (!documento) {
+    throw new NotFoundException('Documento no encontrado');
+  }
+
+  if (!documento.actaSupervisionPath) {
+    throw new NotFoundException('Este documento no tiene acta de supervisión');
+  }
+
+  // Método mejorado para buscar el archivo
+  const buffer = await this.buscarArchivoActa(documento);
+  
+  const extension = path.extname(documento.actaSupervisionNombre || '').toLowerCase();
+
+  const mimeTypes: Record<string, string> = {
+    '.pdf': 'application/pdf',
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  };
+
+  return {
+    buffer,
+    mimeType: mimeTypes[extension] || 'application/octet-stream',
+    nombre: documento.actaSupervisionNombre || `acta_original_${documento.numeroRadicado}.pdf`,
+  };
+}
+
+// Nuevo método auxiliar para buscar el archivo en múltiples ubicaciones
+private async buscarArchivoActa(documento: Documento): Promise<Buffer> {
+  const actaPath = documento.actaSupervisionPath;
+  const carpetaBase = documento.rutaCarpetaRadicado;
+  
+  // Posibles ubicaciones a buscar
+  const posiblesRutas = [
+    actaPath, // Ruta directa
+    path.join(carpetaBase, actaPath), // Unida a la carpeta del documento
+    path.join(carpetaBase, 'actas', actaPath), // Subcarpeta actas
+    path.join(carpetaBase, path.basename(actaPath)), // Solo el nombre del archivo
+    path.join(carpetaBase, 'acta_supervision_' + documento.numeroRadicado + '.pdf'), // Formato esperado
+  ];
+
+  // Intentar con storageService primero (solo si la ruta es relativa)
+  try {
+    // Si la ruta parece relativa (no contiene : ni \\)
+    if (!actaPath.includes(':') && !actaPath.startsWith('\\\\')) {
+      const buffer = await this.storageService.getFile(actaPath);
+      this.logger.log(`✅ Acta encontrada con storageService: ${actaPath}`);
+      return buffer;
     }
+  } catch (error) {
+    this.logger.warn(`storageService falló: ${error.message}`);
+  }
 
-    if (!documento.actaSupervisionPath) {
-      throw new NotFoundException('Este documento no tiene acta de supervisión');
-    }
-
-    try {
-      const buffer = await this.storageService.getFile(documento.actaSupervisionPath);
-      const extension = path.extname(documento.actaSupervisionNombre || '').toLowerCase();
-
-      const mimeTypes: Record<string, string> = {
-        '.pdf': 'application/pdf',
-        '.doc': 'application/msword',
-        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      };
-
-      return {
-        buffer,
-        mimeType: mimeTypes[extension] || 'application/octet-stream',
-        nombre: documento.actaSupervisionNombre || `acta_original_${documento.numeroRadicado}.pdf`,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error obteniendo acta original: ${error.message}`);
-      throw new NotFoundException('No se pudo obtener el archivo del acta original');
+  // Buscar con fs en las posibles rutas
+  for (const ruta of posiblesRutas) {
+    if (ruta && fs.existsSync(ruta)) {
+      this.logger.log(`✅ Acta encontrada en: ${ruta}`);
+      return fs.readFileSync(ruta);
     }
   }
+
+  // Buscar cualquier PDF en la carpeta que contenga "acta"
+  if (fs.existsSync(carpetaBase)) {
+    const archivos = fs.readdirSync(carpetaBase);
+    const actaPdf = archivos.find(f => 
+      f.toLowerCase().includes('acta') && 
+      f.toLowerCase().endsWith('.pdf')
+    );
+    
+    if (actaPdf) {
+      const rutaActa = path.join(carpetaBase, actaPdf);
+      this.logger.log(`✅ Acta encontrada por búsqueda: ${rutaActa}`);
+      return fs.readFileSync(rutaActa);
+    }
+  }
+
+  this.logger.error(`❌ Acta no encontrada en ninguna ubicación. Path almacenado: ${actaPath}`);
+  throw new NotFoundException(`No se pudo encontrar el archivo del acta original. Path: ${actaPath}`);
+}
 
   // ==================== FIRMAR ACTA ====================
   async firmarActa(

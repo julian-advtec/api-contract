@@ -1,3 +1,4 @@
+// src/common/guards/jwt-auth.guard.ts
 import { Injectable, ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Reflector } from '@nestjs/core';
@@ -10,7 +11,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   canActivate(context: ExecutionContext) {
-    // Si la ruta tiene @Public(), permite acceso sin token
+    // ✅ Si la ruta tiene @Public(), permite acceso sin token
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -21,13 +22,12 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       return true;
     }
 
-    // 🔑 IMPORTANTE: Extraer token de query params y agregarlo al header
+    // 🔑 Solo extraer token si NO es pública
     const request = context.switchToHttp().getRequest();
     
     // Verificar si hay token en query params
     if (request.query && request.query.token) {
       const token = request.query.token;
-      // Agregar el token al header Authorization para que passport lo pueda usar
       request.headers.authorization = `Bearer ${token}`;
       console.log('[JWT GUARD] Token extraído de query params y agregado a headers');
     }
@@ -39,12 +39,10 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       console.log('[JWT GUARD] Token extraído del body y agregado a headers');
     }
 
-    // Ruta normal → validar JWT
     console.log('[JWT GUARD] Validando JWT...');
     return super.canActivate(context);
   }
 
-  // Corregido: tipos explícitos + import de UnauthorizedException
   handleRequest(err: any, user: any, info: any): any {
     if (err || !user) {
       console.log('[JWT GUARD] Error o usuario no encontrado:', info?.message || err);

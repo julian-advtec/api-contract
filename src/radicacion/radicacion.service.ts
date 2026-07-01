@@ -25,7 +25,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { EstadosService } from '../estados/estados.service';
 import { AuditorService } from '../auditor/auditor.service'; // ✅ IMPORTAR AuditorService
-import { ContratistaService } from '../contratista/contratista.service';
+import { ContratistaService } from '../contratista/services/contratista.service';
 import { StorageService } from '../common/storage/storage.service';
 import { ModuloBitacora, AccionBitacora } from '../bitacora-sistema/entities/bitacora-sistema.entity'; // ✅ AGREGAR
 import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.service';

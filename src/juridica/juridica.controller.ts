@@ -27,7 +27,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
 import { JuridicaService } from './juridica.service';
-import { ContratistaService } from '../contratista/contratista.service'; // ✅ Importar
+import { ContratistaService } from '../contratista/services/contratista.service';
 import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.service';
 import { ModuloBitacora, AccionBitacora } from '../bitacora-sistema/entities/bitacora-sistema.entity';
 import { CreateContratoDto } from './dto/create-contrato.dto';

@@ -1,7 +1,7 @@
 // src/common/middlewares/documento.middleware.ts
 import { Injectable, NestMiddleware, BadRequestException } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
-import { Documento } from 'src/radicacion/entities/documento.entity';
+import { Documento } from '../../radicacion/entities/documento.entity';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 

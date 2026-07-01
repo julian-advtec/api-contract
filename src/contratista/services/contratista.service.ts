@@ -2,9 +2,9 @@
 import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike } from 'typeorm';
-import { Contratista } from './entities/contratista.entity';
-import { DocumentoContratista, TipoDocumento } from './entities/documento-contratista.entity';
-import { StorageService } from '../common/storage/storage.service';
+import { Contratista } from '../entities/contratista.entity';
+import { DocumentoContratista, TipoDocumento } from '../entities/documento-contratista.entity';
+import { StorageService } from '../../common/storage/storage.service';
 import * as path from 'path';
 
 export interface EstadisticasContratista {
@@ -872,4 +872,6 @@ const result = await this.storageService.uploadFile(
       documentos: documentosSubidos
     };
   }
+
+  
 }

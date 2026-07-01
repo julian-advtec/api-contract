@@ -29,7 +29,7 @@ import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.ser
 import { ModuloBitacora, AccionBitacora } from '../bitacora-sistema/entities/bitacora-sistema.entity';
 import { JuridicaService } from '../juridica/juridica.service';
 import { Contratista } from '../contratista/entities/contratista.entity';
-import { ContratistaService } from '../contratista/contratista.service';
+import { ContratistaService } from '../contratista/services/contratista.service';
 
 const execAsync = promisify(exec);
 
@@ -323,19 +323,7 @@ export class AuditorService {
 
     const documento = auditorDoc.documento;
 
-    if (documento.primerRadicadoDelAno && !auditorDoc.tieneTodosDocumentos()) {
-      const faltantes = [];
-      if (!auditorDoc.rpPath) faltantes.push('RP');
-      if (!auditorDoc.cdpPath) faltantes.push('CDP');
-      if (!auditorDoc.polizaPath) faltantes.push('Póliza');
-      if (!auditorDoc.certificadoBancarioPath) faltantes.push('Certificado Bancario');
-      if (!auditorDoc.minutaPath) faltantes.push('Minuta');
-      if (!auditorDoc.actaInicioPath) faltantes.push('Acta de Inicio');
 
-      throw new BadRequestException(
-        `Debes subir todos los documentos requeridos. Faltan: ${faltantes.join(', ')}`
-      );
-    }
 
     if ((revisarDto.estado === AuditorEstado.OBSERVADO ||
       revisarDto.estado === AuditorEstado.RECHAZADO) &&
@@ -554,25 +542,36 @@ async obtenerDocumentoParaVista(
 
     // 2. ✅ MODIFICAR: Aceptar más estados para vista
     // Incluir APROBADO_SUPERVISOR y otros estados finales en modo solo lectura
-    const estadosPermitidosVista = [
-      'RADICADO', 'CON_ACTA', 'EN_REVISION_AUDITOR',
-      'APROBADO_AUDITOR', 'OBSERVADO_AUDITOR', 'RECHAZADO_AUDITOR', 
-      'COMPLETADO_AUDITOR', 'APROBADO_SUPERVISOR', 'OBSERVADO_SUPERVISOR',
-      'RECHAZADO_SUPERVISOR', 'COMPLETADO', 'FIRMADO_SUPERVISOR',
-      'EN_REVISION_CONTABILIDAD', 'APROBADO_CONTABILIDAD', 'OBSERVADO_CONTABILIDAD',
-      'RECHAZADO_CONTABILIDAD', 'COMPLETADO_CONTABILIDAD',
-      // Revisión de tesorería
-      'EN_REVISION_TESORERIA', 'APROBADO_TESORERIA', 'OBSERVADO_TESORERIA',
-      'RECHAZADO_TESORERIA','COMPLETADO_TESORERIA',
-      // Revisión de asesor gerencia
-      'EN_REVISION_ASESOR_GERENCIA', 'APROBADO_ASESOR_GERENCIA', 'OBSERVADO_ASESOR_GERENCIA',
-      'RECHAZADO_ASESOR_GERENCIA',
-      // Revisión de rendición cuentas
-      'EN_REVISION_RENDICION_CUENTAS', 'APROBADO_RENDICION_CUENTAS', 'OBSERVADO_RENDICION_CUENTAS',
-      'RECHAZADO_RENDICION_CUENTAS',
-      // Estados finales
-      'COMPLETADO', 'PAGADO', 'FINALIZADO'
-    ];
+const estadosPermitidosVista = [
+  // Estados iniciales
+  'RADICADO', 'CON_ACTA', 'EN_REVISION_AUDITOR',
+  
+  // Estados del auditor
+  'APROBADO_AUDITOR', 'OBSERVADO_AUDITOR', 'RECHAZADO_AUDITOR', 'COMPLETADO_AUDITOR',
+  
+  // Estados del supervisor
+  'APROBADO_SUPERVISOR', 'OBSERVADO_SUPERVISOR', 'RECHAZADO_SUPERVISOR', 'FIRMADO_SUPERVISOR', 'EN_REVISION_SUPERVISOR',
+  
+  // Estados de contabilidad
+  'EN_REVISION_CONTABILIDAD', 'APROBADO_CONTABILIDAD', 'OBSERVADO_CONTABILIDAD',
+  'RECHAZADO_CONTABILIDAD', 'COMPLETADO_CONTABILIDAD',
+  
+  // Estados de tesorería
+  'EN_REVISION_TESORERIA', 'APROBADO_TESORERIA', 'OBSERVADO_TESORERIA',
+  'RECHAZADO_TESORERIA', 'COMPLETADO_TESORERIA',
+  
+  // Estados de asesor gerencia
+  'EN_REVISION_ASESOR_GERENCIA', 'APROBADO_ASESOR_GERENCIA', 'OBSERVADO_ASESOR_GERENCIA',
+  'RECHAZADO_ASESOR_GERENCIA',
+  
+  // Estados de rendición cuentas
+  'EN_REVISION_RENDICION_CUENTAS', 'APROBADO_RENDICION_CUENTAS', 'OBSERVADO_RENDICION_CUENTAS',
+  'RECHAZADO_RENDICION_CUENTAS',
+  
+  // Estados finales
+  
+  'COMPLETADO', 'PAGADO', 'FINALIZADO', 'ANULADO'
+];
 
     let auditorDoc: AuditorDocumento | null = null;
 
@@ -822,22 +821,48 @@ async obtenerDocumentoParaVista(
   // 8. OBTENER MIS AUDITORÍAS
   // ===============================
 
-  async obtenerMisAuditorias(auditorId: string): Promise<any[]> {
-    this.logger.log(`📋 Obteniendo MIS auditorías para auditorId: ${auditorId}`);
+async obtenerMisAuditorias(auditorId: string): Promise<any[]> {
+  this.logger.log(`📋 Obteniendo MIS auditorías para auditorId: ${auditorId}`);
 
-    const auditorDocs = await this.auditorRepository.find({
-      where: { auditor: { id: auditorId } },
-      relations: ['documento', 'documento.radicador', 'auditor'],
-      order: { fechaActualizacion: 'DESC' }
-    });
+  const auditorDocs = await this.auditorRepository.find({
+    where: { auditor: { id: auditorId } },
+    relations: ['documento', 'documento.radicador', 'auditor'],
+    order: { fechaActualizacion: 'DESC' }
+  });
 
-    return auditorDocs.map(ad => ({
+  // Procesar cada documento para obtener fechas del contrato si es necesario
+  const resultados = [];
+  
+  for (const ad of auditorDocs) {
+    let fechaInicio = ad.documento.fechaInicio;
+    let fechaFin = ad.documento.fechaFin;
+    
+    // Si las fechas están vacías, intentar obtenerlas del contrato
+    if (!fechaInicio || !fechaFin) {
+      try {
+        const contrato = await this.juridicaService.buscarContratoPorNumero(
+          ad.documento.numeroContrato
+        );
+        
+        if (contrato) {
+          fechaInicio = fechaInicio || contrato.fechaInicio;
+          fechaFin = fechaFin || contrato.fechaTerminacion;
+          this.logger.log(`📅 Fechas obtenidas del contrato: ${fechaInicio} - ${fechaFin}`);
+        }
+      } catch (error) {
+        this.logger.warn(`⚠️ No se pudo obtener contrato para ${ad.documento.numeroContrato}`);
+      }
+    }
+    
+    resultados.push({
       id: ad.documento.id,
       numeroRadicado: ad.documento.numeroRadicado,
       numeroContrato: ad.documento.numeroContrato,
       nombreContratista: ad.documento.nombreContratista,
       documentoContratista: ad.documento.documentoContratista,
       fechaRadicacion: ad.documento.fechaRadicacion,
+      fechaInicio: fechaInicio,
+      fechaFin: fechaFin,
       estado: ad.documento.estado,
       auditorEstado: ad.estado,
       observaciones: ad.observaciones || '',
@@ -848,8 +873,11 @@ async obtenerDocumentoParaVista(
       supervisor: ad.documento.usuarioAsignadoNombre || 'No asignado',
       auditorAsignado: ad.auditor?.fullName || ad.auditor?.username,
       tieneDocumentos: ad.tieneTodosDocumentos()
-    }));
+    });
   }
+  
+  return resultados;
+}
 
   // ===============================
   // MÉTODOS AUXILIARES PRIVADOS
@@ -1424,29 +1452,70 @@ async obtenerDocumentoParaVista(
   }
 
   async obtenerHistorialAuditor(auditorId: string): Promise<any[]> {
+  this.logger.log(`📋 [SERVICE] Obteniendo historial para auditor: ${auditorId}`);
+
+  try {
     const auditorDocs = await this.auditorRepository.find({
       where: { auditor: { id: auditorId } },
       relations: ['documento', 'documento.radicador', 'auditor'],
       order: { fechaActualizacion: 'DESC' },
-      take: 50
     });
+
+    this.logger.log(`✅ [SERVICE] ${auditorDocs.length} registros encontrados`);
+
+    if (auditorDocs.length > 0) {
+      this.logger.log(`[SERVICE] Primer registro - Estado: ${auditorDocs[0].estado}, Documento: ${auditorDocs[0].documento?.numeroRadicado}`);
+    }
 
     return auditorDocs.map(ad => ({
       id: ad.id,
       documento: {
-        id: ad.documento.id,
-        numeroRadicado: ad.documento.numeroRadicado,
-        nombreContratista: ad.documento.nombreContratista,
-        numeroContrato: ad.documento.numeroContrato,
+        id: ad.documento?.id,
+        numeroRadicado: ad.documento?.numeroRadicado || 'N/A',
+        fechaRadicacion: ad.documento?.fechaRadicacion,
+        nombreContratista: ad.documento?.nombreContratista || 'N/A',
+        documentoContratista: ad.documento?.documentoContratista || 'N/A',
+        numeroContrato: ad.documento?.numeroContrato || 'N/A',
+        fechaInicio: ad.documento?.fechaInicio,
+        // ✅ CORREGIDO: Usar fechaTerminacionContrato
+        fechaFin: ad.documento?.fechaFin || null,
+        fechaTerminacionContrato: ad.documento?.fechaFin || null,
+        cuentaCobro: ad.documento?.cuentaCobro,
+        seguridadSocial: ad.documento?.seguridadSocial,
+        informeActividades: ad.documento?.informeActividades,
+        primerRadicadoDelAno: ad.documento?.primerRadicadoDelAno || false,
+        comentarios: ad.documento?.comentarios || '',
+        observaciones: ad.documento?.observacion || '',
+        estado: ad.documento?.estado || ''
       },
-      auditor: ad.auditor?.fullName || ad.auditor?.username,
+      // ✅ También incluir en el nivel superior para fácil acceso
+      fechaInicio: ad.documento?.fechaInicio,
+      fechaFin: ad.documento?.fechaFin || null,
+      fechaTerminacionContrato: ad.documento?.fechaFin || null,
       estado: ad.estado,
-      observaciones: ad.observaciones,
+      observaciones: ad.observaciones || '',
+      motivoRechazo: ad.observaciones || '',
+      fechaRechazo: ad.fechaAprobacion || ad.fechaActualizacion || ad.fechaCreacion,
+      fechaActualizacion: ad.fechaActualizacion || ad.fechaCreacion,
       fechaCreacion: ad.fechaCreacion,
-      fechaActualizacion: ad.fechaActualizacion,
       fechaAprobacion: ad.fechaAprobacion,
+      fechaInicioRevision: ad.fechaInicioRevision,
+      fechaFinRevision: ad.fechaFinRevision,
+      auditorRevisor: ad.auditor?.fullName || ad.auditor?.username || '',
+      usuarioAsignadoNombre: ad.auditor?.fullName || ad.auditor?.username || '',
+      rechazadoPor: ad.auditor?.fullName || ad.auditor?.username || '',
+      rpPath: ad.rpPath,
+      cdpPath: ad.cdpPath,
+      polizaPath: ad.polizaPath,
+      certificadoBancarioPath: ad.certificadoBancarioPath,
+      minutaPath: ad.minutaPath,
+      actaInicioPath: ad.actaInicioPath
     }));
+  } catch (error) {
+    this.logger.error(`❌ [SERVICE] Error obteniendo historial: ${error.message}`);
+    throw error;
   }
+}
 
   async obtenerEstadoArchivos(documentoId: string, auditorId: string): Promise<any> {
     const documento = await this.documentoRepository.findOne({ where: { id: documentoId } });

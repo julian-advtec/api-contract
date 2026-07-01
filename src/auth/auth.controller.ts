@@ -1,4 +1,3 @@
-// auth.controller.ts
 import {
   Controller,
   Post,
@@ -19,55 +18,36 @@ import { UserRole } from '../users/enums/user-role.enum';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 
-interface LoginResponse {
-  success: boolean;
-  message: string;
-  requiresTwoFactor?: boolean;
-  userId?: string;
-  expiresIn?: string;
-  access_token?: string;
-  user?: any;
-  debugNote?: string;
-}
-
 @Controller('auth')
 export class AuthController {
   constructor(private authService: AuthService) { }
 
-  // ==================== REFRESH TOKEN ====================
-  // IMPORTANTE: Este endpoint NO usa @Public(), por lo tanto requiere token
-  // Pero como el token puede estar expirado, el cliente debe enviar el userId en el body
- @Post('refresh-token')
-@HttpCode(HttpStatus.OK)
-async refreshToken(@Body() body: { userId: string }) {
-  try {
-    console.log(`🔄 Refresh token solicitado para userId: ${body.userId}`);
-    
-    if (!body.userId) {
-      throw new BadRequestException('userId es requerido');
+  @Post('refresh-token')
+  @HttpCode(HttpStatus.OK)
+  async refreshToken(@Body() body: { userId: string }) {
+    try {
+      if (!body.userId) {
+        throw new BadRequestException('userId es requerido');
+      }
+      
+      const result = await this.authService.refreshToken(body.userId);
+      
+      return {
+        ok: true,
+        success: true,
+        token: result.token,
+        message: 'Token refrescado exitosamente',
+        expiresIn: '30m',
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      throw new UnauthorizedException({
+        ok: false,
+        message: error.message || 'Error al refrescar token'
+      });
     }
-    
-    const result = await this.authService.refreshToken(body.userId);
-    
-    // ✅ IMPORTANTE: Devolver el token directamente, no anidado en data
-    return {
-      ok: true,
-      success: true,
-      token: result.token,  // 👈 TOKEN EN NIVEL SUPERIOR
-      message: 'Token refrescado exitosamente',
-      expiresIn: '30m',
-      timestamp: new Date().toISOString()
-    };
-  } catch (error) {
-    console.error('❌ Error en refresh token:', error);
-    throw new UnauthorizedException({
-      ok: false,
-      message: error.message || 'Error al refrescar token'
-    });
   }
-}
 
-  // ==================== ENDPOINTS DE DIAGNÓSTICO ====================
   @Get('debug-all-users')
   async debugAllUsers() {
     try {
@@ -142,7 +122,6 @@ async refreshToken(@Body() body: { userId: string }) {
     };
   }
 
-  // ==================== ENDPOINTS DE AUTENTICACIÓN ====================
   @Post('login-direct')
   @HttpCode(HttpStatus.OK)
   async loginDirect(@Body() loginDto: LoginDto) {

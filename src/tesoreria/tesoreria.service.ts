@@ -55,6 +55,8 @@ export class TesoreriaService {
         this.logger.log('💰 TesoreriaService inicializado');
     }
 
+
+
     async obtenerDocumentosDisponibles(tesoreroId: string): Promise<any[]> {
         this.logger.log(`📋 Tesorero ${tesoreroId} solicitando documentos disponibles`);
 
@@ -93,6 +95,66 @@ export class TesoreriaService {
             this.logger.log(`✅ Tesorero: Encontrados ${documentos.length} documentos`);
         }
 
+        // ✅ OBTENER INFORMACIÓN DEL CONTADOR PARA CADA DOCUMENTO
+        const documentosIds = documentos.map(d => d.id);
+
+        let contabilidadDocs: ContabilidadDocumento[] = [];
+        if (documentosIds.length > 0) {
+            try {
+                contabilidadDocs = await this.contabilidadDocumentoRepository
+                    .createQueryBuilder('cd')
+                    .leftJoinAndSelect('cd.contador', 'contador')
+                    .leftJoinAndSelect('cd.documento', 'documento')
+                    .where('cd.documento_id IN (:...ids)', { ids: documentosIds })
+                    .orderBy('cd.fechaActualizacion', 'DESC')
+                    .getMany();
+
+                this.logger.log(`✅ Encontrados ${contabilidadDocs.length} registros de contabilidad`);
+            } catch (error) {
+                this.logger.error(`❌ Error obteniendo contabilidadDocs: ${error.message}`);
+                contabilidadDocs = [];
+            }
+        }
+
+        // ✅ OBTENER INFORMACIÓN DE TESORERÍA PARA CADA DOCUMENTO
+        let tesoreriaDocsAll: TesoreriaDocumento[] = [];
+        if (documentosIds.length > 0) {
+            try {
+                tesoreriaDocsAll = await this.tesoreriaRepository
+                    .createQueryBuilder('td')
+                    .leftJoinAndSelect('td.tesorero', 'tesorero')
+                    .leftJoinAndSelect('td.documento', 'documento')
+                    .where('td.documento_id IN (:...ids)', { ids: documentosIds })
+                    .orderBy('td.fechaActualizacion', 'DESC')
+                    .getMany();
+
+                this.logger.log(`✅ Encontrados ${tesoreriaDocsAll.length} registros de tesorería`);
+            } catch (error) {
+                this.logger.error(`❌ Error obteniendo tesoreriaDocs: ${error.message}`);
+                tesoreriaDocsAll = [];
+            }
+        }
+
+        // Crear un mapa de documentoId -> contabilidadDoc
+        const contabilidadMap = new Map<string, ContabilidadDocumento>();
+        for (const cd of contabilidadDocs) {
+            if (cd && cd.documento && cd.documento.id) {
+                if (!contabilidadMap.has(cd.documento.id)) {
+                    contabilidadMap.set(cd.documento.id, cd);
+                }
+            }
+        }
+
+        // ✅ Crear un mapa de documentoId -> tesoreriaDoc
+        const tesoreriaMap = new Map<string, TesoreriaDocumento>();
+        for (const td of tesoreriaDocsAll) {
+            if (td && td.documento && td.documento.id) {
+                if (!tesoreriaMap.has(td.documento.id)) {
+                    tesoreriaMap.set(td.documento.id, td);
+                }
+            }
+        }
+
         const tesoreriaDocs = await this.tesoreriaRepository.find({
             where: {
                 tesorero: { id: tesoreroId },
@@ -101,7 +163,7 @@ export class TesoreriaService {
             relations: ['documento']
         });
 
-        const documentosEnRevisionIds = tesoreriaDocs.map(td => td.documento.id);
+        const documentosEnRevisionIds = tesoreriaDocs.map(td => td.documento?.id).filter(id => id);
 
         const tesoreriaDocsExistentes = await this.tesoreriaRepository.find({
             where: { tesorero: { id: tesoreroId } },
@@ -109,11 +171,11 @@ export class TesoreriaService {
             relations: ['documento']
         });
 
-        const documentosConTesoreriaIds = tesoreriaDocsExistentes.map(td => td.documento.id);
+        const documentosConTesoreriaIds = tesoreriaDocsExistentes.map(td => td.documento?.id).filter(id => id);
 
         const documentosFiltrados = documentos.filter(documento => {
             if (documento.estado === 'EN_REVISION_TESORERIA') {
-                const tesoreriaDoc = tesoreriaDocs.find(td => td.documento.id === documento.id);
+                const tesoreriaDoc = tesoreriaDocs.find(td => td.documento?.id === documento.id);
                 return tesoreriaDoc !== undefined;
             }
             return true;
@@ -136,6 +198,40 @@ export class TesoreriaService {
                 mensajeDisponibilidad = '';
             }
 
+            // ✅ OBTENER EL CONTADOR DEL MAPA
+            const contabilidadDoc = contabilidadMap.get(documento.id);
+            let contadorNombre = 'No asignado';
+            let fechaCompletado = null;
+            let fechaAsignacion = null;
+
+            if (contabilidadDoc) {
+                if (contabilidadDoc.contador) {
+                    contadorNombre = contabilidadDoc.contador.fullName ||
+                        contabilidadDoc.contador.username ||
+                        'No asignado';
+                }
+                fechaCompletado = contabilidadDoc.fechaFinRevision || contabilidadDoc.fechaActualizacion || null;
+                fechaAsignacion = contabilidadDoc.fechaInicioRevision || contabilidadDoc.fechaCreacion || null;
+            }
+
+            // ✅ OBTENER EL TESORERO DEL MAPA (para Asesor Gerencia)
+            const tesoreriaDoc = tesoreriaMap.get(documento.id);
+            let tesoreroNombre = 'No asignado';
+            let fechaCompletadoTesoreria = null;
+
+            if (tesoreriaDoc) {
+                if (tesoreriaDoc.tesorero) {
+                    tesoreroNombre = tesoreriaDoc.tesorero.fullName ||
+                        tesoreriaDoc.tesorero.username ||
+                        'No asignado';
+                }
+                // ✅ FECHA DE COMPLETADO POR TESORERÍA
+                fechaCompletadoTesoreria = tesoreriaDoc.fechaFinRevision ||
+                    tesoreriaDoc.fechaActualizacion ||
+                    documento.fechaActualizacion ||
+                    null;
+            }
+
             return {
                 id: documento.id,
                 numeroRadicado: documento.numeroRadicado,
@@ -149,7 +245,13 @@ export class TesoreriaService {
                 fechaRadicacion: documento.fechaRadicacion,
                 radicador: documento.nombreRadicador,
                 supervisor: documento.usuarioAsignadoNombre,
-                contador: documento.usuarioAsignadoNombre,
+                // ✅ CAMPOS DEL CONTADOR
+                contadorAsignado: contadorNombre,
+                fechaCompletadoContabilidad: fechaCompletado,
+                fechaAsignacionContabilidad: fechaAsignacion,
+                // ✅ CAMPOS DEL TESORERO (para Asesor Gerencia)
+                tesoreroAsignado: tesoreroNombre,  // ← ESTE ES EL QUE NECESITA EL FRONTEND
+                fechaCompletadoTesoreria: fechaCompletadoTesoreria,
                 observacion: documento.observacion || '',
                 disponible: disponible,
                 mensajeDisponibilidad: mensajeDisponibilidad,
@@ -158,7 +260,8 @@ export class TesoreriaService {
                     enRevision: estaRevisandoYo,
                     puedoTomar: !yaEstaEnTesoreria,
                     tieneDocumentoSubido: false,
-                    contadorAsignado: documento.usuarioAsignadoNombre,
+                    contadorAsignado: contadorNombre,
+                    tesoreroAsignado: tesoreroNombre,
                 }
             };
         });
@@ -1096,62 +1199,62 @@ export class TesoreriaService {
         return respuesta;
     }
 
-   async descargarArchivoTesoreria(
-    documentoId: string,
-    tipo: string,
-    tesoreroId: string
-): Promise<{ ruta: string; nombre: string }> {
-    const tesoreriaDoc = await this.tesoreriaRepository.findOne({
-        where: {
-            documento: { id: documentoId },
-            tesorero: { id: tesoreroId }
-        },
-        relations: ['documento'],
-    });
+    async descargarArchivoTesoreria(
+        documentoId: string,
+        tipo: string,
+        tesoreroId: string
+    ): Promise<{ ruta: string; nombre: string }> {
+        const tesoreriaDoc = await this.tesoreriaRepository.findOne({
+            where: {
+                documento: { id: documentoId },
+                tesorero: { id: tesoreroId }
+            },
+            relations: ['documento'],
+        });
 
-    if (!tesoreriaDoc) {
-        throw new ForbiddenException('No tienes acceso a este documento');
+        if (!tesoreriaDoc) {
+            throw new ForbiddenException('No tienes acceso a este documento');
+        }
+
+        const documento = tesoreriaDoc.documento;
+
+        let nombreArchivo: string | null = null;
+
+        switch (tipo.toLowerCase()) {
+            case 'pagorealizado':
+                nombreArchivo = tesoreriaDoc.pagoRealizadoPath;
+                break;
+            case 'comprobanteextra':  // ✅ AGREGAR ESTE CASO
+                nombreArchivo = tesoreriaDoc.comprobanteExtraPath;
+                break;
+            default:
+                throw new BadRequestException('Tipo de archivo no válido');
+        }
+
+        if (!nombreArchivo) {
+            throw new BadRequestException('Archivo no encontrado');
+        }
+
+        const rutaCompleta = path.join(documento.rutaCarpetaRadicado, nombreArchivo);
+
+        if (!fs.existsSync(rutaCompleta)) {
+            throw new BadRequestException('El archivo no existe en el servidor');
+        }
+
+        const nombreDescarga = path.basename(nombreArchivo);
+
+        await this.registrarAccesoTesoreria(
+            documento.rutaCarpetaRadicado,
+            tesoreroId,
+            `DESCARGÓ archivo tesorería`,
+            `Tipo: ${tipo} - ${nombreDescarga}`
+        );
+
+        return {
+            ruta: rutaCompleta,
+            nombre: nombreDescarga
+        };
     }
-
-    const documento = tesoreriaDoc.documento;
-
-    let nombreArchivo: string | null = null;
-
-    switch (tipo.toLowerCase()) {
-        case 'pagorealizado':
-            nombreArchivo = tesoreriaDoc.pagoRealizadoPath;
-            break;
-        case 'comprobanteextra':  // ✅ AGREGAR ESTE CASO
-            nombreArchivo = tesoreriaDoc.comprobanteExtraPath;
-            break;
-        default:
-            throw new BadRequestException('Tipo de archivo no válido');
-    }
-
-    if (!nombreArchivo) {
-        throw new BadRequestException('Archivo no encontrado');
-    }
-
-    const rutaCompleta = path.join(documento.rutaCarpetaRadicado, nombreArchivo);
-
-    if (!fs.existsSync(rutaCompleta)) {
-        throw new BadRequestException('El archivo no existe en el servidor');
-    }
-
-    const nombreDescarga = path.basename(nombreArchivo);
-
-    await this.registrarAccesoTesoreria(
-        documento.rutaCarpetaRadicado,
-        tesoreroId,
-        `DESCARGÓ archivo tesorería`,
-        `Tipo: ${tipo} - ${nombreDescarga}`
-    );
-
-    return {
-        ruta: rutaCompleta,
-        nombre: nombreDescarga
-    };
-}
     async obtenerRutaArchivoTesoreriaFull(
         documentoId: string,
         tipo: string,

@@ -16,7 +16,7 @@ import * as jwt from 'jsonwebtoken';   // ← agregar si no lo tienes
 import { SupervisorDocumento, SupervisorEstado } from '../entities/supervisor.entity';
 import { Documento } from '../../radicacion/entities/documento.entity';
 import { User } from '../../users/entities/user.entity';
-import { AuditorDocumento } from 'src/auditor/entities/auditor-documento.entity';
+import { AuditorDocumento } from '../../auditor/entities/auditor-documento.entity';
 
 @Injectable()
 export class SupervisorArchivosService {

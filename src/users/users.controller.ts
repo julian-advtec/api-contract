@@ -69,7 +69,7 @@ export class UsersController {
 
   // 👇 NUEVO ENDPOINT PARA SUPERVISORES
   @Get('supervisores')
-  @Roles(UserRole.ADMIN, UserRole.SUPERVISOR)
+  @Roles(UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)  // ✅ Agregar JURIDICA
   async getSupervisores() {
     const supervisores = await this.usersService.getSupervisores();
     return {
@@ -85,7 +85,7 @@ export class UsersController {
 
   // 👇 ENDPOINT SIMPLE PARA SUPERVISORES (solo nombre y username)
   @Get('supervisores/simple')
-  @Roles(UserRole.ADMIN, UserRole.SUPERVISOR)
+  @Roles(UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.JURIDICA)  // ✅ Agregar JURIDICA
   async getSupervisoresSimple() {
     return this.usersService.getSupervisoresSimple();
   }

@@ -36,6 +36,9 @@ export class AsesorGerenciaService {
   ) { }
 
   async obtenerDocumentosDisponibles(asesorId: string): Promise<any[]> {
+    this.logger.log(`📋 Asesor ${asesorId} solicitando documentos disponibles`);
+
+    // 1. Obtener documentos en estado COMPLETADO_TESORERIA
     const documentos = await this.documentoRepository
       .createQueryBuilder('documento')
       .leftJoinAndSelect('documento.radicador', 'radicador')
@@ -44,32 +47,100 @@ export class AsesorGerenciaService {
       .orderBy('documento.fechaActualizacion', 'ASC')
       .getMany();
 
+    this.logger.log(`✅ Encontrados ${documentos.length} documentos en COMPLETADO_TESORERIA`);
+
+    if (documentos.length === 0) {
+      return [];
+    }
+
+    // 2. Obtener IDs de documentos
+    const documentosIds = documentos.map(d => d.id);
+
+    // 3. OBTENER REGISTROS DE TESORERÍA
+    let tesoreriaDocs: any[] = [];
+    if (documentosIds.length > 0) {
+      try {
+        tesoreriaDocs = await this.tesoreriaRepository
+          .createQueryBuilder('td')
+          .leftJoinAndSelect('td.tesorero', 'tesorero')
+          .leftJoinAndSelect('td.documento', 'documento')
+          .where('td.documentoId IN (:...ids)', { ids: documentosIds })
+          .orderBy('td.fechaActualizacion', 'DESC')
+          .getMany();
+
+        this.logger.log(`✅ Encontrados ${tesoreriaDocs.length} registros de tesorería`);
+      } catch (error) {
+        this.logger.error(`❌ Error obteniendo tesoreriaDocs: ${error.message}`);
+        tesoreriaDocs = [];
+      }
+    }
+
+    // 4. Crear mapa de documentoId -> datos del tesorero
+    const tesoreroMap = new Map<string, any>();
+    for (const td of tesoreriaDocs) {
+      if (td && td.documento && td.documento.id) {
+        if (!tesoreroMap.has(td.documento.id)) {
+          tesoreroMap.set(td.documento.id, {
+            tesorero: td.tesorero,
+            fechaCompletado: td.fechaFinRevision || td.fechaActualizacion,
+            pagoRealizadoPath: td.pagoRealizadoPath
+          });
+        }
+      }
+    }
+
+    // 5. Verificar si el asesor ya tiene documentos en revisión
     const revisiones = await this.asesorGerenciaRepository.find({
-      where: { asesor: { id: asesorId }, estado: AsesorGerenciaEstado.EN_REVISION },
+      where: {
+        asesor: { id: asesorId },
+        estado: AsesorGerenciaEstado.EN_REVISION
+      },
       relations: ['documento'],
     });
 
-    const enRevisionIds = revisiones.map(r => r.documento.id);
+    const enRevisionIds = revisiones.map(r => r.documento?.id).filter(id => id);
 
-    return documentos.map(doc => ({
-      id: doc.id,
-      numeroRadicado: doc.numeroRadicado,
-      numeroContrato: doc.numeroContrato,
-      nombreContratista: doc.nombreContratista,
-      documentoContratista: doc.documentoContratista,
-      fechaInicio: doc.fechaInicio,
-      fechaFin: doc.fechaFin,
-      estado: doc.estado,
-      fechaRadicacion: doc.fechaRadicacion,
-      radicador: doc.nombreRadicador,
-      supervisor: doc.usuarioAsignadoNombre,
-      disponible: !enRevisionIds.includes(doc.id) || revisiones.some(r => r.documento.id === doc.id),
-      enMiRevision: enRevisionIds.includes(doc.id),
-      asignacion: {
-        enRevision: enRevisionIds.includes(doc.id),
-        puedoTomar: !enRevisionIds.includes(doc.id),
-      },
-    }));
+    // 6. Construir respuesta con el nombre del tesorero
+    return documentos.map(doc => {
+      const estaEnRevision = enRevisionIds.includes(doc.id);
+      const tesoreriaInfo = tesoreroMap.get(doc.id);
+
+      // Obtener el nombre del tesorero que procesó el pago
+      let tesoreroNombre = 'No asignado';
+      if (tesoreriaInfo && tesoreriaInfo.tesorero) {
+        tesoreroNombre = tesoreriaInfo.tesorero.fullName ||
+          tesoreriaInfo.tesorero.username ||
+          'No asignado';
+      }
+
+      return {
+        id: doc.id,
+        numeroRadicado: doc.numeroRadicado,
+        numeroContrato: doc.numeroContrato,
+        nombreContratista: doc.nombreContratista,
+        documentoContratista: doc.documentoContratista,
+        fechaInicio: doc.fechaInicio,
+        fechaFin: doc.fechaFin,
+        estado: doc.estado,
+        fechaRadicacion: doc.fechaRadicacion,
+        radicador: doc.nombreRadicador,
+        supervisor: doc.usuarioAsignadoNombre,
+        // ✅ Campo para mostrar el nombre del tesorero que procesó el pago
+        tesoreroAsignado: tesoreroNombre,
+        fechaCompletadoTesoreria: tesoreriaInfo?.fechaCompletado || doc.fechaActualizacion,
+        observacion: doc.observacion || '',
+        // ✅ IMPORTANTE: disponible = true SOLO si NO está en revisión
+        disponible: !estaEnRevision,
+        // ✅ Indica si el documento está en revisión por el asesor actual
+        enMiRevision: estaEnRevision,
+        asignacion: {
+          enRevision: estaEnRevision,
+          // ✅ Puede tomar si NO está en revisión
+          puedoTomar: !estaEnRevision,
+          tesoreroAsignado: tesoreroNombre,
+        }
+      };
+    });
   }
 
   async tomarDocumentoParaRevision(documentoId: string, asesorId: string) {
@@ -465,39 +536,60 @@ export class AsesorGerenciaService {
     this.logger.log(`Obteniendo historial COMPLETO para asesorId: ${asesorId}`);
 
     const revisiones = await this.asesorGerenciaRepository.find({
-      where: {
-        asesor: { id: asesorId },
-      },
-      relations: ['documento', 'asesor'],
-      order: { fechaActualizacion: 'DESC' },
+        where: {
+            asesor: { id: asesorId },
+        },
+        relations: ['documento', 'documento.radicador', 'asesor'],
+        order: { fechaActualizacion: 'DESC' },
     });
 
     this.logger.log(`Encontradas ${revisiones.length} revisiones para el asesor ${asesorId}`);
 
     if (revisiones.length === 0) {
-      this.logger.warn(`No hay registros en asesor_gerencia_documento para asesorId ${asesorId}`);
-      const sinAsesor = await this.asesorGerenciaRepository.count({ where: { asesor: IsNull() } });
-      if (sinAsesor > 0) {
-        this.logger.warn(`Existen ${sinAsesor} registros sin asesor asignado`);
-      }
+        this.logger.warn(`No hay registros en asesor_gerencia_documento para asesorId ${asesorId}`);
+        return [];
     }
 
+    // ✅ Devolver el objeto documento COMPLETO (igual que en Tesorería)
     return revisiones.map(rev => ({
-      id: rev.id,
-      documentoId: rev.documento?.id,
-      numeroRadicado: rev.documento?.numeroRadicado || 'N/A',
-      numeroContrato: rev.documento?.numeroContrato || 'N/A',
-      nombreContratista: rev.documento?.nombreContratista || 'N/A',
-      estadoGerencia: rev.estado,
-      estadoDocumento: rev.documento?.estado || 'DESCONOCIDO',
-      esPendiente: rev.estado === AsesorGerenciaEstado.EN_REVISION,
-      observaciones: rev.observaciones || 'Sin observaciones',
-      fechaInicioRevision: rev.fechaInicioRevision,
-      fechaFinRevision: rev.fechaFinRevision || null,
-      fechaActualizacion: rev.fechaActualizacion,
-      asesor: rev.asesor?.fullName || rev.asesor?.username || 'Desconocido',
+        id: rev.id,
+        documentoId: rev.documento?.id,
+        // ✅ OBJETO DOCUMENTO COMPLETO
+        documento: {
+            id: rev.documento?.id,
+            numeroRadicado: rev.documento?.numeroRadicado || 'N/A',
+            numeroContrato: rev.documento?.numeroContrato || 'N/A',
+            nombreContratista: rev.documento?.nombreContratista || 'N/A',
+            documentoContratista: rev.documento?.documentoContratista || 'N/A',
+            fechaInicio: rev.documento?.fechaInicio,
+            fechaFin: rev.documento?.fechaFin,
+            fechaRadicacion: rev.documento?.fechaRadicacion,
+            fechaActualizacion: rev.documento?.fechaActualizacion,
+            estado: rev.documento?.estado || 'DESCONOCIDO',
+            observacion: rev.documento?.observacion || '',
+            usuarioAsignadoNombre: rev.documento?.usuarioAsignadoNombre || '',
+        },
+        // ✅ Mantener campos planos para compatibilidad
+        numeroRadicado: rev.documento?.numeroRadicado || 'N/A',
+        numeroContrato: rev.documento?.numeroContrato || 'N/A',
+        nombreContratista: rev.documento?.nombreContratista || 'N/A',
+        documentoContratista: rev.documento?.documentoContratista || 'N/A',
+        estadoGerencia: rev.estado,
+        estadoDocumento: rev.documento?.estado || 'DESCONOCIDO',
+        esPendiente: rev.estado === AsesorGerenciaEstado.EN_REVISION,
+        observaciones: rev.observaciones || 'Sin observaciones',
+        fechaInicioRevision: rev.fechaInicioRevision,
+        fechaFinRevision: rev.fechaFinRevision || null,
+        fechaActualizacion: rev.fechaActualizacion,
+        asesor: rev.asesor?.fullName || rev.asesor?.username || 'Desconocido',
+        asesorGerencia: rev.asesor?.fullName || rev.asesor?.username || 'Desconocido',
+        // ✅ Fechas adicionales
+        fechaCreacion: rev.fechaCreacion,
+        fechaAprobacion: rev.fechaAprobacion,
+        // ✅ Estado del documento en gerencia
+        estado: rev.estado,
     }));
-  }
+}
 
   async obtenerRechazadosVisibles(asesorId: string): Promise<any[]> {
     const estadosRechazo = [
@@ -855,5 +947,5 @@ export class AsesorGerenciaService {
     return user?.role === UserRole.ADMIN; // ✅ UserRole ahora está importado
   }
 
-  
+
 }

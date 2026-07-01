@@ -2,6 +2,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import { generarTemplateContratistaLink } from './templates/contratista-link.template';
 
 interface TokenResponse {
   access_token: string;
@@ -316,5 +317,44 @@ export class EmailService {
       </body>
       </html>
     `;
+  }
+
+ async sendContratistaLinkEmail(
+    email: string,
+    data: { 
+      nombre: string; 
+      enlace: string; 
+      expiraEn: Date;
+      documento: string;
+      empresa?: string;
+    }
+  ): Promise<void> {
+    if (!this.isEmailConfigured()) {
+      throw new Error('Azure email service not configured');
+    }
+
+    this.logger.log(`📧 Enviando enlace a contratista: ${email}`);
+
+    try {
+      const html = generarTemplateContratistaLink({
+        nombre: data.nombre,
+        enlace: data.enlace,
+        expiraEn: data.expiraEn,
+        documento: data.documento,
+        empresa: data.empresa || 'Sistema de Contratos',
+      });
+
+      const emailData: EmailData = {
+        subject: '📋 Complete su información - Sistema de Contratos',
+        to: [email],
+        html: html,
+      };
+
+      await this.sendEmail(emailData);
+      this.logger.log(`✅ Enlace enviado a: ${email}`);
+    } catch (error) {
+      this.logger.error(`❌ Error enviando enlace a ${email}:`, error.message);
+      throw error;
+    }
   }
 }

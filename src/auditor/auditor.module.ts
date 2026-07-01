@@ -13,7 +13,7 @@ import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.ser
 import { BitacoraSistema } from '../bitacora-sistema/entities/bitacora-sistema.entity';
 import { Contratista } from '../contratista/entities/contratista.entity';
 import { DocumentoContratista } from '../contratista/entities/documento-contratista.entity'; // ← AGREGAR
-import { ContratistaService } from '../contratista/contratista.service';
+import { ContratistaService } from '../contratista/services/contratista.service';
 
 @Module({
   imports: [

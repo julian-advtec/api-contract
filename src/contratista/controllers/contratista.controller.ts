@@ -23,16 +23,18 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
-import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { Public } from '../common/decorators/public.decorator';
-import { UserRole } from '../users/enums/user-role.enum';
-import { ContratistaService } from './contratista.service';
-import { TipoDocumento } from './entities/documento-contratista.entity';
-import { Contratista } from './entities/contratista.entity';
-import { BitacoraSistemaService } from '../bitacora-sistema/bitacora-sistema.service';
-import { ModuloBitacora, AccionBitacora } from '../bitacora-sistema/entities/bitacora-sistema.entity';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../auth/decorators/roles.decorator';
+import { Public } from '../../common/decorators/public.decorator';
+import { UserRole } from '../../users/enums/user-role.enum';
+import { ContratistaService } from '../services/contratista.service';
+import { TipoDocumento } from '../entities/documento-contratista.entity';
+import { Contratista } from '../entities/contratista.entity';
+import { BitacoraSistemaService } from '../../bitacora-sistema/bitacora-sistema.service';
+import { ModuloBitacora, AccionBitacora } from '../../bitacora-sistema/entities/bitacora-sistema.entity';
+import { ContratistaTokenService } from '../services/contratista-token.service';
+import { EmailService } from '../../email/email.service';
 
 @Controller('contratistas')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -42,6 +44,8 @@ export class ContratistasController {
   constructor(
     private readonly contratistaService: ContratistaService,
     private readonly bitacoraService: BitacoraSistemaService,
+    private readonly tokenService: ContratistaTokenService, // ✅ AÑADIR
+    private readonly emailService: EmailService, // ✅ AÑADIR
   ) { }
 
   // ===============================
@@ -869,7 +873,7 @@ export class ContratistasController {
     const inicio = Date.now();
     try {
       this.logger.log('📝 Creando contratista con documentos');
-      
+
       if (files && files.length > 0) {
         this.logger.log(`📎 Archivos recibidos: ${files.length}`);
         files.forEach((file, index) => {
@@ -906,7 +910,7 @@ export class ContratistasController {
         for (let i = 0; i < files.length; i++) {
           const tipo = body[`tipo_documento_${i}`];
           this.logger.log(`📄 Procesando archivo ${i}: tipo=${tipo}, archivo=${files[i].originalname}`);
-          
+
           if (tipo && Object.values(TipoDocumento).includes(tipo as TipoDocumento)) {
             documentos.push({
               tipo: tipo as TipoDocumento,
@@ -1131,7 +1135,7 @@ export class ContratistasController {
       this.logger.log(`🗑️ Desactivando contratista: ${id}`);
 
       const contratistaExistente = await this.contratistaService.buscarPorId(id);
-      
+
       if (!contratistaExistente) {
         return {
           ok: true,
@@ -1502,4 +1506,123 @@ export class ContratistasController {
       };
     }
   }
+
+  @Get(':id/tiene-email')
+  @Roles(UserRole.ADMIN, UserRole.JURIDICA)
+  async tieneEmail(@Param('id') id: string, @Req() req?: any) {
+    try {
+      this.logger.log(`📧 Verificando email del contratista: ${id}`);
+
+      const contratista = await this.contratistaService.buscarPorId(id);
+
+      return {
+        ok: true,
+        data: {
+          success: true,
+          data: {
+            tieneEmail: !!contratista.email,
+            email: contratista.email || null,
+          },
+        },
+      };
+    } catch (error) {
+      this.logger.error(`❌ Error verificando email: ${error.message}`);
+      return {
+        ok: true,
+        data: {
+          success: false,
+          message: error.message,
+          data: { tieneEmail: false, email: null },
+        },
+      };
+    }
+  }
+
+@Post(':id/enviar-enlace')
+@Roles(UserRole.ADMIN, UserRole.JURIDICA)
+async enviarEnlaceAlContratista(
+  @Param('id') id: string,
+  @Body() body: { email?: string },
+  @Req() req?: any,
+) {
+  try {
+    this.logger.log(`📧 Enviando enlace al contratista: ${id}`);
+
+    // 1. Obtener contratista
+    const contratista = await this.contratistaService.buscarPorId(id);
+    
+    if (!contratista) {
+      return {
+        ok: true,
+        data: {
+          success: false,
+          message: 'Contratista no encontrado',
+        },
+      };
+    }
+
+    // 2. Determinar email destino
+    const emailDestino = body.email || contratista.email;
+    
+    if (!emailDestino) {
+      return {
+        ok: true,
+        data: {
+          success: false,
+          message: 'El contratista no tiene email registrado',
+        },
+      };
+    }
+
+    // 3. Generar token (usa la variable FRONTEND_PUBLIC_URL del .env)
+    const { token, expiraEn, enlace } = await this.tokenService.generarTokenAcceso(
+      id,
+      emailDestino
+    );
+
+    // 4. Enviar correo
+    await this.emailService.sendContratistaLinkEmail(emailDestino, {
+      nombre: contratista.razonSocial,
+      enlace: enlace,
+      expiraEn: expiraEn,
+      documento: contratista.documentoIdentidad,
+      empresa: 'Sistema de Contratos',
+    });
+
+    // 5. Registrar en bitácora
+    await this.bitacoraService.registrar(
+      AccionBitacora.ADMIN_EDITAR_USUARIO,
+      ModuloBitacora.ADMINISTRACION,
+      req.user,
+      undefined,
+      {
+        detalles: `Enlace enviado a: ${contratista.razonSocial} (${emailDestino})`,
+        contratistaId: id,
+      },
+      req,
+    );
+
+    return {
+      ok: true,
+      data: {
+        success: true,
+        message: `Enlace enviado a ${emailDestino}`,
+        data: {
+          enviadoA: emailDestino,
+          validoHasta: expiraEn,
+        },
+      },
+    };
+  } catch (error) {
+    this.logger.error(`❌ Error enviando enlace: ${error.message}`);
+    return {
+      ok: true,
+      data: {
+        success: false,
+        message: error.message,
+        data: null,
+      },
+    };
+  }
+}
 }
