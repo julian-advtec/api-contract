@@ -25,6 +25,9 @@ import { ModificacionContrato } from '../juridica/entities/modificacion-contrato
 import { DocumentoContrato } from '../juridica/entities/documento-contrato.entity';
 import { Obligacion } from '../juridica/entities/obligacion.entity';
 
+import { FormularioPublico } from '../contratista/entities/formulario-publico.entity';
+import { DocumentoFormularioPublico } from '../contratista/entities/documento-formulario-publico.entity';
+
 // Función para detectar si estamos en producción
 function isProductionEnvironment(): boolean {
     // Detectar si estamos en Render
@@ -161,6 +164,9 @@ export const ormconfig: DataSourceOptions = {
         RendicionCuentasHistorial,
         DocumentoContratista,
         BitacoraSistema,
+        // ✅ ADD THE NEW ENTITIES HERE
+        FormularioPublico,
+        DocumentoFormularioPublico,
         // Jurídica
         Contrato,
         Proveedor,
@@ -169,7 +175,7 @@ export const ormconfig: DataSourceOptions = {
         DocumentoContrato,
         Obligacion,
     ],
-    synchronize: false, // 🔴 CAMBIADO A FALSE - No sincronizar automáticamente en producción
+    synchronize: false,
     logging: ['error', 'warn'],
     extra: {
         max: 20,
