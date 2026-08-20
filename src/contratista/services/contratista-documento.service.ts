@@ -16,7 +16,6 @@ export class ContratistaDocumentoService {
     private readonly documentoRepository: Repository<DocumentoContratista>,
     private readonly storageService: StorageService,
     private readonly contratistaService: ContratistaService,
-    
   ) {}
 
   /**
@@ -192,5 +191,77 @@ export class ContratistaDocumentoService {
     const nombreZip = `documentos_${nombreContratista}_${fecha}.zip`;
 
     return { zipBuffer, nombreZip, totalDocumentos: documentos.length };
+  }
+
+  /**
+   * ✅ Obtener documento combinado por tipo (SEGURIDAD_SOCIAL o CERTIFICADO_ANTECEDENTES)
+   * Busca directamente en el contratista los documentos combinados copiados
+   */
+  async obtenerCombinadoPorTipo(
+    contratistaId: string,
+    tipo: string,
+  ): Promise<{ buffer: Buffer; nombre: string; mimeType: string }> {
+    // Verificar que el contratista existe
+    const contratista = await this.contratistaService.buscarPorId(contratistaId);
+    if (!contratista) {
+      throw new NotFoundException(`Contratista ${contratistaId} no encontrado`);
+    }
+
+    this.logger.log(`🔍 Buscando documento combinado ${tipo} para contratista ${contratistaId}`);
+
+    // Buscar el documento combinado en el contratista
+    const documento = await this.documentoRepository.findOne({
+      where: {
+        contratistaId,
+        tipo: tipo as TipoDocumento,
+      },
+    });
+
+    if (!documento) {
+      // ✅ LISTAR TODOS LOS DOCUMENTOS DEL CONTRATISTA PARA DEBUG
+      const todosDocumentos = await this.obtenerDocumentos(contratistaId);
+      this.logger.warn(`⚠️ Documento combinado ${tipo} no encontrado. Documentos disponibles: ${todosDocumentos.map(d => d.tipo).join(', ')}`);
+      throw new NotFoundException(
+        `Documento combinado ${tipo} no encontrado para el contratista ${contratistaId}`
+      );
+    }
+
+    this.logger.log(`✅ Documento combinado encontrado: ${tipo} - ${documento.nombreArchivo} - Ruta: ${documento.rutaArchivo}`);
+
+    // Obtener el buffer del archivo
+    let buffer: Buffer | null = null;
+
+    try {
+      buffer = await this.storageService.getFile(documento.rutaArchivo);
+      this.logger.log(`✅ Archivo obtenido del storage: ${documento.rutaArchivo}`);
+    } catch (error) {
+      this.logger.warn(`⚠️ No se encontró en ruta original: ${documento.rutaArchivo}`);
+      
+      // Intentar buscar por nombre de archivo
+      const files = await this.storageService.listFiles('contratistas');
+      this.logger.log(`🔍 Buscando en ${files.length} archivos...`);
+      
+      for (const file of files) {
+        if (file.includes(documento.nombreArchivo) || file.includes(tipo)) {
+          try {
+            buffer = await this.storageService.getFile(file);
+            this.logger.log(`✅ Archivo encontrado en: ${file}`);
+            break;
+          } catch (e) {
+            continue;
+          }
+        }
+      }
+    }
+
+    if (!buffer) {
+      throw new NotFoundException(`Archivo combinado no encontrado: ${documento.nombreArchivo}`);
+    }
+
+    return {
+      buffer,
+      nombre: `${tipo}.pdf`,
+      mimeType: 'application/pdf',
+    };
   }
 }

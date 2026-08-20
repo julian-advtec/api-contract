@@ -1,4 +1,3 @@
-// src/contratista/entities/documento-formulario-publico.entity.ts
 import {
     Entity,
     Column,
@@ -86,4 +85,8 @@ export class DocumentoFormularioPublico {
 
     @Column({ name: 'hash_archivo', nullable: true })
     hashArchivo: string;
+
+    // ✅ Campo para identificar documentos combinados
+    @Column({ name: 'es_combinado', default: false })
+    esCombinado: boolean;
 }

@@ -1,4 +1,3 @@
-// src/contratista/entities/documento-contratista.entity.ts
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { Contratista } from './contratista.entity';
 
@@ -15,7 +14,7 @@ export enum TipoDocumento {
   EXAMEN_INGRESO = 'EXAMEN_INGRESO',
   GARANTIA = 'GARANTIA',
   HOJA_VIDA_SIGEP = 'HOJA_VIDA_SIGEP',
-  LIBRETA_MILITAR = 'LIBRETA_MILITAR', // ✅ Se mantiene pero ahora es OPCIONAL en la UI
+  LIBRETA_MILITAR = 'LIBRETA_MILITAR',
   PANTALLAZO_SECOP = 'PANTALLAZO_SECOP',
   PROPUESTA = 'PROPUESTA',
   PUBLICACION_GT = 'PUBLICACION_GT',
@@ -30,7 +29,6 @@ export class DocumentoContratista {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  
   @Column({ name: 'contratista_id' })
   contratistaId: string;
 
@@ -61,4 +59,8 @@ export class DocumentoContratista {
 
   @Column({ name: 'subido_por', nullable: true })
   subidoPor: string;
+
+  // ✅ Campo para identificar documentos combinados
+  @Column({ name: 'es_combinado', default: false })
+  esCombinado: boolean;
 }

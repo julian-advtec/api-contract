@@ -1,9 +1,9 @@
-// src/contratista/services/formulario-publico.service.ts
 import { Injectable, Logger, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { FormularioPublico, EstadoFormulario } from '../entities/formulario-publico.entity';
 import { DocumentoFormularioPublico, TipoDocumentoFormulario } from '../entities/documento-formulario-publico.entity';
+import { DocumentoContratista, TipoDocumento } from '../entities/documento-contratista.entity';
 import { StorageService } from '../../common/storage/storage.service';
 import * as crypto from 'crypto';
 import { PDFDocument } from 'pdf-lib';
@@ -38,17 +38,6 @@ export class FormularioPublicoService {
 
     // ✅ Todos los tipos válidos (solo los 7 que existen en el enum)
     private readonly tiposValidos = [
-        TipoDocumentoFormulario.CERTIFICADO_DISCIPLINARIOS,
-        TipoDocumentoFormulario.CERTIFICADO_RESPONSABILIDAD_FISCAL,
-        TipoDocumentoFormulario.CERTIFICADO_ANTECEDENTES_JUDICIALES,
-        TipoDocumentoFormulario.CERTIFICADO_MEDIDAS_CORRECTIVAS,
-        TipoDocumentoFormulario.SEGURIDAD_SOCIAL_SALUD,
-        TipoDocumentoFormulario.SEGURIDAD_SOCIAL_PENSION,
-        TipoDocumentoFormulario.SEGURIDAD_SOCIAL_ARL,
-    ];
-
-    // ✅ Tipos que NO pertenecen a ningún grupo (se guardan individualmente)
-    private readonly tiposIndividuales = [
         TipoDocumentoFormulario.CERTIFICADO_DISCIPLINARIOS,
         TipoDocumentoFormulario.CERTIFICADO_RESPONSABILIDAD_FISCAL,
         TipoDocumentoFormulario.CERTIFICADO_ANTECEDENTES_JUDICIALES,
@@ -168,9 +157,7 @@ export class FormularioPublicoService {
 
     /**
      * Agregar un documento al formulario
-     * ✅ SOLO acepta los 7 tipos del enum
      */
-    
     async agregarDocumento(
         formularioId: string,
         tipo: TipoDocumentoFormulario,
@@ -180,13 +167,11 @@ export class FormularioPublicoService {
         try {
             const formulario = await this.buscarPorId(formularioId);
 
-            // ✅ Validar que el tipo exista en el enum
             const tiposValidos = Object.values(TipoDocumentoFormulario);
             if (!tiposValidos.includes(tipo)) {
                 throw new BadRequestException(`Tipo de documento inválido: ${tipo}`);
             }
 
-            // Verificar si ya existe un documento de este tipo
             const existente = await this.documentoRepository.findOne({
                 where: {
                     formularioId,
@@ -199,7 +184,6 @@ export class FormularioPublicoService {
                 this.logger.log(`🔄 Reemplazando documento existente: ${tipo}`);
             }
 
-            // ✅ Guardar el documento individual
             const documento = await this.guardarDocumentoIndividual(
                 formularioId,
                 tipo,
@@ -207,7 +191,6 @@ export class FormularioPublicoService {
                 subidoPor
             );
 
-            // ✅ Verificar si el tipo pertenece a un grupo y combinarlo
             await this.verificarYCombinarGrupo(formularioId, tipo);
 
             return documento;
@@ -218,7 +201,7 @@ export class FormularioPublicoService {
     }
 
     /**
-     * Guarda un documento individual
+     * ✅ Guarda un documento individual con esCombinado = false
      */
     private async guardarDocumentoIndividual(
         formularioId: string,
@@ -247,21 +230,22 @@ export class FormularioPublicoService {
             tamanoBytes: archivo.size,
             subidoPor,
             hashArchivo: this.calcularHash(archivo.buffer),
+            esCombinado: false, // ✅ IMPORTANTE: documento individual NO es combinado
         });
 
         const saved = await this.documentoRepository.save(documento);
-        this.logger.log(`✅ Documento guardado: ${tipo}`);
+        this.logger.log(`✅ Documento individual guardado: ${tipo} - esCombinado: false`);
         return saved;
     }
 
     /**
-     * Verifica si el tipo pertenece a un grupo y lo combina
+     * ✅ Verifica si el tipo pertenece a un grupo y lo combina
+     * Guarda el combinado con esCombinado = true
      */
     private async verificarYCombinarGrupo(
         formularioId: string,
         tipo: TipoDocumentoFormulario,
     ): Promise<void> {
-        // Encontrar a qué grupo pertenece este tipo
         let grupoEncontrado = null;
         let nombreGrupo = '';
 
@@ -278,7 +262,6 @@ export class FormularioPublicoService {
             return;
         }
 
-        // Verificar si todos los documentos del grupo están presentes
         const documentosDelGrupo = await this.documentoRepository.find({
             where: {
                 formularioId,
@@ -310,7 +293,6 @@ export class FormularioPublicoService {
                 'application/pdf',
             );
 
-            // Eliminar combinado anterior si existe
             const combinadoExistente = await this.documentoRepository.findOne({
                 where: {
                     formularioId,
@@ -333,10 +315,11 @@ export class FormularioPublicoService {
                 tamanoBytes: pdfCombinado.length,
                 subidoPor: 'sistema',
                 hashArchivo: this.calcularHash(pdfCombinado),
+                esCombinado: true, // ✅ IMPORTANTE: documento combinado
             });
 
             await this.documentoRepository.save(documentoCombinado);
-            this.logger.log(`✅ PDF combinado guardado: ${nombreGrupo}`);
+            this.logger.log(`✅ PDF combinado guardado: ${nombreGrupo} - esCombinado: true`);
 
         } catch (error) {
             this.logger.error(`❌ Error combinando PDFs del grupo ${nombreGrupo}: ${error.message}`);
@@ -378,6 +361,7 @@ export class FormularioPublicoService {
             where: {
                 formularioId,
                 tipo: grupoNombre as any,
+                esCombinado: true, // ✅ Solo combinados
             },
         });
     }
@@ -415,7 +399,7 @@ export class FormularioPublicoService {
     }
 
     /**
-     * Descargar documento combinado
+     * Descargar documento combinado del formulario
      */
     async descargarDocumentoCombinado(
         formularioId: string,
@@ -443,7 +427,6 @@ export class FormularioPublicoService {
         try {
             const formulario = await this.buscarPorId(formularioId);
 
-            // ✅ Verificar que todos los documentos requeridos estén subidos (los 7)
             const documentos = await this.obtenerDocumentos(formularioId);
             const tiposSubidos = documentos.map(doc => doc.tipo);
 
@@ -455,7 +438,6 @@ export class FormularioPublicoService {
                 );
             }
 
-            // ✅ Verificar que los grupos estén combinados
             const estadoGrupos = await this.obtenerEstadoGrupos(formularioId);
             const gruposIncompletos = Object.entries(estadoGrupos)
                 .filter(([key, value]: [string, any]) => !value.combinadoExiste)
@@ -463,7 +445,6 @@ export class FormularioPublicoService {
 
             if (gruposIncompletos.length > 0) {
                 this.logger.warn(`⚠️ Grupos sin combinar: ${gruposIncompletos.join(', ')}`);
-                // Intentar combinar nuevamente
                 for (const grupo of Object.keys(this.gruposDocumentos)) {
                     await this.forzarCombinacionGrupo(formularioId, grupo);
                 }
@@ -519,7 +500,6 @@ export class FormularioPublicoService {
             'application/pdf',
         );
 
-        // Eliminar combinado anterior si existe
         const combinadoExistente = await this.documentoRepository.findOne({
             where: {
                 formularioId,
@@ -541,6 +521,7 @@ export class FormularioPublicoService {
             tamanoBytes: pdfCombinado.length,
             subidoPor: 'sistema',
             hashArchivo: this.calcularHash(pdfCombinado),
+            esCombinado: true, // ✅ IMPORTANTE
         });
 
         await this.documentoRepository.save(documentoCombinado);
@@ -650,13 +631,9 @@ export class FormularioPublicoService {
         return crypto.createHash('sha256').update(buffer).digest('hex');
     }
 
-
-
-
-
-
-
-
+    /**
+     * Listar formularios pendientes de aprobación
+     */
     async listarPendientesAprobacion(): Promise<any[]> {
         this.logger.log('🔍 Buscando formularios pendientes de aprobación...');
 
@@ -671,7 +648,6 @@ export class FormularioPublicoService {
 
         this.logger.log(`📊 Encontrados ${formularios.length} formularios en BD`);
 
-        // Enriquecer con información de grupos
         const resultado = [];
         for (const formulario of formularios) {
             this.logger.log(`📋 Procesando formulario: ${formulario.id} - Estado: ${formulario.estado}`);
@@ -679,7 +655,6 @@ export class FormularioPublicoService {
             const estadoGrupos = await this.obtenerEstadoGrupos(formulario.id);
             const documentos = await this.obtenerDocumentos(formulario.id);
 
-            // ✅ Intentar obtener el contratista de forma segura
             let contratistaNombre = 'N/A';
             let contratistaDocumento = 'N/A';
             let contratistaTipo = 'N/A';
@@ -728,11 +703,9 @@ export class FormularioPublicoService {
             throw new NotFoundException(`Formulario ${formularioId} no encontrado`);
         }
 
-        // Obtener documentos agrupados
         const documentos = await this.obtenerDocumentos(formularioId);
         const estadoGrupos = await this.obtenerEstadoGrupos(formularioId);
 
-        // Agrupar documentos por tipo
         const documentosPorTipo = {};
         for (const doc of documentos) {
             if (!documentosPorTipo[doc.tipo]) {
@@ -741,7 +714,6 @@ export class FormularioPublicoService {
             documentosPorTipo[doc.tipo].push(doc);
         }
 
-        // ✅ Obtener contratista completo de forma segura
         let contratista = null;
         try {
             if (formulario.contratistaId) {
@@ -749,7 +721,6 @@ export class FormularioPublicoService {
             }
         } catch (error) {
             this.logger.warn(`⚠️ No se pudo obtener el contratista: ${error.message}`);
-            // Usar datos del formulario como respaldo
             contratista = {
                 razonSocial: formulario.representanteLegal || 'N/A',
                 documentoIdentidad: formulario.documentoRepresentante || 'N/A',
@@ -769,35 +740,154 @@ export class FormularioPublicoService {
         };
     }
 
-    /**
-     * ✅ Aprobar un formulario
-     */
-    async aprobarFormulario(formularioId: string, observaciones?: string): Promise<FormularioPublico> {
-        const formulario = await this.buscarPorId(formularioId);
+/**
+ * ✅ Aprobar un formulario - COPIA LOS COMBINADOS AL CONTRATISTA
+ * Si el contratista ya existe, lo desactiva antes de crear el nuevo
+ */
+async aprobarFormulario(formularioId: string, observaciones?: string): Promise<FormularioPublico> {
+  const formulario = await this.buscarPorId(formularioId);
 
-        if (!formulario) {
-            throw new NotFoundException(`Formulario ${formularioId} no encontrado`);
-        }
+  if (!formulario) {
+    throw new NotFoundException(`Formulario ${formularioId} no encontrado`);
+  }
 
-        if (formulario.estado === EstadoFormulario.APROBADO) {
-            throw new BadRequestException('Este formulario ya está aprobado');
-        }
+  if (formulario.estado === EstadoFormulario.APROBADO) {
+    throw new BadRequestException('Este formulario ya está aprobado');
+  }
 
-        formulario.estado = EstadoFormulario.APROBADO;
-        formulario.fechaEnvio = new Date();
+  // ✅ OBTENER EL CONTRATISTA EXISTENTE
+  let contratista = null;
+  let contratistaId = formulario.contratistaId;
 
-        // Actualizar contratista a ACTIVO
-        if (formulario.contratistaId) {
-            await this.contratistaService.actualizar(formulario.contratistaId, {
-                estado: 'ACTIVO',
-                // Opcional: actualizar otros campos del contratista con los datos del formulario
-            });
-        }
+  try {
+    contratista = await this.contratistaService.buscarPorId(contratistaId);
+  } catch (error) {
+    this.logger.warn(`⚠️ Contratista ${contratistaId} no encontrado, se creará uno nuevo`);
+  }
 
-        const updated = await this.formularioRepository.save(formulario);
-        this.logger.log(`✅ Formulario ${formularioId} aprobado`);
-        return updated;
+  // ✅ Si el contratista existe, verificamos si está activo
+  if (contratista) {
+    this.logger.log(`📋 Contratista encontrado: ${contratista.id} - ${contratista.razonSocial} - Estado: ${contratista.estado}`);
+
+    // ✅ Si está ACTIVO, lo desactivamos
+    if (contratista.estado === 'ACTIVO') {
+      this.logger.log(`⚠️ Contratista está ACTIVO. Desactivando...`);
+      await this.contratistaService.actualizar(contratista.id, {
+        estado: 'INACTIVO'
+      });
+      this.logger.log(`✅ Contratista ${contratista.id} desactivado exitosamente`);
+    } else {
+      this.logger.log(`ℹ️ Contratista ya está ${contratista.estado}, no se requiere desactivar`);
     }
+  }
+
+  // ✅ CREAR UN NUEVO CONTRATISTA CON EL MISMO DOCUMENTO
+  let datosContratista: any = {};
+
+  if (contratista) {
+    datosContratista = {
+      tipoDocumento: contratista.tipoDocumento || 'CC',
+      documentoIdentidad: contratista.documentoIdentidad,
+      razonSocial: contratista.razonSocial,
+      representanteLegal: contratista.representanteLegal || formulario.representanteLegal,
+      documentoRepresentante: contratista.documentoRepresentante || formulario.documentoRepresentante,
+      telefono: contratista.telefono || formulario.telefono,
+      email: contratista.email || '',
+      direccion: contratista.direccion || formulario.direccion,
+      departamento: contratista.departamento || formulario.departamento,
+      ciudad: contratista.ciudad || formulario.ciudad,
+      tipoContratista: contratista.tipoContratista || formulario.tipoContratista,
+      estado: 'ACTIVO',
+      numeroContrato: contratista.numeroContrato || `PS-${Date.now().toString().slice(-4)}`,
+      cargo: contratista.cargo || formulario.cargo,
+      objetivoContrato: contratista.objetivoContrato || formulario.objetivoContrato
+    };
+  } else {
+    datosContratista = {
+      tipoDocumento: 'CC',
+      documentoIdentidad: formulario.documentoRepresentante || '0000000000',
+      razonSocial: formulario.representanteLegal || 'Contratista',
+      representanteLegal: formulario.representanteLegal || '',
+      documentoRepresentante: formulario.documentoRepresentante || '',
+      telefono: formulario.telefono || '',
+      email: '',
+      direccion: formulario.direccion || '',
+      departamento: formulario.departamento || '',
+      ciudad: formulario.ciudad || '',
+      tipoContratista: formulario.tipoContratista || '',
+      estado: 'ACTIVO',
+      numeroContrato: `PS-${Date.now().toString().slice(-4)}`,
+      cargo: formulario.cargo || '',
+      objetivoContrato: formulario.objetivoContrato || ''
+    };
+  }
+
+  this.logger.log(`📝 Creando NUEVO contratista con documento: ${datosContratista.documentoIdentidad}`);
+
+  // ✅ USAR EL MÉTODO QUE NO VALIDA DOCUMENTO ACTIVO
+  const nuevoContratista = await this.contratistaService.crearSinValidacion(datosContratista);
+  this.logger.log(`✅ Nuevo contratista creado: ${nuevoContratista.id} - ${nuevoContratista.razonSocial}`);
+
+  // ✅ ACTUALIZAR EL FORMULARIO CON EL NUEVO CONTRATISTA ID
+  formulario.contratistaId = nuevoContratista.id;
+
+  // ✅ OBTENER LOS DOCUMENTOS COMBINADOS DEL FORMULARIO (esCombinado = true)
+  const documentosFormulario = await this.obtenerDocumentos(formularioId);
+  const combinados = documentosFormulario.filter(doc => doc.esCombinado === true);
+
+  this.logger.log(`📋 Encontrados ${combinados.length} documentos combinados en el formulario`);
+
+  // ✅ COPIAR CADA COMBINADO AL NUEVO CONTRATISTA
+  for (const docCombinado of combinados) {
+    try {
+      this.logger.log(`📄 Copiando combinado ${docCombinado.tipo} al nuevo contratista...`);
+
+      const buffer = await this.storageService.getFile(docCombinado.rutaArchivo);
+
+      const extension = docCombinado.nombreArchivo.split('.').pop() || 'pdf';
+      const timestamp = Date.now();
+      const nombreUnico = `${docCombinado.tipo}_${timestamp}.${extension}`;
+
+      const folderName = nuevoContratista.numeroContrato
+        ? `${nuevoContratista.numeroContrato}_${nuevoContratista.razonSocial.replace(/[^a-zA-Z0-9]/g, '_')}`
+        : `${nuevoContratista.id}`;
+      const folder = `contratistas/${folderName}`;
+      const filePath = `${folder}/${nombreUnico}`;
+
+      const result = await this.storageService.uploadFile(
+        filePath,
+        buffer,
+        'application/pdf'
+      );
+
+      const nuevoDocumento = new DocumentoContratista();
+      nuevoDocumento.contratistaId = nuevoContratista.id;
+      nuevoDocumento.tipo = String(docCombinado.tipo) as any;
+      nuevoDocumento.nombreArchivo = nombreUnico;
+      nuevoDocumento.rutaArchivo = result.path;
+      nuevoDocumento.tipoMime = 'application/pdf';
+      nuevoDocumento.tamanoBytes = buffer.length;
+      nuevoDocumento.subidoPor = 'sistema';
+      nuevoDocumento.esCombinado = true;
+
+      await this.contratistaService['documentoRepository'].save(nuevoDocumento);
+
+      this.logger.log(`✅ Combinado ${docCombinado.tipo} copiado al nuevo contratista ${nuevoContratista.id}`);
+    } catch (error) {
+      this.logger.error(`❌ Error copiando combinado ${docCombinado.tipo}: ${error.message}`);
+    }
+  }
+
+  // ✅ ACTUALIZAR ESTADO DEL FORMULARIO
+  formulario.estado = EstadoFormulario.APROBADO;
+  formulario.fechaEnvio = new Date();
+
+  const updated = await this.formularioRepository.save(formulario);
+  this.logger.log(`✅ Formulario ${formularioId} aprobado y nuevo contratista creado con los combinados copiados`);
+
+  return updated;
+}
+
 
     /**
      * ✅ Rechazar un formulario
@@ -814,8 +904,6 @@ export class FormularioPublicoService {
         }
 
         formulario.estado = EstadoFormulario.RECHAZADO;
-        // Guardar motivo en alguna columna (puedes agregar una columna 'motivoRechazo' en la entidad)
-        // formulario.motivoRechazo = motivo;
 
         const updated = await this.formularioRepository.save(formulario);
         this.logger.log(`❌ Formulario ${formularioId} rechazado: ${motivo}`);

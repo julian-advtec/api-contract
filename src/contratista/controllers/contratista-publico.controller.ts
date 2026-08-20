@@ -667,6 +667,4 @@ export class ContratistaPublicoController {
             };
         }
     }
-
-
 }

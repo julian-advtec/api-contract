@@ -24,7 +24,7 @@ import { Roles } from '../../auth/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { UserRole } from '../../users/enums/user-role.enum';
 import { ContratistaDocumentoService } from '../services/contratista-documento.service';
-import { ContratistaService } from '../services/contratista.service'; // ✅ AÑADIR
+import { ContratistaService } from '../services/contratista.service';
 import { TipoDocumento } from '../entities/documento-contratista.entity';
 import { BitacoraSistemaService } from '../../bitacora-sistema/bitacora-sistema.service';
 import { ModuloBitacora, AccionBitacora } from '../../bitacora-sistema/entities/bitacora-sistema.entity';
@@ -37,7 +37,7 @@ export class ContratistaDocumentoController {
   constructor(
     private readonly documentoService: ContratistaDocumentoService,
     private readonly bitacoraService: BitacoraSistemaService,
-    private readonly contratistaService: ContratistaService, // ✅ AÑADIR
+    private readonly contratistaService: ContratistaService,
   ) {}
 
   /**
@@ -256,10 +256,6 @@ export class ContratistaDocumentoController {
     }
   }
 
-  // ===============================
-  // ✅ NUEVO ENDPOINT: VERIFICAR EMAIL
-  // ===============================
-
   /**
    * Verificar si un contratista tiene email
    * GET /contratistas/:id/tiene-email
@@ -292,6 +288,86 @@ export class ContratistaDocumentoController {
           data: { tieneEmail: false, email: null },
         },
       };
+    }
+  }
+
+  // ===============================
+  // ✅ NUEVOS ENDPOINTS PARA DOCUMENTOS COMBINADOS
+  // ===============================
+
+  /**
+   * ✅ Obtener documento combinado de SEGURIDAD SOCIAL
+   * GET /contratistas/:id/documentos/combinado/SEGURIDAD_SOCIAL
+   */
+  @Get(':id/documentos/combinado/SEGURIDAD_SOCIAL')
+  @Public()
+  async descargarCombinadoSeguridadSocial(
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    try {
+      this.logger.log(`📥 Descargando combinado SEGURIDAD SOCIAL del contratista ${id}`);
+
+      const { buffer, nombre, mimeType } = await this.documentoService.obtenerCombinadoPorTipo(
+        id,
+        'SEGURIDAD_SOCIAL'
+      );
+
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombre)}"`);
+      res.setHeader('Content-Length', buffer.length);
+
+      res.send(buffer);
+    } catch (error) {
+      this.logger.error(`❌ Error descargando combinado SEGURIDAD SOCIAL: ${error.message}`);
+      if (!res.headersSent) {
+        const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
+        return res.status(status).json({
+          ok: true,
+          data: {
+            success: false,
+            message: error.message
+          }
+        });
+      }
+    }
+  }
+
+  /**
+   * ✅ Obtener documento combinado de CERTIFICADO_ANTECEDENTES
+   * GET /contratistas/:id/documentos/combinado/CERTIFICADO_ANTECEDENTES
+   */
+  @Get(':id/documentos/combinado/CERTIFICADO_ANTECEDENTES')
+  @Public()
+  async descargarCombinadoAntecedentes(
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    try {
+      this.logger.log(`📥 Descargando combinado CERTIFICADO_ANTECEDENTES del contratista ${id}`);
+
+      const { buffer, nombre, mimeType } = await this.documentoService.obtenerCombinadoPorTipo(
+        id,
+        'CERTIFICADO_ANTECEDENTES'
+      );
+
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombre)}"`);
+      res.setHeader('Content-Length', buffer.length);
+
+      res.send(buffer);
+    } catch (error) {
+      this.logger.error(`❌ Error descargando combinado CERTIFICADO_ANTECEDENTES: ${error.message}`);
+      if (!res.headersSent) {
+        const status = error instanceof NotFoundException ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
+        return res.status(status).json({
+          ok: true,
+          data: {
+            success: false,
+            message: error.message
+          }
+        });
+      }
     }
   }
 }
