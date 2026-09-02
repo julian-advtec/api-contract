@@ -1,4 +1,3 @@
-// src/contratista/controllers/contratista-publico.controller.ts
 import {
     Controller,
     Get,
@@ -21,9 +20,8 @@ import { ContratistaTokenService } from '../services/contratista-token.service';
 import { ContratistaService } from '../services/contratista.service';
 import { FormularioPublicoService } from '../services/formulario-publico.service';
 import { TipoDocumentoFormulario } from '../entities/documento-formulario-publico.entity';
-import { EstadoFormulario } from '../entities/formulario-publico.entity'; // ✅ IMPORTADO
+import { EstadoFormulario } from '../entities/formulario-publico.entity';
 import { TokenUsado } from '../entities/token-usado.entity';
-
 
 @Controller('contratistas/publico')
 @Public()
@@ -570,19 +568,32 @@ export class ContratistaPublicoController {
     }
 
     /**
-     * ✅ Aprobar un formulario
-     */
+  * ✅ Aprobar un formulario - RECIBE NÚMERO DE CONTRATO
+  */
     @Post(':formularioId/aprobar')
-    @HttpCode(HttpStatus.OK)
     async aprobarFormulario(
         @Param('formularioId') formularioId: string,
-        @Body() body: { observaciones?: string },
+        @Body() body: { numeroContrato?: string },
     ) {
         try {
+            // ✅ Validar que se haya enviado un número de contrato
+            if (!body.numeroContrato) {
+                return {
+                    ok: true,
+                    data: {
+                        success: false,
+                        message: 'Debe ingresar un número de contrato para aprobar el formulario',
+                        data: null,
+                    },
+                };
+            }
+
             const resultado = await this.formularioService.aprobarFormulario(
                 formularioId,
-                body.observaciones,
+                null, // observaciones (no usado)
+                body.numeroContrato, // ✅ Pasar el número de contrato
             );
+
             return {
                 ok: true,
                 data: {
@@ -667,4 +678,71 @@ export class ContratistaPublicoController {
             };
         }
     }
+
+    /**
+     * ✅ Descargar documento individual del formulario público
+     */
+    @Get(':formularioId/documentos/:documentoId/descargar')
+    @HttpCode(HttpStatus.OK)
+    async descargarDocumentoIndividual(
+        @Param('formularioId') formularioId: string,
+        @Param('documentoId') documentoId: string,
+        @Res() res: Response,
+    ) {
+        try {
+            this.logger.log(`📥 Descargando documento individual: ${documentoId} del formulario ${formularioId}`);
+
+            // ✅ Obtener el documento
+            const documento = await this.formularioService.obtenerDocumentoPorId(documentoId);
+
+            // ✅ Verificar que el documento pertenezca al formulario
+            if (documento.formularioId !== formularioId) {
+                this.logger.warn(`⚠️ Documento ${documentoId} no pertenece al formulario ${formularioId}`);
+                return res.status(HttpStatus.NOT_FOUND).json({
+                    ok: true,
+                    data: {
+                        success: false,
+                        message: 'Documento no encontrado en este formulario',
+                    }
+                });
+            }
+
+            // ✅ USAR EL FORMULARIO SERVICE PARA OBTENER EL ARCHIVO
+            const buffer = await this.formularioService.obtenerBufferDocumento(documentoId);
+
+            if (!buffer) {
+                this.logger.warn(`⚠️ Archivo no encontrado para documento: ${documentoId}`);
+                return res.status(HttpStatus.NOT_FOUND).json({
+                    ok: true,
+                    data: {
+                        success: false,
+                        message: 'Archivo no encontrado',
+                    }
+                });
+            }
+
+            // ✅ Configurar headers para la descarga
+            const nombreArchivo = documento.nombreArchivo || `documento_${documentoId.substring(0, 8)}.pdf`;
+            res.setHeader('Content-Type', documento.tipoMime || 'application/pdf');
+            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreArchivo)}"`);
+            res.setHeader('Content-Length', buffer.length);
+
+            res.send(buffer);
+
+            this.logger.log(`✅ Documento ${documentoId} descargado exitosamente`);
+        } catch (error) {
+            this.logger.error(`❌ Error descargando documento: ${error.message}`);
+            if (!res.headersSent) {
+                return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+                    ok: true,
+                    data: {
+                        success: false,
+                        message: error.message || 'Error al descargar el documento',
+                    }
+                });
+            }
+        }
+    }
+
+
 }

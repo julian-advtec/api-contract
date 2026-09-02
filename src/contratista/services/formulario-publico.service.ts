@@ -568,15 +568,7 @@ export class FormularioPublicoService {
         });
     }
 
-    /**
-     * Obtener documentos del formulario
-     */
-    async obtenerDocumentos(formularioId: string): Promise<DocumentoFormularioPublico[]> {
-        return this.documentoRepository.find({
-            where: { formularioId },
-            order: { fechaSubida: 'DESC' },
-        });
-    }
+
 
     /**
      * Obtener un documento por ID
@@ -694,20 +686,124 @@ export class FormularioPublicoService {
     }
 
     /**
-     * ✅ Obtener detalle completo de un formulario para aprobación
-     */
+  * Obtener documentos del formulario
+  */
+    async obtenerDocumentos(formularioId: string): Promise<DocumentoFormularioPublico[]> {
+        return this.documentoRepository.find({
+            where: { formularioId },
+            order: { fechaSubida: 'DESC' },
+        });
+    }
+
+    /**
+  * ✅ Obtener detalle completo de un formulario para aprobación
+  * Corrige nombres de archivos genéricos basándose en el tipo de documento
+  */
     async obtenerDetalleAprobacion(formularioId: string): Promise<any> {
+        this.logger.log(`🔍 Obteniendo detalle del formulario: ${formularioId}`);
+
         const formulario = await this.buscarPorId(formularioId);
 
         if (!formulario) {
             throw new NotFoundException(`Formulario ${formularioId} no encontrado`);
         }
 
-        const documentos = await this.obtenerDocumentos(formularioId);
+        // ✅ OBTENER DOCUMENTOS DIRECTAMENTE
+        const documentos = await this.documentoRepository.find({
+            where: { formularioId },
+            order: { fechaSubida: 'DESC' },
+        });
+
+        this.logger.log(`📄 Total de documentos encontrados: ${documentos.length}`);
+
+        // ✅ MAPEO DE NOMBRES POR TIPO PARA CORREGIR NOMBRES GENÉRICOS
+        const nombrePorTipo: Record<string, string> = {
+            'TARJETA_PROFESIONAL': 'Tarjeta Profesional',
+            'SARLAFT': 'SARLAFT',
+            'REDAM': 'REDAM',
+            'PUBLICACION_GT': 'Publicación GT',
+            'PANTALLAZO_SECOP': 'Pantallazo SECOP',
+            'PROPUESTA': 'Propuesta',
+            'HOJA_VIDA_SIGEP': 'Hoja de Vida SIGEP',
+            'GARANTIA': 'Garantía',
+            'EXAMEN_INGRESO': 'Examen de Ingreso',
+            'DECLARACION_INHABILIDADES': 'Declaración de Inhabilidades',
+            'DECLARACION_BIENES': 'Declaración de Bienes',
+            'CERTIFICADO_IDONEIDAD': 'Certificado de Idoneidad',
+            'CERTIFICADO_NO_PLANTA': 'Certificado No Planta',
+            'CERTIFICADO_EXPERIENCIA': 'Certificado de Experiencia',
+            'CERTIFICADO_BANCARIO': 'Certificado Bancario',
+            'CERTIFICADO_ANTECEDENTES': 'Certificado de Antecedentes (Combinado)',
+            'SEGURIDAD_SOCIAL': 'Seguridad Social (Combinado)',
+            'SEGURIDAD_SOCIAL_SALUD': 'Seguridad Social - Salud',
+            'SEGURIDAD_SOCIAL_PENSION': 'Seguridad Social - Pensión',
+            'SEGURIDAD_SOCIAL_ARL': 'Seguridad Social - ARL',
+            'CERTIFICADO_DISCIPLINARIOS': 'Certificado Disciplinarios',
+            'CERTIFICADO_RESPONSABILIDAD_FISCAL': 'Certificado Responsabilidad Fiscal',
+            'CERTIFICADO_ANTECEDENTES_JUDICIALES': 'Certificado Antecedentes Judiciales',
+            'CERTIFICADO_MEDIDAS_CORRECTIVAS': 'Certificado Medidas Correctivas',
+            'LIBRETA_MILITAR': 'Libreta Militar',
+            'RUT': 'RUT',
+            'CEDULA': 'Cédula de Ciudadanía',
+        };
+
+        // ✅ LOG DE DOCUMENTOS CON SUS NOMBRES REALES
+        this.logger.log('📋 LISTA DE DOCUMENTOS CON NOMBRES REALES:');
+        documentos.forEach((doc, index) => {
+            this.logger.log(`   ${index + 1}. ${doc.tipo} -> nombreArchivo: "${doc.nombreArchivo}" | esCombinado: ${doc.esCombinado}`);
+        });
+
         const estadoGrupos = await this.obtenerEstadoGrupos(formularioId);
 
+        // ✅ MAPEAR DOCUMENTOS CORRIGIENDO NOMBRES GENÉRICOS
+        const documentosMapeados = documentos.map(doc => {
+            let nombreArchivo = doc.nombreArchivo;
+
+            // ✅ SI EL NOMBRE ES GENÉRICO O DUPLICADO, GENERAR UNO BASADO EN EL TIPO
+            const esNombreGenerico =
+                nombreArchivo === 'CERTIFICADO_ANTECEDENTES_1784668397543.pdf' ||
+                nombreArchivo === 'SEGURIDAD_SOCIAL.pdf' ||
+                nombreArchivo === 'CERTIFICADO_ANTECEDENTES.pdf' ||
+                nombreArchivo === 'SEGURIDAD_SOCIAL_1782843664400_s4w738.pdf' ||
+                nombreArchivo.includes('CERTIFICADO_ANTECEDENTES') ||
+                nombreArchivo === 'Cuenta de cobro.pdf' ||
+                nombreArchivo === 'fv08909051770002500601888.pdf';
+
+            if (esNombreGenerico && !doc.esCombinado) {
+                // ✅ Generar nombre basado en el tipo
+                const nombreBase = nombrePorTipo[doc.tipo] || doc.tipo.replace(/_/g, ' ').toLowerCase();
+                const extension = '.pdf';
+                // Limpiar caracteres especiales para el nombre
+                const nombreLimpio = nombreBase.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s-]/g, '').trim();
+                // Reemplazar espacios por guiones bajos
+                const nombreFormateado = nombreLimpio.replace(/\s+/g, '_');
+                nombreArchivo = `${nombreFormateado}${extension}`;
+
+                this.logger.log(`🔄 Corrigiendo nombre para ${doc.tipo}: "${doc.nombreArchivo}" -> "${nombreArchivo}"`);
+            }
+
+            return {
+                id: doc.id,
+                tipo: doc.tipo,
+                nombreArchivo: nombreArchivo, // ✅ NOMBRE CORREGIDO
+                rutaArchivo: doc.rutaArchivo,
+                tipoMime: doc.tipoMime,
+                tamanoBytes: doc.tamanoBytes,
+                subidoPor: doc.subidoPor,
+                fechaSubida: doc.fechaSubida,
+                esCombinado: doc.esCombinado || false,
+                hashArchivo: doc.hashArchivo,
+            };
+        });
+
+        // ✅ LOG DE DOCUMENTOS MAPEADOS
+        this.logger.log('📋 DOCUMENTOS MAPEADOS PARA EL FRONTEND:');
+        documentosMapeados.forEach((doc, index) => {
+            this.logger.log(`   ${index + 1}. ${doc.tipo} -> nombreArchivo: "${doc.nombreArchivo}"`);
+        });
+
         const documentosPorTipo = {};
-        for (const doc of documentos) {
+        for (const doc of documentosMapeados) {
             if (!documentosPorTipo[doc.tipo]) {
                 documentosPorTipo[doc.tipo] = [];
             }
@@ -718,6 +814,7 @@ export class FormularioPublicoService {
         try {
             if (formulario.contratistaId) {
                 contratista = await this.contratistaService.buscarPorId(formulario.contratistaId);
+                this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial}`);
             }
         } catch (error) {
             this.logger.warn(`⚠️ No se pudo obtener el contratista: ${error.message}`);
@@ -728,167 +825,217 @@ export class FormularioPublicoService {
             };
         }
 
-        return {
+        const resultado = {
             formulario,
             contratista,
-            documentos,
+            documentos: documentosMapeados, // ✅ DOCUMENTOS CON NOMBRES CORREGIDOS
             documentosPorTipo,
             estadoGrupos,
             totalDocumentos: documentos.length,
             fechaCompletado: formulario.fechaCompletado,
             fechaCreacion: formulario.createdAt,
+            // ✅ INCLUIR INFORMACIÓN DE DEPURACIÓN
+            _debug: {
+                totalDocumentos: documentos.length,
+                nombresCorregidos: documentosMapeados.map(d => ({
+                    tipo: d.tipo,
+                    nombreArchivo: d.nombreArchivo,
+                    esCombinado: d.esCombinado
+                }))
+            }
         };
+
+        this.logger.log(`✅ Detalle del formulario ${formularioId} preparado con ${documentosMapeados.length} documentos`);
+
+        return resultado;
     }
 
-/**
- * ✅ Aprobar un formulario - COPIA LOS COMBINADOS AL CONTRATISTA
- * Si el contratista ya existe, lo desactiva antes de crear el nuevo
- */
-async aprobarFormulario(formularioId: string, observaciones?: string): Promise<FormularioPublico> {
-  const formulario = await this.buscarPorId(formularioId);
+    /**
+    * ✅ Aprobar un formulario - DESACTIVA TODOS los contratistas ACTIVOS con el mismo documento
+    */
+    async aprobarFormulario(
+        formularioId: string,
+        observaciones?: string,
+        numeroContrato?: string
+    ): Promise<FormularioPublico> {
+        const formulario = await this.buscarPorId(formularioId);
 
-  if (!formulario) {
-    throw new NotFoundException(`Formulario ${formularioId} no encontrado`);
-  }
+        if (!formulario) {
+            throw new NotFoundException(`Formulario ${formularioId} no encontrado`);
+        }
 
-  if (formulario.estado === EstadoFormulario.APROBADO) {
-    throw new BadRequestException('Este formulario ya está aprobado');
-  }
+        if (formulario.estado === EstadoFormulario.APROBADO) {
+            throw new BadRequestException('Este formulario ya está aprobado');
+        }
 
-  // ✅ OBTENER EL CONTRATISTA EXISTENTE
-  let contratista = null;
-  let contratistaId = formulario.contratistaId;
+        // ✅ OBTENER EL CONTRATISTA EXISTENTE DEL FORMULARIO
+        let contratistaExistente = null;
+        let contratistaId = formulario.contratistaId;
 
-  try {
-    contratista = await this.contratistaService.buscarPorId(contratistaId);
-  } catch (error) {
-    this.logger.warn(`⚠️ Contratista ${contratistaId} no encontrado, se creará uno nuevo`);
-  }
+        try {
+            contratistaExistente = await this.contratistaService.buscarPorId(contratistaId);
+        } catch (error) {
+            this.logger.warn(`⚠️ Contratista ${contratistaId} no encontrado, se creará uno nuevo`);
+        }
 
-  // ✅ Si el contratista existe, verificamos si está activo
-  if (contratista) {
-    this.logger.log(`📋 Contratista encontrado: ${contratista.id} - ${contratista.razonSocial} - Estado: ${contratista.estado}`);
+        // ✅ OBTENER EL DOCUMENTO DEL CONTRATISTA
+        let documentoIdentidad = '0000000000';
+        if (contratistaExistente) {
+            documentoIdentidad = contratistaExistente.documentoIdentidad;
+        } else if (formulario.documentoRepresentante) {
+            documentoIdentidad = formulario.documentoRepresentante;
+        }
 
-    // ✅ Si está ACTIVO, lo desactivamos
-    if (contratista.estado === 'ACTIVO') {
-      this.logger.log(`⚠️ Contratista está ACTIVO. Desactivando...`);
-      await this.contratistaService.actualizar(contratista.id, {
-        estado: 'INACTIVO'
-      });
-      this.logger.log(`✅ Contratista ${contratista.id} desactivado exitosamente`);
-    } else {
-      this.logger.log(`ℹ️ Contratista ya está ${contratista.estado}, no se requiere desactivar`);
+        this.logger.log(`📋 Documento del contratista: ${documentoIdentidad}`);
+
+        // ✅ DESACTIVAR TODOS LOS CONTRATISTAS ACTIVOS CON EL MISMO DOCUMENTO
+        const contratistasActivos = await this.contratistaService.buscarPorDocumentoExacto(documentoIdentidad);
+
+        if (contratistasActivos && contratistasActivos.length > 0) {
+            this.logger.log(`🔍 Encontrados ${contratistasActivos.length} contratistas ACTIVOS con documento ${documentoIdentidad}`);
+
+            for (const contratista of contratistasActivos) {
+                if (contratista.estado === 'ACTIVO') {
+                    this.logger.log(`⚠️ Desactivando contratista: ${contratista.id} - ${contratista.razonSocial} (Contrato: ${contratista.numeroContrato})`);
+                    await this.contratistaService.actualizar(contratista.id, {
+                        estado: 'INACTIVO'
+                    });
+                    this.logger.log(`✅ Contratista ${contratista.id} desactivado`);
+                }
+            }
+        }
+
+        // ✅ USAR EL NÚMERO DE CONTRATO PROPORCIONADO O GENERAR UNO NUEVO
+        let contratoFinal = numeroContrato;
+
+        // ✅ Si no se proporcionó número de contrato, generar uno automático
+        if (!contratoFinal) {
+            contratoFinal = `PS-${Date.now().toString().slice(-4)}-${Math.floor(Math.random() * 1000)}`;
+            this.logger.log(`⚠️ No se proporcionó número de contrato, generando: ${contratoFinal}`);
+        } else {
+            // ✅ Verificar que el número de contrato no esté en uso por otro contratista ACTIVO
+            const contratoExistente = await this.contratistaService.buscarPorNumeroContratoExacto(contratoFinal);
+            if (contratoExistente && contratoExistente.estado === 'ACTIVO') {
+                throw new BadRequestException(`El número de contrato "${contratoFinal}" ya está en uso por un contratista activo.`);
+            }
+        }
+
+        this.logger.log(`📋 Número de contrato a usar: ${contratoFinal}`);
+
+        // ✅ OBTENER LOS DATOS DEL CONTRATISTA (usar el primero encontrado o los del formulario)
+        let datosContratista: any = {};
+
+        if (contratistaExistente) {
+            datosContratista = {
+                tipoDocumento: contratistaExistente.tipoDocumento || 'CC',
+                documentoIdentidad: contratistaExistente.documentoIdentidad,
+                razonSocial: contratistaExistente.razonSocial,
+                representanteLegal: contratistaExistente.representanteLegal || formulario.representanteLegal,
+                documentoRepresentante: contratistaExistente.documentoRepresentante || formulario.documentoRepresentante,
+                telefono: contratistaExistente.telefono || formulario.telefono,
+                email: contratistaExistente.email || '',
+                direccion: contratistaExistente.direccion || formulario.direccion,
+                departamento: contratistaExistente.departamento || formulario.departamento,
+                ciudad: contratistaExistente.ciudad || formulario.ciudad,
+                tipoContratista: contratistaExistente.tipoContratista || formulario.tipoContratista,
+                estado: 'ACTIVO',
+                numeroContrato: contratoFinal,
+                cargo: contratistaExistente.cargo || formulario.cargo,
+                objetivoContrato: contratistaExistente.objetivoContrato || formulario.objetivoContrato
+            };
+        } else {
+            datosContratista = {
+                tipoDocumento: 'CC',
+                documentoIdentidad: documentoIdentidad,
+                razonSocial: formulario.representanteLegal || 'Contratista',
+                representanteLegal: formulario.representanteLegal || '',
+                documentoRepresentante: formulario.documentoRepresentante || '',
+                telefono: formulario.telefono || '',
+                email: '',
+                direccion: formulario.direccion || '',
+                departamento: formulario.departamento || '',
+                ciudad: formulario.ciudad || '',
+                tipoContratista: formulario.tipoContratista || '',
+                estado: 'ACTIVO',
+                numeroContrato: contratoFinal,
+                cargo: formulario.cargo || '',
+                objetivoContrato: formulario.objetivoContrato || ''
+            };
+        }
+
+        this.logger.log(`📝 Creando NUEVO contratista con documento: ${datosContratista.documentoIdentidad} y contrato: ${contratoFinal}`);
+
+        // ✅ USAR EL MÉTODO QUE NO VALIDA DOCUMENTO ACTIVO
+        const nuevoContratista = await this.contratistaService.crearSinValidacion(datosContratista);
+        this.logger.log(`✅ Nuevo contratista creado: ${nuevoContratista.id} - ${nuevoContratista.razonSocial} (Contrato: ${contratoFinal})`);
+
+        // ✅ ACTUALIZAR EL FORMULARIO CON EL NUEVO CONTRATISTA ID
+        formulario.contratistaId = nuevoContratista.id;
+
+        // ✅ OBTENER LOS DOCUMENTOS COMBINADOS DEL FORMULARIO (esCombinado = true)
+        const documentosFormulario = await this.obtenerDocumentos(formularioId);
+        const combinados = documentosFormulario.filter(doc => doc.esCombinado === true);
+
+        this.logger.log(`📋 Encontrados ${combinados.length} documentos combinados en el formulario`);
+
+        // ✅ COPIAR CADA COMBINADO AL NUEVO CONTRATISTA
+        for (const docCombinado of combinados) {
+            try {
+                this.logger.log(`📄 Copiando combinado ${docCombinado.tipo} al nuevo contratista...`);
+
+                const buffer = await this.storageService.getFile(docCombinado.rutaArchivo);
+
+                const extension = docCombinado.nombreArchivo.split('.').pop() || 'pdf';
+                const timestamp = Date.now();
+                const nombreUnico = `${docCombinado.tipo}_${timestamp}.${extension}`;
+
+                const folderName = nuevoContratista.numeroContrato
+                    ? `${nuevoContratista.numeroContrato}_${nuevoContratista.razonSocial.replace(/[^a-zA-Z0-9]/g, '_')}`
+                    : `${nuevoContratista.id}`;
+                const folder = `contratistas/${folderName}`;
+                const filePath = `${folder}/${nombreUnico}`;
+
+                const result = await this.storageService.uploadFile(
+                    filePath,
+                    buffer,
+                    'application/pdf'
+                );
+
+                const nuevoDocumento = new DocumentoContratista();
+                nuevoDocumento.contratistaId = nuevoContratista.id;
+                nuevoDocumento.tipo = String(docCombinado.tipo) as any;
+                nuevoDocumento.nombreArchivo = nombreUnico;
+                nuevoDocumento.rutaArchivo = result.path;
+                nuevoDocumento.tipoMime = 'application/pdf';
+                nuevoDocumento.tamanoBytes = buffer.length;
+                nuevoDocumento.subidoPor = 'sistema';
+                nuevoDocumento.esCombinado = true;
+
+                await this.contratistaService['documentoRepository'].save(nuevoDocumento);
+
+                this.logger.log(`✅ Combinado ${docCombinado.tipo} copiado al nuevo contratista ${nuevoContratista.id}`);
+            } catch (error) {
+                this.logger.error(`❌ Error copiando combinado ${docCombinado.tipo}: ${error.message}`);
+            }
+        }
+
+        // ✅ ACTUALIZAR ESTADO DEL FORMULARIO
+        formulario.estado = EstadoFormulario.APROBADO;
+        formulario.fechaEnvio = new Date();
+
+        const updated = await this.formularioRepository.save(formulario);
+        this.logger.log(`✅ Formulario ${formularioId} aprobado con contrato ${contratoFinal}`);
+
+        return updated;
     }
-  }
 
-  // ✅ CREAR UN NUEVO CONTRATISTA CON EL MISMO DOCUMENTO
-  let datosContratista: any = {};
-
-  if (contratista) {
-    datosContratista = {
-      tipoDocumento: contratista.tipoDocumento || 'CC',
-      documentoIdentidad: contratista.documentoIdentidad,
-      razonSocial: contratista.razonSocial,
-      representanteLegal: contratista.representanteLegal || formulario.representanteLegal,
-      documentoRepresentante: contratista.documentoRepresentante || formulario.documentoRepresentante,
-      telefono: contratista.telefono || formulario.telefono,
-      email: contratista.email || '',
-      direccion: contratista.direccion || formulario.direccion,
-      departamento: contratista.departamento || formulario.departamento,
-      ciudad: contratista.ciudad || formulario.ciudad,
-      tipoContratista: contratista.tipoContratista || formulario.tipoContratista,
-      estado: 'ACTIVO',
-      numeroContrato: contratista.numeroContrato || `PS-${Date.now().toString().slice(-4)}`,
-      cargo: contratista.cargo || formulario.cargo,
-      objetivoContrato: contratista.objetivoContrato || formulario.objetivoContrato
-    };
-  } else {
-    datosContratista = {
-      tipoDocumento: 'CC',
-      documentoIdentidad: formulario.documentoRepresentante || '0000000000',
-      razonSocial: formulario.representanteLegal || 'Contratista',
-      representanteLegal: formulario.representanteLegal || '',
-      documentoRepresentante: formulario.documentoRepresentante || '',
-      telefono: formulario.telefono || '',
-      email: '',
-      direccion: formulario.direccion || '',
-      departamento: formulario.departamento || '',
-      ciudad: formulario.ciudad || '',
-      tipoContratista: formulario.tipoContratista || '',
-      estado: 'ACTIVO',
-      numeroContrato: `PS-${Date.now().toString().slice(-4)}`,
-      cargo: formulario.cargo || '',
-      objetivoContrato: formulario.objetivoContrato || ''
-    };
-  }
-
-  this.logger.log(`📝 Creando NUEVO contratista con documento: ${datosContratista.documentoIdentidad}`);
-
-  // ✅ USAR EL MÉTODO QUE NO VALIDA DOCUMENTO ACTIVO
-  const nuevoContratista = await this.contratistaService.crearSinValidacion(datosContratista);
-  this.logger.log(`✅ Nuevo contratista creado: ${nuevoContratista.id} - ${nuevoContratista.razonSocial}`);
-
-  // ✅ ACTUALIZAR EL FORMULARIO CON EL NUEVO CONTRATISTA ID
-  formulario.contratistaId = nuevoContratista.id;
-
-  // ✅ OBTENER LOS DOCUMENTOS COMBINADOS DEL FORMULARIO (esCombinado = true)
-  const documentosFormulario = await this.obtenerDocumentos(formularioId);
-  const combinados = documentosFormulario.filter(doc => doc.esCombinado === true);
-
-  this.logger.log(`📋 Encontrados ${combinados.length} documentos combinados en el formulario`);
-
-  // ✅ COPIAR CADA COMBINADO AL NUEVO CONTRATISTA
-  for (const docCombinado of combinados) {
-    try {
-      this.logger.log(`📄 Copiando combinado ${docCombinado.tipo} al nuevo contratista...`);
-
-      const buffer = await this.storageService.getFile(docCombinado.rutaArchivo);
-
-      const extension = docCombinado.nombreArchivo.split('.').pop() || 'pdf';
-      const timestamp = Date.now();
-      const nombreUnico = `${docCombinado.tipo}_${timestamp}.${extension}`;
-
-      const folderName = nuevoContratista.numeroContrato
-        ? `${nuevoContratista.numeroContrato}_${nuevoContratista.razonSocial.replace(/[^a-zA-Z0-9]/g, '_')}`
-        : `${nuevoContratista.id}`;
-      const folder = `contratistas/${folderName}`;
-      const filePath = `${folder}/${nombreUnico}`;
-
-      const result = await this.storageService.uploadFile(
-        filePath,
-        buffer,
-        'application/pdf'
-      );
-
-      const nuevoDocumento = new DocumentoContratista();
-      nuevoDocumento.contratistaId = nuevoContratista.id;
-      nuevoDocumento.tipo = String(docCombinado.tipo) as any;
-      nuevoDocumento.nombreArchivo = nombreUnico;
-      nuevoDocumento.rutaArchivo = result.path;
-      nuevoDocumento.tipoMime = 'application/pdf';
-      nuevoDocumento.tamanoBytes = buffer.length;
-      nuevoDocumento.subidoPor = 'sistema';
-      nuevoDocumento.esCombinado = true;
-
-      await this.contratistaService['documentoRepository'].save(nuevoDocumento);
-
-      this.logger.log(`✅ Combinado ${docCombinado.tipo} copiado al nuevo contratista ${nuevoContratista.id}`);
-    } catch (error) {
-      this.logger.error(`❌ Error copiando combinado ${docCombinado.tipo}: ${error.message}`);
+    /**
+     * ✅ Obtener el buffer de un documento del formulario público
+     */
+    async obtenerBufferDocumento(documentoId: string): Promise<Buffer> {
+        const documento = await this.obtenerDocumentoPorId(documentoId);
+        return this.storageService.getFile(documento.rutaArchivo);
     }
-  }
-
-  // ✅ ACTUALIZAR ESTADO DEL FORMULARIO
-  formulario.estado = EstadoFormulario.APROBADO;
-  formulario.fechaEnvio = new Date();
-
-  const updated = await this.formularioRepository.save(formulario);
-  this.logger.log(`✅ Formulario ${formularioId} aprobado y nuevo contratista creado con los combinados copiados`);
-
-  return updated;
-}
-
-
     /**
      * ✅ Rechazar un formulario
      */

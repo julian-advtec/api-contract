@@ -377,6 +377,32 @@ export class ContratistaService {
     }
   }
 
+  async buscarPorDocumentoExacto(documentoIdentidad: string): Promise<Contratista[]> {
+    try {
+      if (!documentoIdentidad || documentoIdentidad.trim().length < 1) {
+        return [];
+      }
+
+      this.logger.log(`🔍 Buscando contratistas por documento exacto: "${documentoIdentidad}"`);
+
+      const contratistas = await this.contratistaRepository.find({
+        where: {
+          documentoIdentidad: documentoIdentidad.trim()
+        },
+        relations: ['documentos'],
+        order: {
+          createdAt: 'DESC'
+        }
+      });
+
+      this.logger.log(`✅ Encontrados ${contratistas.length} contratistas con documento ${documentoIdentidad}`);
+      return contratistas;
+    } catch (error) {
+      this.logger.error(`❌ Error buscando por documento: ${error.message}`);
+      return [];
+    }
+  }
+
   async buscarPorDocumento(documentoIdentidad: string): Promise<Contratista[]> {
     try {
       if (!documentoIdentidad || documentoIdentidad.trim().length < 1) return [];
