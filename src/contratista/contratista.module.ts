@@ -27,8 +27,10 @@ import { TokenUsado } from './entities/token-usado.entity'
     MulterModule.register({
       storage: memoryStorage(),
       limits: {
-        fileSize: 5 * 1024 * 1024,
-        files: 25,
+        fileSize: 50 * 1024 * 1024,  // ✅ 50MB por archivo (antes 5MB)
+        files: 50,                    // ✅ 50 archivos máximo (antes 25)
+        fieldSize: 50 * 1024 * 1024,  // ✅ 50MB por campo
+        fieldNameSize: 500,           // ✅ 500 caracteres por nombre
       },
     }),
     // ✅ REGISTRAR TODAS LAS ENTIDADES EN TypeORM
@@ -70,7 +72,7 @@ import { TokenUsado } from './entities/token-usado.entity'
 })
 export class ContratistasModule {
   private readonly logger = new Logger(ContratistasModule.name);
-  
+
   constructor() {
     this.logger.log('✅✅✅ CONTRATISTAS MODULE INICIALIZADO');
     this.logger.log('📡 Controladores registrados:');

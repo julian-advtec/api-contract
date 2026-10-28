@@ -25,12 +25,12 @@ export class FormularioPublico {
     @PrimaryGeneratedColumn('uuid')
     id: string;
 
-    @Column({ name: 'contratista_id' })
-    contratistaId: string;
+    @Column({ name: 'contratista_id', nullable: true })
+    contratistaId: string | null;
 
-    @ManyToOne(() => Contratista)
+    @ManyToOne(() => Contratista, { nullable: true })
     @JoinColumn({ name: 'contratista_id' })
-    contratista: Contratista;
+    contratista: Contratista | null;
 
     // Campos del formulario
     @Column({ name: 'representante_legal', nullable: true, length: 200 })
@@ -53,6 +53,9 @@ export class FormularioPublico {
 
     @Column({ name: 'tipo_contratista', nullable: true, length: 50 })
     tipoContratista: string;
+
+    @Column({ name: 'subtipo_juridica', nullable: true, length: 50 })
+    subtipoJuridica: string | null;
 
     @Column({ nullable: true, length: 100 })
     cargo: string;

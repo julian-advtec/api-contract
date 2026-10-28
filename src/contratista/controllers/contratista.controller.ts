@@ -1041,87 +1041,88 @@ export class ContratistasController {
     }
   }
 
-  @Put(':id/completo')
-  @Roles(UserRole.ADMIN, UserRole.JURIDICA)
-  @UseInterceptors(FilesInterceptor('documentos', 20))
-  async actualizarContratistaCompleto(
-    @Param('id') id: string,
-    @Body() body: any,
-    @UploadedFiles() files: Express.Multer.File[],
-    @Req() req: any
-  ) {
-    const inicio = Date.now();
-    try {
-      this.logger.log(`✏️ ACTUALIZANDO CON VERSIONADO contratista: ${id}`);
+ @Put(':id/completo')
+@Roles(UserRole.ADMIN, UserRole.JURIDICA)
+@UseInterceptors(FilesInterceptor('documentos', 20))
+async actualizarContratistaCompleto(
+  @Param('id') id: string,
+  @Body() body: any,
+  @UploadedFiles() files: Express.Multer.File[],
+  @Req() req: any
+) {
+  const inicio = Date.now();
+  try {
+    this.logger.log(`✏️ Actualizando contratista directo: ${id}`);
 
-      const datosActualizar: any = {};
+    const datosActualizar: any = {
+      tipoDocumento: body.tipoDocumento,
+      documentoIdentidad: body.documentoIdentidad,
+      razonSocial: body.razonSocial,
+      representanteLegal: body.representanteLegal,
+      documentoRepresentante: body.documentoRepresentante,
+      telefono: body.telefono,
+      email: body.email,
+      direccion: body.direccion,
+      departamento: body.departamento,
+      ciudad: body.ciudad,
+      tipoContratista: body.tipoContratista,
+      estado: body.estado,
+      numeroContrato: body.numeroContrato,
+      cargo: body.cargo,
+      objetivoContrato: body.objetivoContrato,
+    };
 
-      if (body.tipoDocumento !== undefined) datosActualizar.tipoDocumento = body.tipoDocumento;
-      if (body.documentoIdentidad !== undefined) datosActualizar.documentoIdentidad = body.documentoIdentidad;
-      if (body.razonSocial !== undefined) datosActualizar.razonSocial = body.razonSocial;
-      if (body.representanteLegal !== undefined) datosActualizar.representanteLegal = body.representanteLegal;
-      if (body.documentoRepresentante !== undefined) datosActualizar.documentoRepresentante = body.documentoRepresentante;
-      if (body.telefono !== undefined) datosActualizar.telefono = body.telefono;
-      if (body.email !== undefined) datosActualizar.email = body.email;
-      if (body.direccion !== undefined) datosActualizar.direccion = body.direccion;
-      if (body.departamento !== undefined) datosActualizar.departamento = body.departamento;
-      if (body.ciudad !== undefined) datosActualizar.ciudad = body.ciudad;
-      if (body.tipoContratista !== undefined) datosActualizar.tipoContratista = body.tipoContratista;
-      if (body.estado !== undefined) datosActualizar.estado = body.estado;
-      if (body.numeroContrato !== undefined) datosActualizar.numeroContrato = body.numeroContrato;
-      if (body.cargo !== undefined) datosActualizar.cargo = body.cargo;
-      if (body.objetivoContrato !== undefined) datosActualizar.objetivoContrato = body.objetivoContrato;
-
-      const documentos = [];
-      if (files && files.length > 0) {
-        for (let i = 0; i < files.length; i++) {
-          const tipo = body[`tipo_documento_${i}`];
-          if (tipo && Object.values(TipoDocumento).includes(tipo as TipoDocumento)) {
-            documentos.push({ tipo: tipo as TipoDocumento, archivo: files[i] });
-          }
+    // Procesar archivos subidos
+    const documentos: Array<{ tipo: TipoDocumento; archivo: Express.Multer.File }> = [];
+    if (files && files.length > 0) {
+      for (let i = 0; i < files.length; i++) {
+        const tipo = body[`tipo_documento_${i}`];
+        if (tipo && Object.values(TipoDocumento).includes(tipo as TipoDocumento)) {
+          documentos.push({ tipo: tipo as TipoDocumento, archivo: files[i] });
         }
       }
-
-      const resultado = await this.contratistaService.actualizarConVersionado(
-        id,
-        datosActualizar,
-        documentos,
-        req.user?.email || 'sistema'
-      );
-
-      await this.bitacoraService.registrar(
-        AccionBitacora.ADMIN_EDITAR_USUARIO,
-        ModuloBitacora.ADMINISTRACION,
-        req.user,
-        undefined,
-        {
-          detalles: `Contratista versionado: Anterior ID ${resultado.contratistaAnterior.id} (INACTIVO) → Nuevo ID ${resultado.contratistaNuevo.id} (ACTIVO)`,
-          contratistaId: resultado.contratistaNuevo.id,
-          duracionMs: Date.now() - inicio,
-        },
-        req,
-      );
-
-      return {
-        ok: true,
-        data: {
-          success: true,
-          message: 'Contratista actualizado correctamente (versión anterior conservada como inactiva)',
-          data: resultado
-        }
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error actualizando contratista: ${error.message}`);
-      return {
-        ok: true,
-        data: {
-          success: false,
-          message: error.message,
-          data: null
-        }
-      };
     }
+
+    // Procesar documentos marcados para eliminación
+    if (body.documentos_eliminar) {
+      try {
+        const idsEliminar: string[] = JSON.parse(body.documentos_eliminar);
+        for (const docId of idsEliminar) {
+          await this.contratistaService.eliminarDocumento(docId, id);
+        }
+      } catch (e) {
+        this.logger.warn(`No se pudieron parsear documentos a eliminar: ${e.message}`);
+      }
+    }
+
+    // Llamar a actualizarConDocumentos (edición directa sin forzar nuevo contrato)
+    const resultado = await this.contratistaService.actualizarConDocumentos(
+      id,
+      datosActualizar,
+      documentos,
+      req.user?.email || 'sistema'
+    );
+
+    return {
+      ok: true,
+      data: {
+        success: true,
+        message: 'Contratista actualizado exitosamente',
+        data: resultado
+      }
+    };
+  } catch (error) {
+    this.logger.error(`❌ Error actualizando contratista: ${error.message}`);
+    return {
+      ok: false,
+      data: {
+        success: false,
+        message: error.message,
+        data: null
+      }
+    };
   }
+}
 
   // ===============================
   // ELIMINAR CONTRATISTA - ADMIN Y JURIDICA

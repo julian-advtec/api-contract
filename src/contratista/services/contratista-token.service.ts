@@ -20,7 +20,7 @@ export class ContratistaTokenService {
   ) {}
 
   /**
-   * ✅ Verificar si un token ya fue usado (usando SQL directo)
+   * ✅ Verificar si un token ya fue usado (SQL directo)
    */
   async tokenYaFueUsado(token: string): Promise<boolean> {
     try {
@@ -38,39 +38,45 @@ export class ContratistaTokenService {
   }
 
   /**
-   * ✅ Marcar un token como usado (usando SQL directo)
+   * ✅ Marcar token como usado (SQL directo)
    */
-  async marcarTokenComoUsado(token: string, contratistaId: string, formularioId?: string): Promise<void> {
+  async marcarTokenComoUsado(
+    token: string,
+    contratistaId: string,
+    formularioId?: string
+  ): Promise<void> {
     try {
-      // Verificar si ya existe
       const existe = await this.dataSource.query(
         'SELECT COUNT(*) as count FROM tokens_usados WHERE token = $1',
         [token]
       );
       const count = parseInt(existe[0]?.count || '0', 10);
-      
+
       if (count > 0) {
-        this.logger.log(`ℹ️ Token ya estaba marcado como usado: ${token.substring(0, 20)}...`);
+        this.logger.log(`ℹ️ Token ya estaba marcado como usado`);
         return;
       }
-      
+
       await this.dataSource.query(
         `INSERT INTO tokens_usados (token, contratista_id, formulario_id, fecha_uso) 
          VALUES ($1, $2, $3, NOW())`,
         [token, contratistaId, formularioId || null]
       );
+
       this.logger.log(`✅ Token marcado como usado: ${token.substring(0, 20)}...`);
     } catch (error) {
-      this.logger.error(`❌ Error marcando token como usado: ${error.message}`);
+      this.logger.error(`❌ Error marcando token: ${error.message}`);
       throw error;
     }
   }
 
-  async generarTokenAcceso(contratistaId: string, emailDestino?: string): Promise<{
-    token: string;
-    expiraEn: Date;
-    enlace: string;
-  }> {
+  /**
+   * ✅ Generar token de acceso para un contratista
+   */
+  async generarTokenAcceso(
+    contratistaId: string,
+    emailDestino?: string
+  ): Promise<{ token: string; expiraEn: Date; enlace: string }> {
     try {
       const contratista = await this.contratistaService.buscarPorId(contratistaId);
 
@@ -101,7 +107,9 @@ export class ContratistaTokenService {
       const expiraEn = new Date();
       expiraEn.setHours(expiraEn.getHours() + 24);
 
-      const frontendUrl = this.configService.get<string>('FRONTEND_PUBLIC_URL') || 'http://localhost:4201';
+      const frontendUrl =
+        this.configService.get<string>('FRONTEND_PUBLIC_URL') ||
+        'http://localhost:4201';
       const enlace = `${frontendUrl}/contratistas/publico/verificar/${token}`;
 
       this.logger.log(`✅ Token generado para: ${contratista.razonSocial}`);
@@ -114,6 +122,10 @@ export class ContratistaTokenService {
     }
   }
 
+  /**
+   * ✅ Verificar token de acceso
+   * IMPORTANTE: Solo valida token, no estado ni email
+   */
   async verificarTokenAcceso(token: string): Promise<{
     valido: boolean;
     contratista?: any;
@@ -121,10 +133,10 @@ export class ContratistaTokenService {
     tokenUsado?: boolean;
   }> {
     try {
-      // ✅ Verificar si el token ya fue usado
+      // 1. Verificar si el token ya fue usado
       const usado = await this.tokenYaFueUsado(token);
       if (usado) {
-        this.logger.warn(`⚠️ Token ya fue usado: ${token.substring(0, 20)}...`);
+        this.logger.warn(`⚠️ Token ya fue usado`);
         return {
           valido: true,
           tokenUsado: true,
@@ -133,6 +145,7 @@ export class ContratistaTokenService {
         };
       }
 
+      // 2. Verificar y decodificar el JWT
       const payload = this.jwtService.verify(token, {
         secret: this.configService.get<string>('JWT_SECRET') || 'secret-key',
       });
@@ -144,6 +157,7 @@ export class ContratistaTokenService {
         };
       }
 
+      // 3. Buscar el contratista
       const contratista = await this.contratistaService.buscarPorId(payload.sub);
 
       if (!contratista) {
@@ -153,21 +167,13 @@ export class ContratistaTokenService {
         };
       }
 
-      if (contratista.estado !== 'ACTIVO') {
-        return {
-          valido: false,
-          error: 'El contratista no está activo',
-        };
-      }
+      // ⚠️ NO validamos estado ACTIVO
+      // ⚠️ NO validamos email
+      // El admin generó el token → debe poder llenar el formulario
 
-      if (contratista.email !== payload.email) {
-        return {
-          valido: false,
-          error: 'Los datos del contratista no coinciden con el token',
-        };
-      }
-
-      this.logger.log(`✅ Token verificado para: ${contratista.razonSocial}`);
+      this.logger.log(
+        `✅ Token verificado para: ${contratista.razonSocial} (estado: ${contratista.estado})`
+      );
 
       return {
         valido: true,

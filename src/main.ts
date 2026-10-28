@@ -3,9 +3,10 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe, Logger, BadRequestException } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
+import { json, urlencoded } from 'express';
 
 const logger = new Logger('Bootstrap');
 
@@ -52,19 +53,14 @@ function setupSystemEnvironment() {
     }
 }
 
-// Función para detectar el entorno actual
 function detectAndConfigureEnvironment() {
-    // Detectar si estamos en VSCode
     const isVSCode = process.env.VSCODE_PID !== undefined;
     
-    // Detectar si estamos en Render
     const isRender = process.env.RENDER !== undefined || 
                      (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('render.com'));
     
-    // Detectar por NODE_ENV
     const nodeEnv = process.env.NODE_ENV || 'development';
     
-    // Detectar archivos de entorno
     const hasProductionEnv = fs.existsSync(path.join(process.cwd(), '.env.production'));
     const hasDevelopmentEnv = fs.existsSync(path.join(process.cwd(), '.env.development'));
     
@@ -75,14 +71,12 @@ function detectAndConfigureEnvironment() {
     logger.log(`   📝 .env.production: ${hasProductionEnv ? 'SÍ' : 'NO'}`);
     logger.log(`   📝 .env.development: ${hasDevelopmentEnv ? 'SÍ' : 'NO'}`);
     
-    // Determinar si es producción
     const isProduction = isRender || nodeEnv === 'production' || hasProductionEnv;
     
     if (isProduction) {
         logger.log('☁️ ========== ENTORNO DE PRODUCCIÓN DETECTADO ==========');
         logger.log('   📦 Usando configuración de PRODUCCIÓN');
         
-        // Mantener configuración de producción
         if (!process.env.STORAGE_TYPE) {
             process.env.STORAGE_TYPE = 'supabase';
         }
@@ -94,20 +88,15 @@ function detectAndConfigureEnvironment() {
         logger.log(`   ✅ NODE_ENV: ${process.env.NODE_ENV}`);
         logger.log(`   ☁️ Usando Supabase para almacenamiento`);
         
-        return false; // No es local
+        return false;
     }
     
-    // FORZAR DESARROLLO
     logger.log('💻 ========== ENTORNO DE DESARROLLO DETECTADO ==========');
     logger.log('   🔧 Usando configuración de DESARROLLO');
     
-    // Forzar almacenamiento LOCAL
     process.env.STORAGE_TYPE = 'local';
-    
-    // Forzar NODE_ENV a development
     process.env.NODE_ENV = 'development';
     
-    // Configurar base de datos LOCAL
     if (!process.env.DB_HOST) {
         process.env.DB_HOST = 'localhost';
         process.env.DB_PORT = '5432';
@@ -117,7 +106,6 @@ function detectAndConfigureEnvironment() {
         logger.log('   ✅ Configuración de base de datos LOCAL establecida');
     }
     
-    // Configurar ruta local si no existe
     if (!process.env.LOCAL_STORAGE_PATH) {
         process.env.LOCAL_STORAGE_PATH = '\\\\R2-D2\\api-contract';
         logger.log('   ✅ Ruta de almacenamiento LOCAL configurada');
@@ -128,7 +116,7 @@ function detectAndConfigureEnvironment() {
     logger.log(`   💾 Usando almacenamiento LOCAL`);
     logger.log(`   🗄️ Base de datos: ${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
     
-    return true; // Es local
+    return true;
 }
 
 function getCorsOrigins(): string[] {
@@ -179,15 +167,17 @@ async function bootstrap() {
         logger.log('🚀 Iniciando aplicación...');
         logger.log(`💻 Plataforma: ${process.platform}`);
         
-        // Configurar entorno automáticamente
         const isLocal = detectAndConfigureEnvironment();
-        
         setupSystemEnvironment();
 
         const app = await NestFactory.create(AppModule, { 
             cors: true,
             logger: ['error', 'warn', 'log', 'debug', 'verbose']
         });
+
+        // ✅ CRÍTICO: Aumentar límites de body-parser para FormData con archivos
+        app.use(json({ limit: '50mb' }));
+        app.use(urlencoded({ extended: true, limit: '50mb' }));
 
         app.setGlobalPrefix('api');
 
@@ -227,13 +217,27 @@ async function bootstrap() {
             logger.log('   🌍 Todos los orígenes permitidos en desarrollo');
         }
 
+        // ✅ ValidationPipe con logging detallado
         app.useGlobalPipes(
             new ValidationPipe({
                 whitelist: true,
-                forbidNonWhitelisted: true,
+                forbidNonWhitelisted: false,
                 transform: true,
                 transformOptions: {
                     enableImplicitConversion: false,
+                },
+                exceptionFactory: (errors) => {
+                    logger.error('❌ ========== VALIDATION ERRORS ==========');
+                    logger.error(JSON.stringify(errors, null, 2));
+                    logger.error('==========================================');
+                    return new BadRequestException({
+                        ok: false,
+                        message: 'Error de validación en los datos enviados',
+                        errors: errors.map((e: any) => ({
+                            campo: e.property,
+                            errores: e.constraints,
+                        })),
+                    });
                 },
             }),
         );
@@ -253,7 +257,6 @@ async function bootstrap() {
         const publicUrl = process.env.PUBLIC_URL || `http://localhost:${port}`;
         logger.log(`🌐 URL pública: ${publicUrl}`);
         
-        // Mostrar resumen de configuración
         logger.log('📋 ========== RESUMEN DE CONFIGURACIÓN ==========');
         if (isLocal) {
             logger.log('💾 Almacenamiento: LOCAL');

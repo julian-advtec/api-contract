@@ -1,3 +1,4 @@
+// src/contratista/controllers/contratista-publico.controller.ts
 import {
     Controller,
     Get,
@@ -92,25 +93,36 @@ export class ContratistaPublicoController {
         }
     }
 
-
-
-
     @Post('guardar/:token')
     @HttpCode(HttpStatus.OK)
-    @UseInterceptors(FilesInterceptor('documentos', 25))
+    @UseInterceptors(FilesInterceptor('documentos', 50))
     async guardarDatos(
         @Param('token') token: string,
         @Body() body: any,
         @UploadedFiles() files?: Express.Multer.File[],
         @Req() req?: any,
     ) {
-        this.logger.log(`📝 Guardando datos...`);
+        // ✅ LOGS DE DIAGNÓSTICO - ANTES DEL TRY
+        this.logger.log('════════════════════════════════════════');
+        this.logger.log('📝 ========== GUARDANDO DATOS ==========');
         this.logger.log(`📎 Archivos recibidos: ${files?.length || 0}`);
         this.logger.log(`📦 Body keys: ${Object.keys(body).join(', ')}`);
+        this.logger.log(`📦 Content-Type: ${req?.headers?.['content-type']}`);
+        this.logger.log(`📦 Content-Length: ${req?.headers?.['content-length']}`);
+        this.logger.log(`📦 Body: ${JSON.stringify(body).substring(0, 300)}`);
+
+        if (files && files.length > 0) {
+            this.logger.log(`📎 Detalle de archivos:`);
+            files.forEach((f, i) => {
+                this.logger.log(`   ${i + 1}. ${f.originalname} (${f.size} bytes, ${f.mimetype})`);
+            });
+        }
+        this.logger.log('════════════════════════════════════════');
 
         try {
             const verificar = await this.tokenService.verificarTokenAcceso(token);
             if (!verificar.valido) {
+                this.logger.warn(`⚠️ Token inválido: ${verificar.error}`);
                 return {
                     ok: true,
                     data: {
@@ -121,8 +133,8 @@ export class ContratistaPublicoController {
                 };
             }
 
-            // ✅ Verificar si el token ya fue usado ANTES de procesar
             if (verificar.tokenUsado === true) {
+                this.logger.warn(`⚠️ Token ya usado`);
                 return {
                     ok: true,
                     data: {
@@ -143,14 +155,16 @@ export class ContratistaPublicoController {
                     const parsed = JSON.parse(body.data);
                     datosFormulario = parsed;
                     documentosInfo = parsed.documentosNuevos || [];
+                    this.logger.log(`✅ body.data parseado correctamente`);
                 } catch (e) {
+                    this.logger.warn(`⚠️ Error parseando body.data: ${e.message}`);
                     datosFormulario = body;
                 }
             } else {
                 datosFormulario = body;
             }
 
-            this.logger.log(`📦 Datos recibidos: ${JSON.stringify(datosFormulario, null, 2)}`);
+            this.logger.log(`📦 Datos del formulario: ${JSON.stringify(datosFormulario, null, 2)}`);
 
             const ipOrigen = req?.ip || req?.connection?.remoteAddress || '0.0.0.0';
             const userAgent = req?.headers?.['user-agent'] || 'unknown';
@@ -174,11 +188,9 @@ export class ContratistaPublicoController {
                 this.logger.log(`✅ Formulario actualizado: ${formulario.id}`);
             }
 
-            // ✅ Obtener el total de documentos del body
             const totalDocumentosEsperados = parseInt(body.total_documentos) || 0;
             this.logger.log(`📊 Total de documentos esperados: ${totalDocumentosEsperados}`);
 
-            // Procesar archivos subidos
             const documentosSubidos: any[] = [];
             const tiposValidos = Object.values(TipoDocumentoFormulario);
             const errores: string[] = [];
@@ -189,15 +201,12 @@ export class ContratistaPublicoController {
                 for (let i = 0; i < files.length; i++) {
                     const file = files[i];
 
-                    // ✅ Obtener el tipo del documento del body usando el índice
                     let tipoDoc = body[`tipo_documento_${i}`];
 
-                    // Si no se encuentra por índice, buscar en documentosInfo
                     if (!tipoDoc && documentosInfo[i]?.tipo) {
                         tipoDoc = documentosInfo[i].tipo;
                     }
 
-                    // Si aún no hay tipo, intentar obtener del nombre del archivo
                     if (!tipoDoc) {
                         const nombreSinExtension = file.originalname.split('.')[0];
                         const tipoEncontrado = tiposValidos.find(t => nombreSinExtension.includes(t));
@@ -239,32 +248,33 @@ export class ContratistaPublicoController {
                 this.logger.warn(`⚠️ Errores durante la subida: ${errores.join('; ')}`);
             }
 
-            // Verificar completitud
             const documentos = await this.formularioService.obtenerDocumentos(formulario.id);
-            const tiposRequeridos = Object.values(TipoDocumentoFormulario);
-            const tiposSubidos = documentos.map(doc => doc.tipo);
-            const todosCompletos = tiposRequeridos.every(t => tiposSubidos.includes(t));
+            const estaCompleto = await this.formularioService.estaCompleto(formulario.id);
+
+            this.logger.log(`📊 Validación de completitud: ${estaCompleto}`);
+            this.logger.log(`   - Tipo: ${formulario.tipoContratista}`);
+            this.logger.log(`   - Subtipo: ${formulario.subtipoJuridica}`);
+            this.logger.log(`   - Documentos subidos: ${documentos.length}`);
 
             let tokenMarcadoUsado = false;
 
-            if (todosCompletos && !formulario.completado) {
+            if (estaCompleto && !formulario.completado) {
                 formulario = await this.formularioService.completarFormulario(formulario.id);
                 this.logger.log(`✅ Formulario completado automáticamente: ${formulario.id}`);
+            }
 
-                // ✅ MARCAR EL TOKEN COMO USADO DESPUÉS DE COMPLETAR EL FORMULARIO
+            if (!verificar.tokenUsado) {
                 try {
                     await this.tokenService.marcarTokenComoUsado(token, contratistaId, formulario.id);
                     tokenMarcadoUsado = true;
-                    this.logger.log(`✅ Token marcado como usado: ${token.substring(0, 30)}...`);
+                    this.logger.log(`✅ Token marcado como usado`);
                 } catch (error) {
                     this.logger.error(`❌ Error marcando token como usado: ${error.message}`);
                 }
             }
 
-            // Obtener estado de grupos
             const estadoGrupos = await this.formularioService.obtenerEstadoGrupos(formulario.id);
 
-            // Actualizar contratista
             const camposPermitidos = [
                 'representanteLegal',
                 'documentoRepresentante',
@@ -293,6 +303,8 @@ export class ContratistaPublicoController {
                 this.logger.log(`✅ Datos del contratista actualizados: ${contratistaActualizado.razonSocial}`);
             }
 
+            this.logger.log(`✅ ========== GUARDADO EXITOSO ==========`);
+
             return {
                 ok: true,
                 data: {
@@ -306,13 +318,15 @@ export class ContratistaPublicoController {
                         totalDocumentos: documentos.length,
                         estado: formulario.estado,
                         estadoGrupos: estadoGrupos,
-                        tokenUsado: tokenMarcadoUsado, // ✅ Indicar si el token fue usado
+                        tokenUsado: tokenMarcadoUsado,
                         errores: errores.length > 0 ? errores : undefined,
                     },
                 },
             };
         } catch (error) {
-            this.logger.error(`❌ Error guardando datos: ${error.message}`);
+            this.logger.error(`❌ ========== ERROR GUARDANDO DATOS ==========`);
+            this.logger.error(`❌ Mensaje: ${error.message}`);
+            this.logger.error(`❌ Stack: ${error.stack}`);
             return {
                 ok: true,
                 data: {
@@ -323,7 +337,6 @@ export class ContratistaPublicoController {
             };
         }
     }
-
 
     /**
      * ✅ Obtener estado de grupos de documentos
@@ -477,19 +490,16 @@ export class ContratistaPublicoController {
 
     /**
      * ✅ Endpoint de prueba para listar todos los formularios completados
-     * (Útil para debugging cuando hay problemas con las relaciones)
      */
     @Get('pendientes-aprobacion-test')
     @HttpCode(HttpStatus.OK)
     async listarPendientesAprobacionTest() {
         try {
-            // Obtener formularios sin relaciones problemáticas
             const formularios = await this.formularioService['formularioRepository'].find({
                 where: { estado: EstadoFormulario.COMPLETADO },
                 order: { fechaCompletado: 'DESC' },
             });
 
-            // Enriquecer con datos básicos
             const resultado = [];
             for (const formulario of formularios) {
                 const documentos = await this.formularioService.obtenerDocumentos(formulario.id);
@@ -568,15 +578,14 @@ export class ContratistaPublicoController {
     }
 
     /**
-  * ✅ Aprobar un formulario - RECIBE NÚMERO DE CONTRATO
-  */
+     * ✅ Aprobar un formulario - RECIBE NÚMERO DE CONTRATO
+     */
     @Post(':formularioId/aprobar')
     async aprobarFormulario(
         @Param('formularioId') formularioId: string,
         @Body() body: { numeroContrato?: string },
     ) {
         try {
-            // ✅ Validar que se haya enviado un número de contrato
             if (!body.numeroContrato) {
                 return {
                     ok: true,
@@ -590,8 +599,8 @@ export class ContratistaPublicoController {
 
             const resultado = await this.formularioService.aprobarFormulario(
                 formularioId,
-                null, // observaciones (no usado)
-                body.numeroContrato, // ✅ Pasar el número de contrato
+                null,
+                body.numeroContrato,
             );
 
             return {
@@ -692,10 +701,8 @@ export class ContratistaPublicoController {
         try {
             this.logger.log(`📥 Descargando documento individual: ${documentoId} del formulario ${formularioId}`);
 
-            // ✅ Obtener el documento
             const documento = await this.formularioService.obtenerDocumentoPorId(documentoId);
 
-            // ✅ Verificar que el documento pertenezca al formulario
             if (documento.formularioId !== formularioId) {
                 this.logger.warn(`⚠️ Documento ${documentoId} no pertenece al formulario ${formularioId}`);
                 return res.status(HttpStatus.NOT_FOUND).json({
@@ -707,7 +714,6 @@ export class ContratistaPublicoController {
                 });
             }
 
-            // ✅ USAR EL FORMULARIO SERVICE PARA OBTENER EL ARCHIVO
             const buffer = await this.formularioService.obtenerBufferDocumento(documentoId);
 
             if (!buffer) {
@@ -721,15 +727,106 @@ export class ContratistaPublicoController {
                 });
             }
 
-            // ✅ Configurar headers para la descarga
-            const nombreArchivo = documento.nombreArchivo || `documento_${documentoId.substring(0, 8)}.pdf`;
+            // ✅ MAPEO DE NOMBRES LEGIBLES
+            const nombresLegibles: Record<string, string> = {
+                // Combinados
+                'CERTIFICADO_EXISTENCIA': 'Certificado_de_Existencia_y_Representacion_Legal',
+                'CERTIFICADO_ANTECEDENTES': 'Antecedentes_Disciplinarios_Fiscales_Judiciales_y_Medidas_Correctivas',
+                'DECLARACION_BIENES': 'Declaracion_de_Bienes_y_Rentas',
+                'PAZ_SALVO': 'Paz_y_Salvo_de_Seguridad_Social_y_Parafiscales',
+                'SEGURIDAD_SOCIAL': 'Seguridad_Social_Salud_Pension_ARL',
+
+                // Persona Natural
+                'CEDULA': 'Cedula_de_Ciudadania',
+                'RUT': 'RUT',
+                'LIBRETA_MILITAR': 'Libreta_Militar',
+                'CERTIFICADO_DISCIPLINARIOS': 'Certificado_de_Antecedentes_Disciplinarios',
+                'CERTIFICADO_RESPONSABILIDAD_FISCAL': 'Certificado_de_Responsabilidad_Fiscal',
+                'CERTIFICADO_ANTECEDENTES_JUDICIALES': 'Certificado_de_Antecedentes_Judiciales',
+                'CERTIFICADO_MEDIDAS_CORRECTIVAS': 'Certificado_de_Medidas_Correctivas',
+                'SEGURIDAD_SOCIAL_SALUD': 'Seguridad_Social_Salud',
+                'SEGURIDAD_SOCIAL_PENSION': 'Seguridad_Social_Pension',
+                'SEGURIDAD_SOCIAL_ARL': 'Seguridad_Social_ARL',
+                'CERTIFICADO_BANCARIO': 'Certificado_Bancario',
+                'CERTIFICADO_EXPERIENCIA': 'Certificado_de_Experiencia',
+                'CERTIFICADO_NO_PLANTA': 'Certificado_No_Planta',
+                'CERTIFICADO_IDONEIDAD': 'Certificado_de_Idoneidad',
+                'DECLARACION_INHABILIDADES': 'Declaracion_de_Inhabilidades',
+                'EXAMEN_INGRESO': 'Examen_de_Ingreso',
+                'GARANTIA': 'Garantia',
+                'HOJA_VIDA_SIGEP': 'Hoja_de_Vida_SIGEP',
+                'PANTALLAZO_SECOP': 'Pantallazo_SECOP',
+                'PROPUESTA': 'Propuesta',
+                'PUBLICACION_GT': 'Publicacion_GT',
+                'REDAM': 'REDAM',
+                'SARLAFT': 'SARLAFT',
+                'TARJETA_PROFESIONAL': 'Tarjeta_Profesional',
+                'CERTIFICADO_INHABILIDADES_E_INCOMPATIBILIDADES': 'Certificado_de_Inhabilidades_e_Incompatibilidades',
+                'CERTIFICADO_CUENTA_BANCARIA': 'Certificado_de_Cuenta_Bancaria',
+
+                // Persona Jurídica
+                'COTIZACION_UNO': 'Cotizacion_1',
+                'COTIZACION_DOS': 'Cotizacion_2',
+                'COTIZACION_TRES': 'Cotizacion_3',
+                'HOJA_VIDA_PERSONA_JURIDICA': 'Hoja_de_Vida_Persona_Juridica',
+                'CERTIFICADO_REPRECENTACION_LEGAL': 'Certificado_de_Representacion_Legal',
+                'PROPUESTA_SINDICATO': 'Propuesta_del_Sindicato',
+                'ACTA_INSCRIPCION_VIGENCIA': 'Acta_de_Inscripcion_y_Vigencia',
+                'CERTIFICADO_JUNTA_DIRECTIVA_SINDICAL': 'Certificado_Junta_Directiva_Sindical',
+                'CERTIFICADO_DISCIPLINARIOS_PROCURADORIA_GENERAL_REPRECENTANTE_LEGAL': 'Antecedentes_Disciplinarios_Procuraduria_Representante_Legal',
+                'CERTIFICADO_DISCIPLINARIOS_PROCURADORIA_GENERAL_SINDICATO': 'Antecedentes_Disciplinarios_Procuraduria_Sindicato',
+                'CERTIFICADO_NO_BOLETIN_RESPONSABLE_FISCALES_CONTRALORIA_REPRESENTANTE_LEGAL': 'No_Boletin_Responsabilidad_Fiscal_Representante_Legal',
+                'CERTIFICADO_NO_BOLETIN_RESPONSABLE_FISCALES_CONTRALORIA_SINDICAL': 'No_Boletin_Responsabilidad_Fiscal_Sindical',
+                'FORMA_UNICA_DECLARACION_BIENES_Y_RENTA': 'Formulario_Unico_de_Declaracion_de_Bienes_y_Renta',
+                'ACTIVIDADES_ECONOMCIAS_PRIVADAS': 'Actividades_Economicas_Privadas',
+                'PAZ_SALVO_SALUD': 'Paz_y_Salvo_de_Salud',
+                'PAZ_SALVO_PENSION': 'Paz_y_Salvo_de_Pension',
+                'PAZ_SALVO_PARAFISCALES': 'Paz_y_Salvo_de_Parafiscales',
+                'CC_CONTADOR': 'Cedula_del_Contador',
+                'TARJETA_PROFESIONAL_CONTADOR': 'Tarjeta_Profesional_del_Contador',
+                'CERTIFICADO_JUNTA_CENTRAL_CONTADORES': 'Certificado_Junta_Central_de_Contadores',
+            };
+
+            // ✅ Obtener el nombre legible según el tipo de documento
+            const tipoDocumento = String(documento.tipo);
+            const nombreBase = nombresLegibles[tipoDocumento] || tipoDocumento;
+
+            // ✅ Usar el nombre original si ya tiene uno descriptivo, si no, generar uno
+            let nombreArchivo = documento.nombreArchivo || '';
+
+            // Si el nombre del archivo es genérico (como "CERTIFICADO_ANTECEDENTES.pdf"), usar el nombre legible
+            const esNombreGenerico =
+                !nombreArchivo ||
+                nombreArchivo === `${tipoDocumento}.pdf` ||
+                nombreArchivo.startsWith('documento_') ||
+                nombreArchivo.includes('fv089') ||
+                nombreArchivo.includes('Cuenta de cobro');
+
+            if (esNombreGenerico) {
+                nombreArchivo = `${nombreBase}.pdf`;
+            }
+
+            // ✅ Si es combinado, usar el nombre del grupo
+            if (documento.esCombinado) {
+                const nombresCombinados: Record<string, string> = {
+                    'CERTIFICADO_EXISTENCIA': 'Certificado_de_Existencia_y_Representacion_Legal.pdf',
+                    'CERTIFICADO_ANTECEDENTES': 'Antecedentes_Disciplinarios_Fiscales_Judiciales_y_Medidas_Correctivas.pdf',
+                    'DECLARACION_BIENES': 'Declaracion_de_Bienes_y_Rentas.pdf',
+                    'PAZ_SALVO': 'Paz_y_Salvo_de_Seguridad_Social_y_Parafiscales.pdf',
+                    'SEGURIDAD_SOCIAL': 'Seguridad_Social_Salud_Pension_ARL.pdf',
+                };
+                nombreArchivo = nombresCombinados[tipoDocumento] || `${nombreBase}.pdf`;
+            }
+
+            this.logger.log(`📥 Descargando con nombre: "${nombreArchivo}"`);
+
             res.setHeader('Content-Type', documento.tipoMime || 'application/pdf');
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreArchivo)}"`);
             res.setHeader('Content-Length', buffer.length);
 
             res.send(buffer);
 
-            this.logger.log(`✅ Documento ${documentoId} descargado exitosamente`);
+            this.logger.log(`✅ Documento ${documentoId} descargado exitosamente como "${nombreArchivo}"`);
         } catch (error) {
             this.logger.error(`❌ Error descargando documento: ${error.message}`);
             if (!res.headersSent) {
@@ -743,6 +840,4 @@ export class ContratistaPublicoController {
             }
         }
     }
-
-
 }

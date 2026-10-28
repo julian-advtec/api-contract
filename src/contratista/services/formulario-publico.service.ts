@@ -1,3 +1,4 @@
+// src/contratista/services/formulario-publico.service.ts
 import { Injectable, Logger, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
@@ -9,25 +10,152 @@ import * as crypto from 'crypto';
 import { PDFDocument } from 'pdf-lib';
 import { ContratistaService } from './contratista.service';
 
+// ============================================================
+// ✅ CONFIGURACIÓN DE DOCUMENTOS POR TIPO / SUBTIPO
+// ============================================================
+const DOCUMENTOS_PERSONA_NATURAL: TipoDocumentoFormulario[] = [
+    TipoDocumentoFormulario.CEDULA,
+    TipoDocumentoFormulario.RUT,
+    TipoDocumentoFormulario.LIBRETA_MILITAR,
+    TipoDocumentoFormulario.CERTIFICADO_DISCIPLINARIOS,
+    TipoDocumentoFormulario.CERTIFICADO_RESPONSABILIDAD_FISCAL,
+    TipoDocumentoFormulario.CERTIFICADO_ANTECEDENTES_JUDICIALES,
+    TipoDocumentoFormulario.CERTIFICADO_MEDIDAS_CORRECTIVAS,
+    TipoDocumentoFormulario.SEGURIDAD_SOCIAL_SALUD,
+    TipoDocumentoFormulario.SEGURIDAD_SOCIAL_PENSION,
+    TipoDocumentoFormulario.SEGURIDAD_SOCIAL_ARL,
+    TipoDocumentoFormulario.CERTIFICADO_BANCARIO,
+    TipoDocumentoFormulario.CERTIFICADO_EXPERIENCIA,
+    TipoDocumentoFormulario.CERTIFICADO_NO_PLANTA,
+    TipoDocumentoFormulario.CERTIFICADO_IDONEIDAD,
+    TipoDocumentoFormulario.DECLARACION_BIENES,
+    TipoDocumentoFormulario.DECLARACION_INHABILIDADES,
+    TipoDocumentoFormulario.EXAMEN_INGRESO,
+    TipoDocumentoFormulario.GARANTIA,
+    TipoDocumentoFormulario.HOJA_VIDA_SIGEP,
+    TipoDocumentoFormulario.PANTALLAZO_SECOP,
+    TipoDocumentoFormulario.PROPUESTA,
+    TipoDocumentoFormulario.PUBLICACION_GT,
+    TipoDocumentoFormulario.REDAM,
+    TipoDocumentoFormulario.SARLAFT,
+    TipoDocumentoFormulario.TARJETA_PROFESIONAL,
+    TipoDocumentoFormulario.CERTIFICADO_INHABILIDADES_E_INCOMPATIBILIDADES,
+    TipoDocumentoFormulario.CERTIFICADO_CUENTA_BANCARIA,
+];
+
+// ============================================================
+// ✅ PERSONA JURÍDICA - SINDICAL
+// ============================================================
+const DOCUMENTOS_JURIDICA_SINDICAL: TipoDocumentoFormulario[] = [
+    TipoDocumentoFormulario.PROPUESTA_SINDICATO,
+    TipoDocumentoFormulario.ACTA_INSCRIPCION_VIGENCIA,
+    TipoDocumentoFormulario.CERTIFICADO_EXISTENCIA,
+    TipoDocumentoFormulario.CERTIFICADO_REPRECENTACION_LEGAL,
+    TipoDocumentoFormulario.CERTIFICADO_JUNTA_DIRECTIVA_SINDICAL,
+    TipoDocumentoFormulario.CEDULA,
+    TipoDocumentoFormulario.RUT,
+    TipoDocumentoFormulario.CERTIFICADO_DISCIPLINARIOS_PROCURADORIA_GENERAL_REPRECENTANTE_LEGAL,
+    TipoDocumentoFormulario.CERTIFICADO_DISCIPLINARIOS_PROCURADORIA_GENERAL_SINDICATO,
+    TipoDocumentoFormulario.CERTIFICADO_NO_BOLETIN_RESPONSABLE_FISCALES_CONTRALORIA_REPRESENTANTE_LEGAL,
+    TipoDocumentoFormulario.CERTIFICADO_NO_BOLETIN_RESPONSABLE_FISCALES_CONTRALORIA_SINDICAL,
+    TipoDocumentoFormulario.CERTIFICADO_ANTECEDENTES_JUDICIALES,
+    TipoDocumentoFormulario.CERTIFICADO_MEDIDAS_CORRECTIVAS,
+    TipoDocumentoFormulario.REDAM,
+    TipoDocumentoFormulario.SARLAFT,
+    TipoDocumentoFormulario.HOJA_VIDA_PERSONA_JURIDICA,
+    TipoDocumentoFormulario.FORMA_UNICA_DECLARACION_BIENES_Y_RENTA,
+    TipoDocumentoFormulario.ACTIVIDADES_ECONOMCIAS_PRIVADAS,
+    TipoDocumentoFormulario.PAZ_SALVO_SALUD,
+    TipoDocumentoFormulario.PAZ_SALVO_PENSION,
+    TipoDocumentoFormulario.PAZ_SALVO_PARAFISCALES,
+    TipoDocumentoFormulario.CERTIFICADO_INHABILIDADES_E_INCOMPATIBILIDADES,
+    TipoDocumentoFormulario.CERTIFICADO_CUENTA_BANCARIA,
+];
+
+const DOCUMENTOS_JURIDICA_MINIMA_CUANTIA: TipoDocumentoFormulario[] = [
+    TipoDocumentoFormulario.RUT,
+    TipoDocumentoFormulario.CEDULA,
+    TipoDocumentoFormulario.CERTIFICADO_BANCARIO,
+    TipoDocumentoFormulario.CERTIFICADO_EXPERIENCIA,
+    TipoDocumentoFormulario.CERTIFICADO_DISCIPLINARIOS,
+    TipoDocumentoFormulario.CERTIFICADO_RESPONSABILIDAD_FISCAL,
+    TipoDocumentoFormulario.CERTIFICADO_ANTECEDENTES_JUDICIALES,
+    TipoDocumentoFormulario.CERTIFICADO_MEDIDAS_CORRECTIVAS,
+    TipoDocumentoFormulario.SEGURIDAD_SOCIAL_SALUD,
+    TipoDocumentoFormulario.SEGURIDAD_SOCIAL_PENSION,
+    TipoDocumentoFormulario.SEGURIDAD_SOCIAL_ARL,
+    TipoDocumentoFormulario.PROPUESTA,
+    TipoDocumentoFormulario.PANTALLAZO_SECOP,
+];
+
 @Injectable()
 export class FormularioPublicoService {
     private readonly logger = new Logger(FormularioPublicoService.name);
 
-    // ✅ Grupos de documentos para combinar
+    // ============================================================
+    // ✅ GRUPOS DE DOCUMENTOS PARA COMBINAR
+    // ============================================================
     private readonly gruposDocumentos = {
+
+        CERTIFICADO_EXISTENCIA: {
+            nombre: 'CERTIFICADO_EXISTENCIA',
+            label: 'Certificado de Existencia y Representación',
+            nombreArchivo: 'Certificado_de_Existencia_Representacion_Legal_y_Junta_Directiva_Sindical.pdf',
+            tipos: [
+                TipoDocumentoFormulario.CERTIFICADO_EXISTENCIA,
+                TipoDocumentoFormulario.CERTIFICADO_REPRECENTACION_LEGAL,
+                TipoDocumentoFormulario.CERTIFICADO_JUNTA_DIRECTIVA_SINDICAL,
+            ]
+        },
+
+        // ✅ MODIFICADO: Ahora incluye los 4 certificados de Persona Natural
+        //    ADEMÁS de los 6 de Persona Jurídica - Sindical
         CERTIFICADO_ANTECEDENTES: {
             nombre: 'CERTIFICADO_ANTECEDENTES',
             label: 'Certificado de Antecedentes',
+            nombreArchivo: 'Antecedentes_Disciplinarios_Fiscales_Judiciales_y_Medidas_Correctivas.pdf',
             tipos: [
+                // ✅ PERSONA NATURAL (4 documentos)
                 TipoDocumentoFormulario.CERTIFICADO_DISCIPLINARIOS,
                 TipoDocumentoFormulario.CERTIFICADO_RESPONSABILIDAD_FISCAL,
                 TipoDocumentoFormulario.CERTIFICADO_ANTECEDENTES_JUDICIALES,
                 TipoDocumentoFormulario.CERTIFICADO_MEDIDAS_CORRECTIVAS,
+
+                // ✅ PERSONA JURÍDICA - SINDICAL (6 documentos)
+                TipoDocumentoFormulario.CERTIFICADO_DISCIPLINARIOS_PROCURADORIA_GENERAL_REPRECENTANTE_LEGAL,
+                TipoDocumentoFormulario.CERTIFICADO_DISCIPLINARIOS_PROCURADORIA_GENERAL_SINDICATO,
+                TipoDocumentoFormulario.CERTIFICADO_NO_BOLETIN_RESPONSABLE_FISCALES_CONTRALORIA_REPRESENTANTE_LEGAL,
+                TipoDocumentoFormulario.CERTIFICADO_NO_BOLETIN_RESPONSABLE_FISCALES_CONTRALORIA_SINDICAL,
+                // Nota: CERTIFICADO_ANTECEDENTES_JUDICIALES y CERTIFICADO_MEDIDAS_CORRECTIVAS
+                // ya están listados arriba (Persona Natural), no se duplican
             ]
         },
+
+        DECLARACION_BIENES: {
+            nombre: 'DECLARACION_BIENES',
+            label: 'Declaración de Bienes y Rentas',
+            nombreArchivo: 'Forma_Unica_Declaracion_Bienes_Renta_y_Actividades_Economicas_Privadas.pdf',
+            tipos: [
+                TipoDocumentoFormulario.FORMA_UNICA_DECLARACION_BIENES_Y_RENTA,
+                TipoDocumentoFormulario.ACTIVIDADES_ECONOMCIAS_PRIVADAS,
+            ]
+        },
+
+        PAZ_SALVO: {
+            nombre: 'PAZ_SALVO',
+            label: 'Paz y Salvo de Seguridad Social y Parafiscales',
+            nombreArchivo: 'Paz_y_Salvo_Salud_Pension_y_Parafiscales.pdf',
+            tipos: [
+                TipoDocumentoFormulario.PAZ_SALVO_SALUD,
+                TipoDocumentoFormulario.PAZ_SALVO_PENSION,
+                TipoDocumentoFormulario.PAZ_SALVO_PARAFISCALES,
+            ]
+        },
+
         SEGURIDAD_SOCIAL: {
             nombre: 'SEGURIDAD_SOCIAL',
             label: 'Seguridad Social',
+            nombreArchivo: 'Seguridad_Social_Salud_Pension_ARL.pdf',
             tipos: [
                 TipoDocumentoFormulario.SEGURIDAD_SOCIAL_SALUD,
                 TipoDocumentoFormulario.SEGURIDAD_SOCIAL_PENSION,
@@ -35,17 +163,6 @@ export class FormularioPublicoService {
             ]
         }
     };
-
-    // ✅ Todos los tipos válidos (solo los 7 que existen en el enum)
-    private readonly tiposValidos = [
-        TipoDocumentoFormulario.CERTIFICADO_DISCIPLINARIOS,
-        TipoDocumentoFormulario.CERTIFICADO_RESPONSABILIDAD_FISCAL,
-        TipoDocumentoFormulario.CERTIFICADO_ANTECEDENTES_JUDICIALES,
-        TipoDocumentoFormulario.CERTIFICADO_MEDIDAS_CORRECTIVAS,
-        TipoDocumentoFormulario.SEGURIDAD_SOCIAL_SALUD,
-        TipoDocumentoFormulario.SEGURIDAD_SOCIAL_PENSION,
-        TipoDocumentoFormulario.SEGURIDAD_SOCIAL_ARL,
-    ];
 
     constructor(
         @InjectRepository(FormularioPublico)
@@ -57,9 +174,25 @@ export class FormularioPublicoService {
         private readonly contratistaService: ContratistaService,
     ) { }
 
-    /**
-     * Crear un nuevo formulario público
-     */
+    private esPersonaJuridica(tipoContratista: string): boolean {
+        return (tipoContratista || '').toUpperCase().includes('JURIDICA');
+    }
+
+    private obtenerTiposValidos(
+        tipoContratista: string,
+        subtipo?: string | null,
+    ): TipoDocumentoFormulario[] {
+        const tipoUpper = (tipoContratista || '').toUpperCase();
+
+        if (tipoUpper.includes('JURIDICA')) {
+            if (subtipo === 'sindical') return DOCUMENTOS_JURIDICA_SINDICAL;
+            if (subtipo === 'minima_cuantia') return DOCUMENTOS_JURIDICA_MINIMA_CUANTIA;
+            return [];
+        }
+
+        return DOCUMENTOS_PERSONA_NATURAL;
+    }
+
     async crearFormulario(
         contratistaId: string,
         datos: {
@@ -70,6 +203,7 @@ export class FormularioPublicoService {
             departamento?: string;
             ciudad?: string;
             tipoContratista?: string;
+            subtipoJuridica?: string;
             cargo?: string;
             objetivoContrato?: string;
         },
@@ -99,6 +233,7 @@ export class FormularioPublicoService {
                 departamento: datos.departamento,
                 ciudad: datos.ciudad,
                 tipoContratista: datos.tipoContratista,
+                subtipoJuridica: datos.subtipoJuridica || null,
                 cargo: datos.cargo,
                 objetivoContrato: datos.objetivoContrato,
                 tokenUsado,
@@ -118,9 +253,6 @@ export class FormularioPublicoService {
         }
     }
 
-    /**
-     * Actualizar un formulario existente
-     */
     async actualizarFormulario(
         formularioId: string,
         datos: any,
@@ -136,6 +268,7 @@ export class FormularioPublicoService {
                 'departamento',
                 'ciudad',
                 'tipoContratista',
+                'subtipoJuridica',
                 'cargo',
                 'objetivoContrato',
             ];
@@ -155,9 +288,6 @@ export class FormularioPublicoService {
         }
     }
 
-    /**
-     * Agregar un documento al formulario
-     */
     async agregarDocumento(
         formularioId: string,
         tipo: TipoDocumentoFormulario,
@@ -167,7 +297,17 @@ export class FormularioPublicoService {
         try {
             const formulario = await this.buscarPorId(formularioId);
 
-            const tiposValidos = Object.values(TipoDocumentoFormulario);
+            const tiposValidos = this.obtenerTiposValidos(
+                formulario.tipoContratista,
+                formulario.subtipoJuridica,
+            );
+
+            if (tiposValidos.length === 0) {
+                throw new BadRequestException(
+                    'Debe seleccionar el subtipo de persona jurídica antes de subir documentos',
+                );
+            }
+
             if (!tiposValidos.includes(tipo)) {
                 throw new BadRequestException(`Tipo de documento inválido: ${tipo}`);
             }
@@ -200,9 +340,6 @@ export class FormularioPublicoService {
         }
     }
 
-    /**
-     * ✅ Guarda un documento individual con esCombinado = false
-     */
     private async guardarDocumentoIndividual(
         formularioId: string,
         tipo: TipoDocumentoFormulario,
@@ -221,26 +358,28 @@ export class FormularioPublicoService {
             archivo.mimetype,
         );
 
+        const nombreArchivo = `${tipo}.pdf`;
+
         const documento = this.documentoRepository.create({
             formularioId,
             tipo,
-            nombreArchivo: archivo.originalname,
+            nombreArchivo,
             rutaArchivo: result.path,
             tipoMime: archivo.mimetype,
             tamanoBytes: archivo.size,
             subidoPor,
             hashArchivo: this.calcularHash(archivo.buffer),
-            esCombinado: false, // ✅ IMPORTANTE: documento individual NO es combinado
+            esCombinado: false,
         });
 
         const saved = await this.documentoRepository.save(documento);
-        this.logger.log(`✅ Documento individual guardado: ${tipo} - esCombinado: false`);
+        this.logger.log(`✅ Documento individual guardado: ${tipo} - nombreArchivo: "${nombreArchivo}" - esCombinado: false`);
         return saved;
     }
 
     /**
-     * ✅ Verifica si el tipo pertenece a un grupo y lo combina
-     * Guarda el combinado con esCombinado = true
+     * ✅ MODIFICADO: Ahora filtra los tipos del grupo que aplican
+     *    al tipo de contratista actual antes de validar completitud
      */
     private async verificarYCombinarGrupo(
         formularioId: string,
@@ -262,19 +401,38 @@ export class FormularioPublicoService {
             return;
         }
 
+        // ✅ Obtener el formulario para saber el tipo de contratista
+        const formulario = await this.buscarPorId(formularioId);
+
+        // ✅ Obtener los tipos válidos para este tipo de contratista
+        const tiposValidos = this.obtenerTiposValidos(
+            formulario.tipoContratista,
+            formulario.subtipoJuridica,
+        );
+
+        // ✅ Filtrar los tipos del grupo que aplican al tipo de contratista
+        const tiposDelGrupoQueAplican = grupoEncontrado.tipos.filter(t =>
+            tiposValidos.includes(t)
+        );
+
+        this.logger.log(`🔍 Grupo ${nombreGrupo} - Tipos del grupo: ${grupoEncontrado.tipos.length}, Tipos que aplican: ${tiposDelGrupoQueAplican.length}`);
+
+        // ✅ Buscar solo los documentos que aplican
         const documentosDelGrupo = await this.documentoRepository.find({
             where: {
                 formularioId,
-                tipo: In(grupoEncontrado.tipos),
+                tipo: In(tiposDelGrupoQueAplican),
             },
             order: { tipo: 'ASC' },
         });
 
         const tiposSubidos = documentosDelGrupo.map(d => d.tipo);
-        const todosPresentes = grupoEncontrado.tipos.every(t => tiposSubidos.includes(t));
+
+        // ✅ Validar que TODOS los tipos que aplican estén subidos
+        const todosPresentes = tiposDelGrupoQueAplican.every(t => tiposSubidos.includes(t));
 
         if (!todosPresentes) {
-            const faltantes = grupoEncontrado.tipos.filter(t => !tiposSubidos.includes(t));
+            const faltantes = tiposDelGrupoQueAplican.filter(t => !tiposSubidos.includes(t));
             this.logger.log(`⏳ Grupo ${nombreGrupo} incompleto. Faltan: ${faltantes.join(', ')}`);
             return;
         }
@@ -309,17 +467,17 @@ export class FormularioPublicoService {
             const documentoCombinado = this.documentoRepository.create({
                 formularioId,
                 tipo: nombreGrupo as any,
-                nombreArchivo: `${nombreGrupo}.pdf`,
+                nombreArchivo: grupoEncontrado.nombreArchivo,
                 rutaArchivo: result.path,
                 tipoMime: 'application/pdf',
                 tamanoBytes: pdfCombinado.length,
                 subidoPor: 'sistema',
                 hashArchivo: this.calcularHash(pdfCombinado),
-                esCombinado: true, // ✅ IMPORTANTE: documento combinado
+                esCombinado: true,
             });
 
             await this.documentoRepository.save(documentoCombinado);
-            this.logger.log(`✅ PDF combinado guardado: ${nombreGrupo} - esCombinado: true`);
+            this.logger.log(`✅ PDF combinado guardado: ${nombreGrupo} - nombreArchivo: "${grupoEncontrado.nombreArchivo}" - esCombinado: true`);
 
         } catch (error) {
             this.logger.error(`❌ Error combinando PDFs del grupo ${nombreGrupo}: ${error.message}`);
@@ -327,9 +485,6 @@ export class FormularioPublicoService {
         }
     }
 
-    /**
-     * Combina múltiples PDFs en uno solo usando pdf-lib
-     */
     private async combinarPDFs(documentos: DocumentoFormularioPublico[]): Promise<Buffer> {
         const pdfDoc = await PDFDocument.create();
 
@@ -350,9 +505,6 @@ export class FormularioPublicoService {
         return Buffer.from(pdfBytes);
     }
 
-    /**
-     * Obtener el documento combinado de un grupo
-     */
     async obtenerDocumentoCombinado(
         formularioId: string,
         grupoNombre: string,
@@ -361,46 +513,61 @@ export class FormularioPublicoService {
             where: {
                 formularioId,
                 tipo: grupoNombre as any,
-                esCombinado: true, // ✅ Solo combinados
+                esCombinado: true,
             },
         });
     }
 
     /**
-     * Obtener estado de todos los grupos
+     * ✅ MODIFICADO: Ahora filtra los tipos del grupo que aplican
+     *    al tipo de contratista actual
      */
     async obtenerEstadoGrupos(formularioId: string): Promise<any> {
         const resultado = {};
+        const formulario = await this.buscarPorId(formularioId);
+
+        const tiposValidos = this.obtenerTiposValidos(
+            formulario.tipoContratista,
+            formulario.subtipoJuridica,
+        );
 
         for (const [key, grupo] of Object.entries(this.gruposDocumentos)) {
+            // ✅ Filtrar tipos que aplican a este contratista
+            const tiposDelGrupoQueAplican = grupo.tipos.filter(t =>
+                tiposValidos.includes(t)
+            );
+
+            // ✅ Si no aplica ningún tipo del grupo, saltarlo
+            if (tiposDelGrupoQueAplican.length === 0) {
+                continue;
+            }
+
             const documentos = await this.documentoRepository.find({
                 where: {
                     formularioId,
-                    tipo: In(grupo.tipos),
+                    tipo: In(tiposDelGrupoQueAplican),
                 },
             });
 
             const tiposSubidos = documentos.map(d => d.tipo);
-            const completado = grupo.tipos.every(t => tiposSubidos.includes(t));
+            const completado = tiposDelGrupoQueAplican.every(t => tiposSubidos.includes(t));
             const combinado = await this.obtenerDocumentoCombinado(formularioId, key);
 
             resultado[key] = {
                 label: grupo.label,
+                nombreArchivo: grupo.nombreArchivo,
                 completado,
                 documentosSubidos: documentos.length,
-                totalRequeridos: grupo.tipos.length,
+                totalRequeridos: tiposDelGrupoQueAplican.length,
                 combinadoExiste: !!combinado,
                 combinadoId: combinado?.id || null,
-                tipos: grupo.tipos,
+                tipos: tiposDelGrupoQueAplican,
             };
         }
 
         return resultado;
     }
 
-    /**
-     * Descargar documento combinado del formulario
-     */
     async descargarDocumentoCombinado(
         formularioId: string,
         grupoNombre: string,
@@ -413,16 +580,15 @@ export class FormularioPublicoService {
 
         const buffer = await this.storageService.getFile(documento.rutaArchivo);
 
+        const grupo = this.gruposDocumentos[grupoNombre];
+
         return {
             buffer,
-            nombre: `${grupoNombre}.pdf`,
+            nombre: grupo?.nombreArchivo || `${grupoNombre}.pdf`,
             mimeType: 'application/pdf',
         };
     }
 
-    /**
-     * Marcar formulario como completado
-     */
     async completarFormulario(formularioId: string): Promise<FormularioPublico> {
         try {
             const formulario = await this.buscarPorId(formularioId);
@@ -430,7 +596,16 @@ export class FormularioPublicoService {
             const documentos = await this.obtenerDocumentos(formularioId);
             const tiposSubidos = documentos.map(doc => doc.tipo);
 
-            const faltantes = this.tiposValidos.filter(t => !tiposSubidos.includes(t));
+            const tiposRequeridos = this.obtenerTiposValidos(
+                formulario.tipoContratista,
+                formulario.subtipoJuridica,
+            );
+
+            if (tiposRequeridos.length === 0) {
+                throw new BadRequestException('Debe seleccionar el subtipo de persona jurídica');
+            }
+
+            const faltantes = tiposRequeridos.filter(t => !tiposSubidos.includes(t));
 
             if (faltantes.length > 0) {
                 throw new BadRequestException(
@@ -440,12 +615,12 @@ export class FormularioPublicoService {
 
             const estadoGrupos = await this.obtenerEstadoGrupos(formularioId);
             const gruposIncompletos = Object.entries(estadoGrupos)
-                .filter(([key, value]: [string, any]) => !value.combinadoExiste)
+                .filter(([key, value]: [string, any]) => value.completado && !value.combinadoExiste)
                 .map(([key]) => key);
 
             if (gruposIncompletos.length > 0) {
                 this.logger.warn(`⚠️ Grupos sin combinar: ${gruposIncompletos.join(', ')}`);
-                for (const grupo of Object.keys(this.gruposDocumentos)) {
+                for (const grupo of gruposIncompletos) {
                     await this.forzarCombinacionGrupo(formularioId, grupo);
                 }
             }
@@ -464,7 +639,8 @@ export class FormularioPublicoService {
     }
 
     /**
-     * Forzar combinación de un grupo
+     * ✅ MODIFICADO: Ahora filtra los tipos del grupo que aplican
+     *    al tipo de contratista actual
      */
     async forzarCombinacionGrupo(formularioId: string, grupoNombre: string): Promise<void> {
         const grupo = this.gruposDocumentos[grupoNombre];
@@ -472,16 +648,30 @@ export class FormularioPublicoService {
             throw new NotFoundException(`Grupo ${grupoNombre} no encontrado`);
         }
 
+        // ✅ Obtener el formulario para saber el tipo de contratista
+        const formulario = await this.buscarPorId(formularioId);
+
+        // ✅ Obtener los tipos válidos para este tipo de contratista
+        const tiposValidos = this.obtenerTiposValidos(
+            formulario.tipoContratista,
+            formulario.subtipoJuridica,
+        );
+
+        // ✅ Filtrar los tipos del grupo que aplican al tipo de contratista
+        const tiposDelGrupoQueAplican = grupo.tipos.filter(t =>
+            tiposValidos.includes(t)
+        );
+
         const documentosDelGrupo = await this.documentoRepository.find({
             where: {
                 formularioId,
-                tipo: In(grupo.tipos),
+                tipo: In(tiposDelGrupoQueAplican),
             },
             order: { tipo: 'ASC' },
         });
 
         const tiposSubidos = documentosDelGrupo.map(d => d.tipo);
-        const todosPresentes = grupo.tipos.every(t => tiposSubidos.includes(t));
+        const todosPresentes = tiposDelGrupoQueAplican.every(t => tiposSubidos.includes(t));
 
         if (!todosPresentes) {
             throw new BadRequestException(
@@ -515,22 +705,19 @@ export class FormularioPublicoService {
         const documentoCombinado = this.documentoRepository.create({
             formularioId,
             tipo: grupoNombre as any,
-            nombreArchivo: `${grupoNombre}.pdf`,
+            nombreArchivo: grupo.nombreArchivo,
             rutaArchivo: result.path,
             tipoMime: 'application/pdf',
             tamanoBytes: pdfCombinado.length,
             subidoPor: 'sistema',
             hashArchivo: this.calcularHash(pdfCombinado),
-            esCombinado: true, // ✅ IMPORTANTE
+            esCombinado: true,
         });
 
         await this.documentoRepository.save(documentoCombinado);
-        this.logger.log(`✅ PDF combinado forzado: ${grupoNombre}`);
+        this.logger.log(`✅ PDF combinado forzado: ${grupoNombre} - nombreArchivo: "${grupo.nombreArchivo}"`);
     }
 
-    /**
-     * Buscar formulario por ID
-     */
     async buscarPorId(id: string): Promise<FormularioPublico> {
         const formulario = await this.formularioRepository.findOne({
             where: { id },
@@ -544,9 +731,6 @@ export class FormularioPublicoService {
         return formulario;
     }
 
-    /**
-     * Buscar formulario por contratista
-     */
     async buscarPorContratista(contratistaId: string): Promise<FormularioPublico[]> {
         return this.formularioRepository.find({
             where: { contratistaId },
@@ -555,9 +739,6 @@ export class FormularioPublicoService {
         });
     }
 
-    /**
-     * Buscar formulario activo (pendiente) por contratista
-     */
     async buscarActivoPorContratista(contratistaId: string): Promise<FormularioPublico | null> {
         return this.formularioRepository.findOne({
             where: {
@@ -568,11 +749,6 @@ export class FormularioPublicoService {
         });
     }
 
-
-
-    /**
-     * Obtener un documento por ID
-     */
     async obtenerDocumentoPorId(documentoId: string): Promise<DocumentoFormularioPublico> {
         const documento = await this.documentoRepository.findOne({
             where: { id: documentoId },
@@ -585,9 +761,6 @@ export class FormularioPublicoService {
         return documento;
     }
 
-    /**
-     * Eliminar un documento del formulario
-     */
     async eliminarDocumento(documentoId: string): Promise<void> {
         try {
             const documento = await this.documentoRepository.findOne({
@@ -607,25 +780,25 @@ export class FormularioPublicoService {
         }
     }
 
-    /**
-     * Verificar si un formulario está completo
-     */
     async estaCompleto(formularioId: string): Promise<boolean> {
+        const formulario = await this.buscarPorId(formularioId);
         const documentos = await this.obtenerDocumentos(formularioId);
         const tiposSubidos = documentos.map(doc => doc.tipo);
-        return this.tiposValidos.every(t => tiposSubidos.includes(t));
+
+        const tiposRequeridos = this.obtenerTiposValidos(
+            formulario.tipoContratista,
+            formulario.subtipoJuridica,
+        );
+
+        if (tiposRequeridos.length === 0) return false;
+
+        return tiposRequeridos.every(t => tiposSubidos.includes(t));
     }
 
-    /**
-     * Calcular hash del archivo
-     */
     private calcularHash(buffer: Buffer): string {
         return crypto.createHash('sha256').update(buffer).digest('hex');
     }
 
-    /**
-     * Listar formularios pendientes de aprobación
-     */
     async listarPendientesAprobacion(): Promise<any[]> {
         this.logger.log('🔍 Buscando formularios pendientes de aprobación...');
 
@@ -658,7 +831,12 @@ export class FormularioPublicoService {
                     if (contratista) {
                         contratistaNombre = contratista.razonSocial || 'N/A';
                         contratistaDocumento = contratista.documentoIdentidad || 'N/A';
-                        contratistaTipo = contratista.tipoContratista || 'N/A';
+
+                        contratistaTipo =
+                            formulario.tipoContratista ||
+                            contratista.tipoContratista ||
+                            'N/A';
+
                         this.logger.log(`✅ Contratista encontrado: ${contratistaNombre}`);
                     }
                 }
@@ -685,9 +863,6 @@ export class FormularioPublicoService {
         return resultado;
     }
 
-    /**
-  * Obtener documentos del formulario
-  */
     async obtenerDocumentos(formularioId: string): Promise<DocumentoFormularioPublico[]> {
         return this.documentoRepository.find({
             where: { formularioId },
@@ -695,10 +870,6 @@ export class FormularioPublicoService {
         });
     }
 
-    /**
-  * ✅ Obtener detalle completo de un formulario para aprobación
-  * Corrige nombres de archivos genéricos basándose en el tipo de documento
-  */
     async obtenerDetalleAprobacion(formularioId: string): Promise<any> {
         this.logger.log(`🔍 Obteniendo detalle del formulario: ${formularioId}`);
 
@@ -708,7 +879,6 @@ export class FormularioPublicoService {
             throw new NotFoundException(`Formulario ${formularioId} no encontrado`);
         }
 
-        // ✅ OBTENER DOCUMENTOS DIRECTAMENTE
         const documentos = await this.documentoRepository.find({
             where: { formularioId },
             order: { fechaSubida: 'DESC' },
@@ -716,38 +886,71 @@ export class FormularioPublicoService {
 
         this.logger.log(`📄 Total de documentos encontrados: ${documentos.length}`);
 
-        // ✅ MAPEO DE NOMBRES POR TIPO PARA CORREGIR NOMBRES GENÉRICOS
         const nombrePorTipo: Record<string, string> = {
-            'TARJETA_PROFESIONAL': 'Tarjeta Profesional',
-            'SARLAFT': 'SARLAFT',
-            'REDAM': 'REDAM',
-            'PUBLICACION_GT': 'Publicación GT',
-            'PANTALLAZO_SECOP': 'Pantallazo SECOP',
-            'PROPUESTA': 'Propuesta',
-            'HOJA_VIDA_SIGEP': 'Hoja de Vida SIGEP',
-            'GARANTIA': 'Garantía',
-            'EXAMEN_INGRESO': 'Examen de Ingreso',
-            'DECLARACION_INHABILIDADES': 'Declaración de Inhabilidades',
-            'DECLARACION_BIENES': 'Declaración de Bienes',
-            'CERTIFICADO_IDONEIDAD': 'Certificado de Idoneidad',
-            'CERTIFICADO_NO_PLANTA': 'Certificado No Planta',
-            'CERTIFICADO_EXPERIENCIA': 'Certificado de Experiencia',
-            'CERTIFICADO_BANCARIO': 'Certificado Bancario',
+            // ============================================================
+            // ✅ DOCUMENTOS COMBINADOS (grupos) - SOLO UNA VEZ
+            // ============================================================
+            'CERTIFICADO_EXISTENCIA': 'Certificado de Existencia y Representación (Combinado)',
             'CERTIFICADO_ANTECEDENTES': 'Certificado de Antecedentes (Combinado)',
+            'DECLARACION_BIENES': 'Declaración de Bienes y Rentas (Combinado)',
+            'PAZ_SALVO': 'Paz y Salvo de Seguridad Social y Parafiscales (Combinado)',
             'SEGURIDAD_SOCIAL': 'Seguridad Social (Combinado)',
+
+            // ============================================================
+            // ✅ PERSONA NATURAL - Individuales
+            // ============================================================
+            'CEDULA': 'Cédula de Ciudadanía',
+            'RUT': 'RUT',
+            'LIBRETA_MILITAR': 'Libreta Militar',
+            'CERTIFICADO_DISCIPLINARIOS': 'Certificado de Antecedentes Disciplinarios',
+            'CERTIFICADO_RESPONSABILIDAD_FISCAL': 'Certificado de Responsabilidad Fiscal',
+            'CERTIFICADO_ANTECEDENTES_JUDICIALES': 'Certificado de Antecedentes Judiciales',
+            'CERTIFICADO_MEDIDAS_CORRECTIVAS': 'Certificado de Medidas Correctivas',
             'SEGURIDAD_SOCIAL_SALUD': 'Seguridad Social - Salud',
             'SEGURIDAD_SOCIAL_PENSION': 'Seguridad Social - Pensión',
             'SEGURIDAD_SOCIAL_ARL': 'Seguridad Social - ARL',
-            'CERTIFICADO_DISCIPLINARIOS': 'Certificado Disciplinarios',
-            'CERTIFICADO_RESPONSABILIDAD_FISCAL': 'Certificado Responsabilidad Fiscal',
-            'CERTIFICADO_ANTECEDENTES_JUDICIALES': 'Certificado Antecedentes Judiciales',
-            'CERTIFICADO_MEDIDAS_CORRECTIVAS': 'Certificado Medidas Correctivas',
-            'LIBRETA_MILITAR': 'Libreta Militar',
-            'RUT': 'RUT',
-            'CEDULA': 'Cédula de Ciudadanía',
+            'CERTIFICADO_BANCARIO': 'Certificado Bancario',
+            'CERTIFICADO_EXPERIENCIA': 'Certificado de Experiencia',
+            'CERTIFICADO_NO_PLANTA': 'Certificado No Planta',
+            'CERTIFICADO_IDONEIDAD': 'Certificado de Idoneidad',
+            'DECLARACION_INHABILIDADES': 'Declaración de Inhabilidades',
+            'EXAMEN_INGRESO': 'Examen de Ingreso',
+            'GARANTIA': 'Garantía',
+            'HOJA_VIDA_SIGEP': 'Hoja de Vida SIGEP',
+            'PANTALLAZO_SECOP': 'Pantallazo SECOP',
+            'PROPUESTA': 'Propuesta',
+            'PUBLICACION_GT': 'Publicación GT',
+            'REDAM': 'REDAM',
+            'SARLAFT': 'SARLAFT',
+            'TARJETA_PROFESIONAL': 'Tarjeta Profesional',
+            'CERTIFICADO_INHABILIDADES_E_INCOMPATIBILIDADES': 'Certificado de Inhabilidades e Incompatibilidades',
+            'CERTIFICADO_CUENTA_BANCARIA': 'Certificado de Cuenta Bancaria',
+
+            // ============================================================
+            // ✅ PERSONA JURÍDICA - Individuales
+            // ============================================================
+            'COTIZACION_UNO': 'Cotización 1',
+            'COTIZACION_DOS': 'Cotización 2',
+            'COTIZACION_TRES': 'Cotización 3',
+            'HOJA_VIDA_PERSONA_JURIDICA': 'Hoja de Vida Persona Jurídica',
+            'CERTIFICADO_REPRECENTACION_LEGAL': 'Certificado de Representación Legal',
+            'PROPUESTA_SINDICATO': 'Propuesta del Sindicato',
+            'ACTA_INSCRIPCION_VIGENCIA': 'Acta de Inscripción y Vigencia',
+            'CERTIFICADO_JUNTA_DIRECTIVA_SINDICAL': 'Certificado Junta Directiva Sindical',
+            'CERTIFICADO_DISCIPLINARIOS_PROCURADORIA_GENERAL_REPRECENTANTE_LEGAL': 'Antecedentes Disciplinarios Procuraduría - Representante Legal',
+            'CERTIFICADO_DISCIPLINARIOS_PROCURADORIA_GENERAL_SINDICATO': 'Antecedentes Disciplinarios Procuraduría - Sindicato',
+            'CERTIFICADO_NO_BOLETIN_RESPONSABLE_FISCALES_CONTRALORIA_REPRESENTANTE_LEGAL': 'No Boletín Responsabilidad Fiscal - Representante Legal',
+            'CERTIFICADO_NO_BOLETIN_RESPONSABLE_FISCALES_CONTRALORIA_SINDICAL': 'No Boletín Responsabilidad Fiscal - Sindical',
+            'FORMA_UNICA_DECLARACION_BIENES_Y_RENTA': 'Formulario Único de Declaración de Bienes y Renta',
+            'ACTIVIDADES_ECONOMCIAS_PRIVADAS': 'Actividades Económicas Privadas',
+            'PAZ_SALVO_SALUD': 'Paz y Salvo de Salud',
+            'PAZ_SALVO_PENSION': 'Paz y Salvo de Pensión',
+            'PAZ_SALVO_PARAFISCALES': 'Paz y Salvo de Parafiscales',
+            'CC_CONTADOR': 'Cédula del Contador',
+            'TARJETA_PROFESIONAL_CONTADOR': 'Tarjeta Profesional del Contador',
+            'CERTIFICADO_JUNTA_CENTRAL_CONTADORES': 'Certificado Junta Central de Contadores',
         };
 
-        // ✅ LOG DE DOCUMENTOS CON SUS NOMBRES REALES
         this.logger.log('📋 LISTA DE DOCUMENTOS CON NOMBRES REALES:');
         documentos.forEach((doc, index) => {
             this.logger.log(`   ${index + 1}. ${doc.tipo} -> nombreArchivo: "${doc.nombreArchivo}" | esCombinado: ${doc.esCombinado}`);
@@ -755,27 +958,17 @@ export class FormularioPublicoService {
 
         const estadoGrupos = await this.obtenerEstadoGrupos(formularioId);
 
-        // ✅ MAPEAR DOCUMENTOS CORRIGIENDO NOMBRES GENÉRICOS
         const documentosMapeados = documentos.map(doc => {
             let nombreArchivo = doc.nombreArchivo;
 
-            // ✅ SI EL NOMBRE ES GENÉRICO O DUPLICADO, GENERAR UNO BASADO EN EL TIPO
             const esNombreGenerico =
-                nombreArchivo === 'CERTIFICADO_ANTECEDENTES_1784668397543.pdf' ||
-                nombreArchivo === 'SEGURIDAD_SOCIAL.pdf' ||
-                nombreArchivo === 'CERTIFICADO_ANTECEDENTES.pdf' ||
-                nombreArchivo === 'SEGURIDAD_SOCIAL_1782843664400_s4w738.pdf' ||
-                nombreArchivo.includes('CERTIFICADO_ANTECEDENTES') ||
                 nombreArchivo === 'Cuenta de cobro.pdf' ||
                 nombreArchivo === 'fv08909051770002500601888.pdf';
 
             if (esNombreGenerico && !doc.esCombinado) {
-                // ✅ Generar nombre basado en el tipo
                 const nombreBase = nombrePorTipo[doc.tipo] || doc.tipo.replace(/_/g, ' ').toLowerCase();
                 const extension = '.pdf';
-                // Limpiar caracteres especiales para el nombre
                 const nombreLimpio = nombreBase.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s-]/g, '').trim();
-                // Reemplazar espacios por guiones bajos
                 const nombreFormateado = nombreLimpio.replace(/\s+/g, '_');
                 nombreArchivo = `${nombreFormateado}${extension}`;
 
@@ -785,7 +978,7 @@ export class FormularioPublicoService {
             return {
                 id: doc.id,
                 tipo: doc.tipo,
-                nombreArchivo: nombreArchivo, // ✅ NOMBRE CORREGIDO
+                nombreArchivo: nombreArchivo,
                 rutaArchivo: doc.rutaArchivo,
                 tipoMime: doc.tipoMime,
                 tamanoBytes: doc.tamanoBytes,
@@ -796,7 +989,6 @@ export class FormularioPublicoService {
             };
         });
 
-        // ✅ LOG DE DOCUMENTOS MAPEADOS
         this.logger.log('📋 DOCUMENTOS MAPEADOS PARA EL FRONTEND:');
         documentosMapeados.forEach((doc, index) => {
             this.logger.log(`   ${index + 1}. ${doc.tipo} -> nombreArchivo: "${doc.nombreArchivo}"`);
@@ -811,10 +1003,18 @@ export class FormularioPublicoService {
         }
 
         let contratista = null;
+        let email = '';
+        let telefono = '';
+
         try {
             if (formulario.contratistaId) {
                 contratista = await this.contratistaService.buscarPorId(formulario.contratistaId);
                 this.logger.log(`✅ Contratista encontrado: ${contratista.razonSocial}`);
+
+                if (contratista) {
+                    email = contratista.email || '';
+                    telefono = contratista.telefono || formulario.telefono || '';
+                }
             }
         } catch (error) {
             this.logger.warn(`⚠️ No se pudo obtener el contratista: ${error.message}`);
@@ -823,18 +1023,21 @@ export class FormularioPublicoService {
                 documentoIdentidad: formulario.documentoRepresentante || 'N/A',
                 tipoContratista: formulario.tipoContratista || 'N/A',
             };
+            email = '';
+            telefono = formulario.telefono || '';
         }
 
         const resultado = {
             formulario,
             contratista,
-            documentos: documentosMapeados, // ✅ DOCUMENTOS CON NOMBRES CORREGIDOS
+            documentos: documentosMapeados,
             documentosPorTipo,
             estadoGrupos,
             totalDocumentos: documentos.length,
             fechaCompletado: formulario.fechaCompletado,
             fechaCreacion: formulario.createdAt,
-            // ✅ INCLUIR INFORMACIÓN DE DEPURACIÓN
+            email: email,
+            telefono: telefono,
             _debug: {
                 totalDocumentos: documentos.length,
                 nombresCorregidos: documentosMapeados.map(d => ({
@@ -850,9 +1053,6 @@ export class FormularioPublicoService {
         return resultado;
     }
 
-    /**
-    * ✅ Aprobar un formulario - DESACTIVA TODOS los contratistas ACTIVOS con el mismo documento
-    */
     async aprobarFormulario(
         formularioId: string,
         observaciones?: string,
@@ -868,9 +1068,8 @@ export class FormularioPublicoService {
             throw new BadRequestException('Este formulario ya está aprobado');
         }
 
-        // ✅ OBTENER EL CONTRATISTA EXISTENTE DEL FORMULARIO
         let contratistaExistente = null;
-        let contratistaId = formulario.contratistaId;
+        const contratistaId = formulario.contratistaId;
 
         try {
             contratistaExistente = await this.contratistaService.buscarPorId(contratistaId);
@@ -878,7 +1077,6 @@ export class FormularioPublicoService {
             this.logger.warn(`⚠️ Contratista ${contratistaId} no encontrado, se creará uno nuevo`);
         }
 
-        // ✅ OBTENER EL DOCUMENTO DEL CONTRATISTA
         let documentoIdentidad = '0000000000';
         if (contratistaExistente) {
             documentoIdentidad = contratistaExistente.documentoIdentidad;
@@ -888,7 +1086,6 @@ export class FormularioPublicoService {
 
         this.logger.log(`📋 Documento del contratista: ${documentoIdentidad}`);
 
-        // ✅ DESACTIVAR TODOS LOS CONTRATISTAS ACTIVOS CON EL MISMO DOCUMENTO
         const contratistasActivos = await this.contratistaService.buscarPorDocumentoExacto(documentoIdentidad);
 
         if (contratistasActivos && contratistasActivos.length > 0) {
@@ -905,15 +1102,12 @@ export class FormularioPublicoService {
             }
         }
 
-        // ✅ USAR EL NÚMERO DE CONTRATO PROPORCIONADO O GENERAR UNO NUEVO
         let contratoFinal = numeroContrato;
 
-        // ✅ Si no se proporcionó número de contrato, generar uno automático
         if (!contratoFinal) {
             contratoFinal = `PS-${Date.now().toString().slice(-4)}-${Math.floor(Math.random() * 1000)}`;
             this.logger.log(`⚠️ No se proporcionó número de contrato, generando: ${contratoFinal}`);
         } else {
-            // ✅ Verificar que el número de contrato no esté en uso por otro contratista ACTIVO
             const contratoExistente = await this.contratistaService.buscarPorNumeroContratoExacto(contratoFinal);
             if (contratoExistente && contratoExistente.estado === 'ACTIVO') {
                 throw new BadRequestException(`El número de contrato "${contratoFinal}" ya está en uso por un contratista activo.`);
@@ -922,7 +1116,6 @@ export class FormularioPublicoService {
 
         this.logger.log(`📋 Número de contrato a usar: ${contratoFinal}`);
 
-        // ✅ OBTENER LOS DATOS DEL CONTRATISTA (usar el primero encontrado o los del formulario)
         let datosContratista: any = {};
 
         if (contratistaExistente) {
@@ -937,7 +1130,8 @@ export class FormularioPublicoService {
                 direccion: contratistaExistente.direccion || formulario.direccion,
                 departamento: contratistaExistente.departamento || formulario.departamento,
                 ciudad: contratistaExistente.ciudad || formulario.ciudad,
-                tipoContratista: contratistaExistente.tipoContratista || formulario.tipoContratista,
+                tipoContratista: formulario.tipoContratista || contratistaExistente.tipoContratista,
+                subtipoJuridica: formulario.subtipoJuridica,
                 estado: 'ACTIVO',
                 numeroContrato: contratoFinal,
                 cargo: contratistaExistente.cargo || formulario.cargo,
@@ -956,6 +1150,7 @@ export class FormularioPublicoService {
                 departamento: formulario.departamento || '',
                 ciudad: formulario.ciudad || '',
                 tipoContratista: formulario.tipoContratista || '',
+                subtipoJuridica: formulario.subtipoJuridica,
                 estado: 'ACTIVO',
                 numeroContrato: contratoFinal,
                 cargo: formulario.cargo || '',
@@ -965,29 +1160,29 @@ export class FormularioPublicoService {
 
         this.logger.log(`📝 Creando NUEVO contratista con documento: ${datosContratista.documentoIdentidad} y contrato: ${contratoFinal}`);
 
-        // ✅ USAR EL MÉTODO QUE NO VALIDA DOCUMENTO ACTIVO
         const nuevoContratista = await this.contratistaService.crearSinValidacion(datosContratista);
         this.logger.log(`✅ Nuevo contratista creado: ${nuevoContratista.id} - ${nuevoContratista.razonSocial} (Contrato: ${contratoFinal})`);
 
-        // ✅ ACTUALIZAR EL FORMULARIO CON EL NUEVO CONTRATISTA ID
         formulario.contratistaId = nuevoContratista.id;
 
-        // ✅ OBTENER LOS DOCUMENTOS COMBINADOS DEL FORMULARIO (esCombinado = true)
         const documentosFormulario = await this.obtenerDocumentos(formularioId);
-        const combinados = documentosFormulario.filter(doc => doc.esCombinado === true);
 
-        this.logger.log(`📋 Encontrados ${combinados.length} documentos combinados en el formulario`);
+        this.logger.log(`📋 Encontrados ${documentosFormulario.length} documentos para copiar al nuevo contratista`);
 
-        // ✅ COPIAR CADA COMBINADO AL NUEVO CONTRATISTA
-        for (const docCombinado of combinados) {
+        for (const doc of documentosFormulario) {
             try {
-                this.logger.log(`📄 Copiando combinado ${docCombinado.tipo} al nuevo contratista...`);
+                this.logger.log(`📄 Copiando ${doc.tipo} (esCombinado: ${doc.esCombinado}) al nuevo contratista...`);
 
-                const buffer = await this.storageService.getFile(docCombinado.rutaArchivo);
+                const buffer = await this.storageService.getFile(doc.rutaArchivo);
 
-                const extension = docCombinado.nombreArchivo.split('.').pop() || 'pdf';
+                const extension = doc.nombreArchivo.split('.').pop() || 'pdf';
                 const timestamp = Date.now();
-                const nombreUnico = `${docCombinado.tipo}_${timestamp}.${extension}`;
+
+                const nombreBase = doc.esCombinado && doc.nombreArchivo
+                    ? doc.nombreArchivo.replace('.pdf', '')
+                    : doc.tipo;
+
+                const nombreUnico = `${nombreBase}_${timestamp}.${extension}`;
 
                 const folderName = nuevoContratista.numeroContrato
                     ? `${nuevoContratista.numeroContrato}_${nuevoContratista.razonSocial.replace(/[^a-zA-Z0-9]/g, '_')}`
@@ -1003,23 +1198,22 @@ export class FormularioPublicoService {
 
                 const nuevoDocumento = new DocumentoContratista();
                 nuevoDocumento.contratistaId = nuevoContratista.id;
-                nuevoDocumento.tipo = String(docCombinado.tipo) as any;
-                nuevoDocumento.nombreArchivo = nombreUnico;
+                nuevoDocumento.tipo = String(doc.tipo) as any;
+                nuevoDocumento.nombreArchivo = doc.nombreArchivo || nombreUnico;
                 nuevoDocumento.rutaArchivo = result.path;
                 nuevoDocumento.tipoMime = 'application/pdf';
                 nuevoDocumento.tamanoBytes = buffer.length;
                 nuevoDocumento.subidoPor = 'sistema';
-                nuevoDocumento.esCombinado = true;
+                nuevoDocumento.esCombinado = doc.esCombinado === true;
 
                 await this.contratistaService['documentoRepository'].save(nuevoDocumento);
 
-                this.logger.log(`✅ Combinado ${docCombinado.tipo} copiado al nuevo contratista ${nuevoContratista.id}`);
+                this.logger.log(`✅ ${doc.tipo} copiado al nuevo contratista ${nuevoContratista.id} como "${nuevoDocumento.nombreArchivo}"`);
             } catch (error) {
-                this.logger.error(`❌ Error copiando combinado ${docCombinado.tipo}: ${error.message}`);
+                this.logger.error(`❌ Error copiando ${doc.tipo}: ${error.message}`);
             }
         }
 
-        // ✅ ACTUALIZAR ESTADO DEL FORMULARIO
         formulario.estado = EstadoFormulario.APROBADO;
         formulario.fechaEnvio = new Date();
 
@@ -1029,16 +1223,11 @@ export class FormularioPublicoService {
         return updated;
     }
 
-    /**
-     * ✅ Obtener el buffer de un documento del formulario público
-     */
     async obtenerBufferDocumento(documentoId: string): Promise<Buffer> {
         const documento = await this.obtenerDocumentoPorId(documentoId);
         return this.storageService.getFile(documento.rutaArchivo);
     }
-    /**
-     * ✅ Rechazar un formulario
-     */
+
     async rechazarFormulario(formularioId: string, motivo: string): Promise<FormularioPublico> {
         const formulario = await this.buscarPorId(formularioId);
 
